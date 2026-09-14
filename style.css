@@ -620,6 +620,12 @@ main.content-workspace {
   min-height: 400px;
   height: auto;
   overflow-y: hidden; /* 內文不再自己捲動，統一交給外層 .editor-content-area 捲動（標題／內文同一個捲軸），高度由 JS 依內容自動撐開 */
+  flex-shrink: 0; /* 關鍵修正：.editor-content-area 是 flex column 又有 overflow-y:auto，
+    這種情況下 flex 子元素預設仍會被壓縮回容器高度（overflow 不是 visible 時，
+    瀏覽器會取消 min-height:auto 的保護），導致 JS 撐好的高度被壓回去、多出來的內文
+    因為本身 overflow-y:hidden 直接被裁掉看不見，而不是變成外層可以捲動的內容。
+    加上 flex-shrink:0 讓 textarea 維持 JS 撐出來的完整高度，超出容器的部分才會變成
+    .editor-content-area 的捲動內容，往上滑就能看到完整內文。 */
   border: none !important;
   outline: none !important;
   resize: none;
