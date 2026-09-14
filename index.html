@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>世界觀架構工作台 | WorldBuilder Canvas</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="ui-tokens.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- 最左側直欄（手機版自動轉為置底橫列） -->
+  <aside class="world-rail" id="appWorldRail">
+    <button class="world-rail-btn add-btn" title="新增頂層世界觀" onclick="promptCreateWorldview()">＋</button>
+    <div class="world-rail-list" id="worldRailContainer"></div>
+    <button class="world-rail-btn" title="備份完整資料庫" onclick="exportFullDatabaseJSON()">💾</button>
+  </aside>
+
+  <!-- 中間欄：頂格目錄工具欄 (完全貼齊最上方) -->
+  <aside class="sidebar-directory" id="appSidebar">
+    <div class="directory-top-bar">
+      <span class="directory-title">目錄工具欄</span>
+      <div class="dir-btn-group">
+        <button class="icon-sm-btn" id="trashViewBtn" title="檢視垃圾桶（復原已刪除的項目）" onclick="openTrashModal()">♻️</button>
+        <button class="icon-sm-btn" id="trashToggleBtn" title="批量刪除模式" onclick="toggleBatchDeleteMode()">🗑️</button>
+        <button class="icon-sm-btn" title="新增資料夾（若已選取資料夾，將新增於其底下）" onclick="createFolderInCurrentContext()">📁</button>
+        <button class="icon-sm-btn" title="新增文檔（若已選取資料夾，將新增於其底下）" onclick="createDocInCurrentContext()">📄</button>
+        <button class="icon-sm-btn mobile-close" id="closeSidebarBtn" onclick="closeSidebarMobile()">✕</button>
+      </div>
+    </div>
+
+    <!-- 批量刪除列 -->
+    <div class="batch-bar" id="batchActionBar">
+      <span id="batchSelectedCountText">批量刪除模式：點選項目以選取</span>
+      <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="executeBatchDelete()">刪除選取項</button>
+    </div>
+
+    <!-- Google 風格搜尋框 (無底色叉叉) + Hashtag 篩選 -->
+    <div class="search-wrap">
+      <div class="search-row">
+        <div class="search-box-inner">
+          <span class="search-lens-icon">🔍</span>
+          <input type="text" id="searchInput" class="search-input-box" placeholder="搜尋欄..." oninput="handleSearchInput(this)">
+          <button type="button" id="searchClearBtn" class="search-clear-btn" title="清空搜尋" onclick="clearSearchInput()">✕</button>
+        </div>
+        <button type="button" id="hashtagFilterBtn" class="icon-sm-btn hashtag-filter-btn" title="Hashtag 篩選" onclick="openHashtagFilterModal()">🏷️</button>
+      </div>
+    </div>
+
+    <!-- 類 Windows 檔案樹狀目錄 -->
+    <div class="directory-tree-area" id="worldTreeContainer"></div>
+
+    <!-- 底部設定按鈕 -->
+    <div class="directory-footer">
+      <button class="btn btn-secondary" style="flex:1; justify-content:center;" onclick="openPaletteModal()">🎨 標籤分類設定</button>
+      <button class="btn btn-secondary" style="padding:6px 10px;" title="匯入文檔（支援 txt / json / html）" onclick="triggerImportFile()">📥 匯入</button>
+      <input type="file" id="importFileInput" accept=".txt,.json,.html,.htm" style="display:none;" onchange="handleImportFileSelected(event)">
+    </div>
+  </aside>
+
+  <!-- 右側主區域 -->
+  <div class="app-main-layout">
+    <header class="top-nav-bar">
+      <div class="nav-group-left">
+        <button class="nav-btn-icon" id="btnA_Hamburger" onclick="toggleSidebarMenu()" title="展開/收納目錄">☰</button>
+        <button class="nav-world-btn" id="btnB_WorldBadge" onclick="openIconPicker('world', activeWorldId)" title="當前世界觀">
+          <span id="currentWorldIcon">🌐</span>
+          <span id="currentWorldName">主世界觀</span>
+        </button>
+      </div>
+
+      <div class="nav-group-center">
+        <div class="tab-switch-box" id="btnC_TabSwitch">
+          <button class="tab-btn active" id="tabEditorBtn" onclick="switchView('editor')">📝 文檔</button>
+          <button class="tab-btn" id="tabCanvasBtn" onclick="switchView('canvas')">🕸️ 白板</button>
+        </div>
+      </div>
+
+      <div class="nav-group-right">
+        <button class="nav-action-btn secondary" id="btnD_Export" onclick="openBatchExportModal()" title="批量匯出">
+          <span>📤</span><span class="btn-text">匯出</span>
+        </button>
+        <button class="nav-action-btn primary" id="btnE_NewDoc" onclick="createDocInCurrentContext()" title="新增文檔（若已選取資料夾，將新增於其底下）">
+          <span>＋</span><span class="btn-text">新文檔</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="content-workspace">
+      <!-- 1. 文檔編輯區 -->
+      <section id="editorView" class="view-panel">
+        <div class="editor-meta-panel">
+          <div class="meta-top-row">
+            <!-- 類 Windows 導航麵包屑 -->
+            <div class="breadcrumb-row" id="docBreadcrumbBar" ondblclick="handleBreadcrumbDblClick(event)"></div>
+
+            <div class="meta-right-col">
+              <div class="docactions-wrap" id="docActionsWrap">
+                <button class="action-pill-btn meta-fab-btn" id="btnDocActions" title="文件操作" onclick="toggleDocActionsPanel()">⋯ <span class="lbl">更多操作</span></button>
+                <div class="docactions-panel" id="docActionsPanel">
+                  <button class="docactions-item" onclick="closeDocActionsPanel(); addCurrentDocToCanvas();">📌 <span>投射白板</span></button>
+                  <label class="docactions-item" title="插入圖片">
+                    🖼️ <span>放圖片</span>
+                    <input type="file" id="imgUploadInput" accept="image/*" style="display:none;" onchange="closeDocActionsPanel(); handleImageUpload(event);">
+                  </label>
+                  <button class="docactions-item is-danger" onclick="closeDocActionsPanel(); deleteCurrentDocument();">🗑️ <span>刪除</span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-content-area">
+          <div class="meta-bottom-section">
+            <div class="doc-title-line">
+              <button class="doc-icon-picker-btn" id="docIconBtn" title="更換圖示" onclick="openIconPicker('doc', activeDocId)">📄</button>
+              <input type="text" id="docTitleInput" class="doc-title-input" placeholder="文檔標題..." oninput="onTitleChange()">
+            </div>
+
+            <div class="doc-stats-line">
+              <span>字數：<strong class="stat-pill" id="statWordCount">0</strong></span>
+              <span>更新時間：<span id="statUpdatedAt">--</span></span>
+            </div>
+
+            <div class="hashtag-wrap" id="liveTagToolbar"></div>
+          </div>
+
+          <div class="toc-card" id="tocCard" style="display:none;">
+            <div class="toc-title">📑 章節快速跳轉</div>
+            <div class="toc-links" id="tocLinksContainer"></div>
+          </div>
+
+          <div class="doc-images-strip" id="docImagesContainer"></div>
+
+          <textarea id="docContentInput" class="content-textarea" placeholder="在此記錄設定、勢力、背景或法術細節...
+💡 章節標註：輸入「# 第一章 啟程」或「第1章」系統會自動在頂部生成快速跳轉按鈕。
+💡 標籤標註：輸入「#帝國軍方 #反抗勢力」系統會自動抽取並套色；點擊上方 Hashtag 名稱可直接定位到內文段落！" oninput="onContentChange()"></textarea>
+
+          <div class="undoredo-sticky-bar" id="undoRedoFabGroup">
+            <button class="undoredo-fab-btn" id="docUndoBtn" title="復原（上一步內文變更）" onclick="undoDocContent()" disabled>↩️</button>
+            <button class="undoredo-fab-btn" id="docRedoBtn" title="取消復原（下一步內文變更）" onclick="redoDocContent()" disabled>↪️</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. 白板關係區 (Graphs) -->
+      <section id="canvasView" class="view-panel" style="display:none;">
+        <div class="canvas-bar">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:700; font-size:13px;" id="canvasWorldTitle">🕸️ 關係白板</span>
+            <span style="font-size:11px; color:var(--text-secondary);">💡 點擊「🔗」可連線並填寫雙方關係！</span>
+          </div>
+          <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="renderCanvas()">🔄 重整</button>
+        </div>
+        <svg class="canvas-svg" id="canvasSvg"></svg>
+        <div id="canvasNodesContainer"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebarMobile()"></div>
+
+  <!-- 章節 / Hashtag 快速跳轉：浮動按鈕 + 側邊欄 -->
+  <button class="quickjump-fab" id="quickJumpFab" title="章節 / Hashtag 快速跳轉" onclick="toggleQuickJumpPanel()">📑</button>
+  <div class="quickjump-overlay" id="quickJumpOverlay" onclick="closeQuickJumpPanel()"></div>
+  <aside class="quickjump-panel" id="quickJumpPanel">
+    <div class="quickjump-header">
+      <div class="quickjump-header-top">
+        <div class="quickjump-doc-title" id="quickJumpDocTitle">未命名文檔</div>
+        <button class="quickjump-close-btn" title="關閉" onclick="closeQuickJumpPanel()">✕</button>
+      </div>
+      <div class="quickjump-stats-line">字數：<strong id="quickJumpWordCount">0</strong></div>
+      <div class="quickjump-stats-line">更新時間：<span id="quickJumpUpdatedAt">--</span></div>
+      <div class="quickjump-subtitle">章節與 Hashtag 快速跳轉</div>
+    </div>
+    <div class="quickjump-list" id="quickJumpList"></div>
+  </aside>
+
+  <!-- 彈窗：批量匯出 -->
+  <div class="modal-overlay" id="batchExportModal">
+    <div class="modal-card">
+      <div class="modal-title">📤 批量匯出文檔 / 資料夾</div>
+      <p style="font-size:12px; color:var(--text-secondary);">勾選你要匯出的資料夾或個別文檔：</p>
+      <div style="display:flex; gap:8px; margin-bottom:6px;">
+        <button class="btn btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="toggleExportAll(true)">全選</button>
+        <button class="btn btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="toggleExportAll(false)">取消全選</button>
+      </div>
+      <div style="border:1px solid var(--border); border-radius:var(--radius-md); padding:8px; max-height:240px; overflow-y:auto;" id="exportChecklistContainer"></div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; flex-wrap:wrap; gap:10px;">
+        <label style="font-size:12px; color:var(--text-secondary);">
+          匯出格式：
+          <select id="exportFormatSelect" style="padding:6px 8px; border-radius:var(--radius-sm); border:1px solid var(--border); font-size:12px; background:var(--bg-sunken); color:var(--text-primary);">
+            <option value="html">獨立網頁 HTML 檔案</option>
+            <option value="json">結構化 JSON 檔案</option>
+            <option value="txt">純文字 TXT 檔案</option>
+          </select>
+        </label>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-secondary" onclick="closeBatchExportModal()">取消</button>
+          <button class="btn btn-primary" onclick="confirmBatchExport()">開始匯出</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈窗：標籤顏色功能自定義命名 -->
+  <div class="modal-overlay" id="paletteModal">
+    <div class="modal-card">
+      <div class="modal-title">🎨 標籤顏色功能自定義命名</div>
+      <p style="font-size:12px; color:var(--text-secondary);">自訂各顏色所代表的小說標籤分類：</p>
+      <div id="paletteConfigList" class="palette-list-box"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
+        <button class="btn btn-secondary" onclick="cancelPaletteModal()">取消</button>
+        <button class="btn btn-primary" onclick="closePaletteModal()">完成儲存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈窗：自訂 Icon -->
+  <div class="modal-overlay" id="iconPickerModal">
+    <div class="modal-card" style="width:340px;">
+      <div class="modal-title">✨ 選擇自訂 Icon</div>
+      <div class="emoji-grid" id="emojiGrid"></div>
+      <div style="margin-top:10px;">
+        <label style="font-size:12px; color:var(--text-secondary);">或手動輸入任何符號：</label>
+        <input type="text" id="customIconInput" class="form-input" maxlength="4" placeholder="例如：⚔️、🐉">
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">
+        <button class="btn btn-secondary" onclick="closeIconPickerModal()">取消</button>
+        <button class="btn btn-primary" onclick="applyCustomIcon()">確定套用</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈窗：移動資料夾 -->
+  <div class="modal-overlay" id="moveModal">
+    <div class="modal-card">
+      <div class="modal-title">🔀 移動資料夾或更改所屬世界觀</div>
+      <p style="font-size:12px; color:var(--text-secondary);">選擇目的地：</p>
+      <select id="moveTargetSelect" class="form-input"></select>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+        <button class="btn btn-secondary" onclick="closeMoveModal()">取消</button>
+        <button class="btn btn-primary" onclick="confirmMoveFolder()">確認移動</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈窗：Hashtag 篩選（依顏色分類，列出標籤／行數／文章標題，點擊跳轉） -->
+  <div class="modal-overlay" id="hashtagFilterModal">
+    <div class="modal-card" style="width:480px;">
+      <div class="modal-title">🏷️ Hashtag 篩選</div>
+      <p style="font-size:12px; color:var(--text-secondary);">依顏色分類篩選目前世界觀中的 Hashtag，點擊項目可直接跳轉至該文檔段落：</p>
+      <div class="hashtag-filter-colors" id="hashtagFilterColors"></div>
+      <div class="hashtag-filter-list" id="hashtagFilterList"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
+        <button class="btn btn-secondary" onclick="closeHashtagFilterModal()">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈窗：垃圾桶 -->
+  <div class="modal-overlay" id="trashModal">
+    <div class="modal-card" style="width:480px;">
+      <div class="modal-title">🗑️ 垃圾桶</div>
+      <p style="font-size:12px; color:var(--text-secondary);">已刪除的資料夾與文檔會暫存在這裡，可以復原或永久刪除：</p>
+      <div class="trash-list" id="trashList"></div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px;">
+        <button class="btn btn-danger" style="font-size:11px; padding:4px 8px;" onclick="emptyTrash()">清空垃圾桶</button>
+        <button class="btn btn-secondary" onclick="closeTrashModal()">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 標籤顏色快捷 Popover -->
+  <div class="color-picker-popup" id="colorPickerPopover"></div>
+
+  <!-- 右鍵 / 長按 自訂選單 -->
+  <div class="ctx-menu-overlay" id="ctxMenuOverlay"></div>
+  <div class="ctx-menu" id="customContextMenu"></div>
+
+  <!-- 替換原本的 <script src="app.js"></script> -->
+  <script src="js/state.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/main.js"></script>
+  <script src="js/documents.js"></script>
+  <script src="js/directory.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/modal.js"></script>
+  <script src="js/import-export.js"></script>
+  <script src="js/canvas.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
+</body>
+</html>

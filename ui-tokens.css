@@ -1,0 +1,125 @@
+/* ==========================================================
+   ui-tokens.css
+   全站設計變數（Design Tokens）。style.css 的所有元件樣式
+   都只「引用」這裡的變數，不直接寫死數字。
+   要調整全站的顏色／字級／間距／按鈕／圓角／icon 尺寸，
+   只需要改這個檔案。
+   ========================================================== */
+
+:root {
+
+  /* ---------- 顏色 Colors（柔和典雅配色，沿用原本設定） ---------- */
+  --bg-main: #F3EEE2;
+  --bg-sidebar: #FFFDF8;
+  --bg-rail: #EAE3D2;
+  --bg-card: #FFFDF8;
+  --bg-sunken: #ECE5D4;
+  --border: #E1D7C1;
+  --border-soft: #EBE2CC;
+  --border-focus: #5A6D82;
+
+  --text-primary: #2A2420;
+  --text-secondary: #6E6152;
+  --text-muted: #A0937E;
+
+  --accent: #AC3B2A;
+  --accent-hover: #8C2E20;
+  --accent-light: #F6E2DA;
+  --accent-line: #E6BBAC;
+
+  --jade: #3C6357;
+  --jade-light: #E1ECE7;
+
+  --danger: #B23A2E;
+  --danger-hover: #93291F;
+  --danger-light: #F7E1DC;
+
+  /* ---------- 陰影 Shadow ---------- */
+  --shadow-sm: 0 1px 2px rgba(42,36,32,0.06);
+  --shadow-md: 0 6px 18px rgba(42,36,32,0.10);
+  --shadow-lg: 0 16px 40px -8px rgba(42,36,32,0.22);
+
+  /* ---------- 安全區域（瀏海/手勢列） ---------- */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+
+
+  /* ==========================================================
+     字體 Font
+     ========================================================== */
+  --font-ui: 'Plus Jakarta Sans', 'Noto Sans TC', system-ui, -apple-system, sans-serif;
+  --font-display: 'Noto Serif TC', 'Plus Jakarta Sans', serif;
+
+  /* 字級：原本散落 17 種大小，併成 7 級。
+     命名 = 實際 px 值，方便直接對照，不用另外查表。 */
+  --fs-10: 10px;   /* 徽章、行號小標、輔助文字 */
+  --fs-12: 12px;   /* 按鈕／選單／輸入框標準字級（用最多） */
+  --fs-14: 14px;   /* node-row、內文輸入框、右鍵選單項目 */
+  --fs-16: 16px;   /* 內文段落、icon 按鈕文字、次標題 */
+  --fs-18: 18px;   /* emoji 選項、圖示、文件標題(手機版) */
+  --fs-20: 20px;   /* world-rail add-btn、文件標題(桌面) */
+  --fs-22: 22px;   /* 文件主標題、大型圖示按鈕 */
+
+
+  /* ==========================================================
+     間距 Spacing
+     命名 = 實際 px 值。所有 padding / margin / gap 都用這組數字
+     組合出來，不再各自寫死。
+     ========================================================== */
+  --sp-1: 1px;
+  --sp-2: 2px;
+  --sp-3: 3px;
+  --sp-4: 4px;
+  --sp-5: 5px;
+  --sp-6: 6px;
+  --sp-7: 7px;
+  --sp-8: 8px;
+  --sp-9: 9px;
+  --sp-10: 10px;
+  --sp-12: 12px;
+  --sp-13: 13px;
+  --sp-14: 14px;
+  --sp-16: 16px;
+  --sp-18: 18px;
+  --sp-20: 20px;
+  --sp-22: 22px;
+  --sp-24: 24px;
+  --sp-28: 28px;
+  --sp-32: 32px;
+  --sp-40: 40px;
+
+
+  /* ==========================================================
+     圓角 Radius
+     ========================================================== */
+  --radius-sm: 6px;    /* 小型元件（輸入框、toc-chip） */
+  --radius-md: 10px;   /* 標準卡片、按鈕、canvas-node */
+  --radius-lg: 14px;   /* 彈出視窗、hashtag 色卡 */
+
+  --radius-2: 2px;      /* ctx-menu 手機版拖曳把手 */
+  --radius-3: 3px;      /* folder-caret hover */
+  --radius-4: 4px;      /* node-row、breadcrumb-item */
+  --radius-8: 8px;      /* hashtag/quickjump 項目、node-row(手機版) */
+  --radius-18: 18px;    /* ctx-menu 手機版底部彈出的上緣圓角 */
+  --radius-pill: 12px;  /* world-rail-btn 狀態、tag-chip、stat-pill 等藥丸形 */
+  --radius-round: 20px; /* 側欄搜尋框等大圓角膠囊 */
+  --radius-full: 50%;   /* 正圓形圖示按鈕 */
+
+
+  /* ==========================================================
+     Icon 尺寸（正方形圖示按鈕，寬高皆為此值）
+     命名 = 實際 px 值。原本桌面/手機各元件尺寸不一，
+     已依你確認的整併表統一成以下這組。
+     ========================================================== */
+  --icon-10: 10px;  /* hashtag 篩選色點 */
+  --icon-14: 14px;  /* folder-caret（桌面） */
+  --icon-18: 18px;  /* img-del-btn */
+  --icon-20: 20px;  /* folder-caret（手機版） */
+  --icon-22: 22px;  /* search-clear-btn */
+  --icon-24: 24px;  /* icon-sm-btn（手機版） */
+  --icon-26: 26px;  /* palette-circle */
+  --icon-28: 28px;  /* icon-sm-btn（桌面） */
+  --icon-40: 40px;  /* world-rail-btn／nav-btn-icon／undoredo/quickjump-fab（手機版標準尺寸） */
+  --icon-44: 44px;  /* world-rail-btn／nav-btn-icon／undoredo/quickjump-fab（桌面標準尺寸） */
+
+}
