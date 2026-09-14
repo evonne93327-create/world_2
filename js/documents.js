@@ -119,8 +119,23 @@ function onContentChange() {
 
 function autoGrowTextarea(el) {
   if (!el) return;
+  // 「先歸零高度、再用 scrollHeight 量出真正需要的高度」這招本身沒問題，但每次量測都要
+  // 先把 textarea 縮回瀏覽器預設高度（很矮，例如只有 2 行）才能重新量測，這一瞬間
+  // .editor-content-area 能捲動的範圍會跟著大幅變小；如果當下已經捲到比較下面（例如
+  // 內文長到第 10 行左右、畫面容不下、已經自動往下捲來跟著游標），瀏覽器會在這個縮小的
+  // 瞬間把捲動位置強制夾回新的（很小的）上限，通常就是最頂端——textarea 隨後雖然馬上
+  // 撐回原本高度，但被夾掉的捲動位置不會自動復原，畫面就會像「打字/貼上打到某個位置
+  // 就自動跳回最上面」。這裡在量測前後記住／還原 .editor-content-area 的 scrollTop，
+  // 把這個副作用抵銷掉。
+  const scrollContainer = document.querySelector(".editor-content-area");
+  const prevScrollTop = scrollContainer ? scrollContainer.scrollTop : null;
+
   el.style.height = "auto";
   el.style.height = el.scrollHeight + "px";
+
+  if (scrollContainer && prevScrollTop !== null) {
+    scrollContainer.scrollTop = prevScrollTop;
+  }
 }
 
 function scheduleContentPersist(docId, text) {
