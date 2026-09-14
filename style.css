@@ -1234,7 +1234,22 @@ main.content-workspace {
   .action-pill-btn { padding: var(--sp-9) var(--sp-12); }
 
   .doc-title-input { font-size: var(--fs-18); }
-  .content-textarea { font-size: var(--fs-16); line-height: 1.85; min-height: 300px; }
+  /* 手機版：內文改回自己內部捲動（跟桌面版不同）。
+     原因：桌面版是靠 JS 把 textarea 撐到跟內容一樣高、交給外層 .editor-content-area
+     捲動，滑鼠滾輪沒問題；但手機上用手指在 textarea（可編輯區）裡滑動，系統會優先
+     判定成「移動游標／選字」，不會被當成捲動手勢往上傳給外層容器 —— 加上 textarea
+     被撐到跟全部內文一樣高，畫面幾乎被它佔滿，等於整頁都滑不動、只看得到游標所在的
+     最後一小段。改成 flex:1 撐滿剩餘空間、自己 overflow-y:auto，讓手機瀏覽器原生的
+     「在 textarea 裡面滑動＝捲動這個 textarea 的內容」機制接手，就能正常滑到最上面。 */
+  .content-textarea {
+    flex: 1 1 0%;
+    min-height: 160px;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    font-size: var(--fs-16);
+    line-height: 1.85;
+  }
 
   .ctx-menu {
     left: 0 !important;
