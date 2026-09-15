@@ -81,27 +81,65 @@ function renderCanvas() {
 function enableDualDrag(element, nodeData) {
   let startX, startY, initialLeft, initialTop;
 
+  // 共用的拖曳邏輯，滑鼠與觸控都會呼叫這三個函式
+  function beginDrag(clientX, clientY) {
+    startX = clientX; startY = clientY;
+    initialLeft = nodeData.x; initialTop = nodeData.y;
+  }
+  function moveDrag(clientX, clientY) {
+    nodeData.x = initialLeft + (clientX - startX);
+    nodeData.y = initialTop + (clientY - startY);
+    element.style.left = nodeData.x + "px";
+    element.style.top = nodeData.y + "px";
+    renderCanvasLines();
+  }
+  function endDrag() {
+    saveData();
+  }
+
+  // 滑鼠（桌面版，原本邏輯不變）
   element.addEventListener("mousedown", function(e) {
     if (e.target.tagName === 'BUTTON') return;
     e.preventDefault();
-    startX = e.clientX; startY = e.clientY;
-    initialLeft = nodeData.x; initialTop = nodeData.y;
+    beginDrag(e.clientX, e.clientY);
 
     function onMouseMove(m) {
-      nodeData.x = initialLeft + (m.clientX - startX);
-      nodeData.y = initialTop + (m.clientY - startY);
-      element.style.left = nodeData.x + "px";
-      element.style.top = nodeData.y + "px";
-      renderCanvasLines();
+      moveDrag(m.clientX, m.clientY);
     }
     function onMouseUp() {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
-      saveData();
+      endDrag();
     }
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
   });
+
+  // 觸控（手機版，新增）
+  element.addEventListener("touchstart", function(e) {
+    if (e.target.tagName === 'BUTTON') return;
+    if (e.touches.length !== 1) return; // 只處理單指拖曳，避免跟雙指縮放/多指手勢衝突
+    const touch = e.touches[0];
+    beginDrag(touch.clientX, touch.clientY);
+
+    function onTouchMove(t) {
+      if (t.touches.length !== 1) return;
+      // 關鍵：擋掉預設行為，否則手指在畫面上移動會被瀏覽器判定成「捲動整頁」
+      // 而不是「拖曳節點」，這就是手機上完全拖不動的原因
+      t.preventDefault();
+      moveDrag(t.touches[0].clientX, t.touches[0].clientY);
+    }
+    function onTouchEnd() {
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchEnd);
+      endDrag();
+    }
+    // passive:false 是必要的，因為要在 touchmove 裡呼叫 preventDefault()
+    window.addEventListener("touchmove", onTouchMove, { passive: false });
+    window.addEventListener("touchend", onTouchEnd);
+    window.addEventListener("touchcancel", onTouchEnd);
+  }, { passive: true });
 }
 
 function startConnect(nodeId, event) {
