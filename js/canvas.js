@@ -505,7 +505,7 @@ function renderCanvasLines() {
 
     let bendMag = 0;
     if (total > 1) {
-      const BEND_MIN_RATIO = 0.3;
+      const BEND_MIN_RATIO = 0;
       const BEND_MAX_RATIO = 0.7;
       const ratio = BEND_MIN_RATIO + (BEND_MAX_RATIO - BEND_MIN_RATIO) * Math.abs(offset);
 
