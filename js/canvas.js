@@ -1,6 +1,5 @@
 /* ==========================================================
-   白板與圖片 (Graphs 邏輯)
-   含：縮放 / 平移 / 長按編輯關係 / 提示常駐 / 倍數指示
+   白板 (Graphs) — viewBox 架構
    ========================================================== */
 
 const CANVAS_NODE_W = 200;
@@ -13,7 +12,7 @@ function getCurrentWorldCanvas() {
   return world.canvas;
 }
 
-/* ---------- 視圖變換工具 ---------- */
+/* ---------- 座標轉換 ---------- */
 
 function worldToScreen(wx, wy) {
   return {
@@ -38,14 +37,12 @@ function clampScale(s) {
 function resetCanvasView() {
   canvasTransform = { x: 0, y: 0, scale: 1 };
   applyCanvasTransform();
-  applySvgTransform();
+  applySvgViewBox();
 }
 
-/* ---------- 提示：永遠顯示，不做任何隱藏 ---------- */
+/* ---------- 提示 ---------- */
 
-function dismissCanvasHint() {
-  // 提示常駐顯示，不再隱藏
-}
+function dismissCanvasHint() {}
 
 function applyCanvasHintVisibility() {
   const hint = document.querySelector(".canvas-hint-text");
@@ -53,7 +50,7 @@ function applyCanvasHintVisibility() {
   hint.classList.remove("is-hidden");
 }
 
-/* ---------- 倍數指示（1 秒後淡出） ---------- */
+/* ---------- 倍數指示 ---------- */
 
 function showZoomIndicator() {
   const el = document.getElementById("canvasZoomIndicator");
@@ -71,18 +68,11 @@ function showZoomIndicator() {
 
 function addCurrentDocToCanvas() {
   const currentDoc = appData.docs.find(d => d.id === activeDocId);
-  if (!currentDoc) {
-    alert("請先選擇或開啟一個文檔！");
-    return;
-  }
+  if (!currentDoc) { alert("請先選擇或開啟一個文檔！"); return; }
 
   const canvas = getCurrentWorldCanvas();
   const exists = canvas.nodes.find(n => n.docId === currentDoc.id);
-  if (exists) {
-    alert("此文檔已存在於當前白板！");
-    switchView('canvas');
-    return;
-  }
+  if (exists) { alert("此文檔已存在於當前白板！"); switchView('canvas'); return; }
 
   canvas.nodes.push({
     id: "node_" + currentDoc.id,
@@ -112,9 +102,7 @@ function renderCanvas() {
     el.style.left = node.x + "px";
     el.style.top = node.y + "px";
 
-    if (connectingSourceNodeId === node.id) {
-      el.classList.add("connecting");
-    }
+    if (connectingSourceNodeId === node.id) el.classList.add("connecting");
 
     const title = (doc.icon || '📄') + " " + (doc.title || "無標題文檔");
     const preview = (doc.content || "").replace(/\n/g, " ");
@@ -152,7 +140,7 @@ function renderCanvas() {
   renderCanvasLines();
 }
 
-/* ---------- 套用 transform ---------- */
+/* ---------- 節點定位（用 CSS transform）---------- */
 
 function applyCanvasTransform(silent) {
   const container = document.getElementById("canvasNodesContainer");
@@ -163,12 +151,22 @@ function applyCanvasTransform(silent) {
   if (!silent) showZoomIndicator();
 }
 
-function applySvgTransform() {
+/* ---------- SVG viewBox（線條用）---------- */
+
+function applySvgViewBox() {
   const svg = document.getElementById("canvasSvg");
   if (!svg) return;
-  svg.style.transformOrigin = "0 0";
-  svg.style.transform =
-    "translate(" + canvasTransform.x + "px," + canvasTransform.y + "px) scale(" + canvasTransform.scale + ")";
+  const view = document.getElementById("canvasView");
+  const rect = view.getBoundingClientRect();
+  const w = rect.width / canvasTransform.scale;
+  const h = rect.height / canvasTransform.scale;
+  const x = -canvasTransform.x / canvasTransform.scale;
+  const y = -canvasTransform.y / canvasTransform.scale;
+
+  svg.setAttribute("viewBox", x + " " + y + " " + w + " " + h);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.setAttribute("width", rect.width);
+  svg.setAttribute("height", rect.height);
 }
 
 /* ---------- 節點拖曳 ---------- */
@@ -248,10 +246,7 @@ function enableDualDrag(element, nodeData) {
 /* ---------- 連線 ---------- */
 
 function startConnect(nodeId) {
-  if (connectingSourceNodeId === nodeId) {
-    cancelConnect();
-    return;
-  }
+  if (connectingSourceNodeId === nodeId) { cancelConnect(); return; }
   connectingSourceNodeId = nodeId;
   document.querySelectorAll(".canvas-node").forEach(function(el) {
     el.classList.toggle("connecting", el.id === nodeId);
@@ -267,10 +262,7 @@ function cancelConnect() {
 
 function completeConnection(targetNodeId) {
   const sourceId = connectingSourceNodeId;
-  if (!sourceId || sourceId === targetNodeId) {
-    cancelConnect();
-    return;
-  }
+  if (!sourceId || sourceId === targetNodeId) { cancelConnect(); return; }
 
   const canvas = getCurrentWorldCanvas();
   const relation = prompt("請輸入兩者關係：", "盟友 / 敵對 / 密探");
@@ -290,14 +282,13 @@ function completeConnection(targetNodeId) {
   renderCanvasLines();
 }
 
-/* ---------- 連線顏色 / 邊框交點 ---------- */
+/* ---------- 顏色 / 邊框交點 ---------- */
 
 function getEdgeColor(edge) {
   const id = edge.color || "e_gray";
   return EDGE_COLORS[id] || EDGE_COLORS["e_gray"];
 }
 
-/* 從節點中心往目標方向，交於「實際節點 DOM 邊框」的點（世界座標） */
 function getNodeBorderPoint(node, targetX, targetY) {
   const el = document.getElementById(node.id);
   let halfW, halfH, cx, cy;
@@ -305,12 +296,12 @@ function getNodeBorderPoint(node, targetX, targetY) {
   if (el) {
     const w = el.offsetWidth || CANVAS_NODE_W;
     const h = el.offsetHeight || 80;
-    halfW = w / 2 + 4;
-    halfH = h / 2 + 4;
+    halfW = w / 2 + 2;
+    halfH = h / 2 + 2;
     cx = node.x + w / 2;
     cy = node.y + h / 2;
   } else {
-    halfW = CANVAS_NODE_W / 2 + 4;
+    halfW = CANVAS_NODE_W / 2 + 2;
     halfH = 44;
     cx = node.x + CANVAS_NODE_W / 2;
     cy = node.y + 40;
@@ -327,29 +318,29 @@ function getNodeBorderPoint(node, targetX, targetY) {
   return { x: cx + dx * t, y: cy + dy * t };
 }
 
-/* ---------- 渲染連線 ---------- */
+/* ---------- 渲染連線（viewBox 座標，1:1 世界座標）---------- */
 
 function renderCanvasLines() {
   const svg = document.getElementById("canvasSvg");
   svg.innerHTML = "";
   const canvas = getCurrentWorldCanvas();
 
-  const invScale = 1 / canvasTransform.scale;
+  // 圖層分組：先線、再標籤（避免標籤被線壓住）
+  const NS = "http://www.w3.org/2000/svg";
 
-  // 箭頭 marker：每個顏色各一組
-  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  // 箭頭 marker：每色一組
+  const defs = document.createElementNS(NS, "defs");
   Object.keys(EDGE_COLORS).forEach(function(colorId) {
     const col = EDGE_COLORS[colorId];
-    const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+    const marker = document.createElementNS(NS, "marker");
     marker.setAttribute("id", "arrow_" + colorId);
     marker.setAttribute("viewBox", "0 0 10 10");
     marker.setAttribute("refX", "9");
     marker.setAttribute("refY", "5");
-    marker.setAttribute("markerWidth", String(8 * invScale));
-    marker.setAttribute("markerHeight", String(8 * invScale));
-    marker.setAttribute("markerUnits", "userSpaceOnUse");
+    marker.setAttribute("markerWidth", "6");
+    marker.setAttribute("markerHeight", "6");
     marker.setAttribute("orient", "auto-start-reverse");
-    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const p = document.createElementNS(NS, "path");
     p.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
     p.setAttribute("fill", col.stroke);
     marker.appendChild(p);
@@ -357,7 +348,17 @@ function renderCanvasLines() {
   });
   svg.appendChild(defs);
 
-  // 分組：同一對節點的多條邊要分散
+  // 圖層 1：線條
+  const linesLayer = document.createElementNS(NS, "g");
+  linesLayer.setAttribute("class", "canvas-lines-layer");
+  svg.appendChild(linesLayer);
+
+  // 圖層 2：標籤（永遠在線上面）
+  const labelsLayer = document.createElementNS(NS, "g");
+  labelsLayer.setAttribute("class", "canvas-labels-layer");
+  svg.appendChild(labelsLayer);
+
+  // 同一對節點的多條邊要分散
   const pairGroups = {};
   canvas.edges.forEach(function(edge) {
     const key = [edge.source, edge.target].sort().join("|");
@@ -382,7 +383,6 @@ function renderCanvasLines() {
     const tgtNode = canvas.nodes.find(n => n.id === edge.target);
     if (!srcNode || !tgtNode) return;
 
-    // 用實際 DOM 算出中心
     const srcEl = document.getElementById(srcNode.id);
     const tgtEl = document.getElementById(tgtNode.id);
     const srcW = srcEl ? srcEl.offsetWidth : CANVAS_NODE_W;
@@ -393,7 +393,6 @@ function renderCanvasLines() {
     const srcCenter = { x: srcNode.x + srcW / 2, y: srcNode.y + srcH / 2 };
     const tgtCenter = { x: tgtNode.x + tgtW / 2, y: tgtNode.y + tgtH / 2 };
 
-    // 永遠從 source 邊框畫到 target 邊框
     const p1 = getNodeBorderPoint(srcNode, tgtCenter.x, tgtCenter.y);
     const p2 = getNodeBorderPoint(tgtNode, srcCenter.x, srcCenter.y);
 
@@ -419,20 +418,19 @@ function renderCanvasLines() {
 
     const col = getEdgeColor(edge);
 
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const path = document.createElementNS(NS, "path");
     path.setAttribute("d", d);
     path.setAttribute("class", "relation-line");
     path.style.stroke = col.stroke;
-    path.style.strokeWidth = (2.5 * invScale) + "px";
+    path.style.strokeWidth = "2.5";
+    path.style.fill = "none";
     path.style.pointerEvents = "none";
-    path.setAttribute("vector-effect", "non-scaling-stroke");
 
     const dash = edge.dash || "solid";
-    if (dash === "dashed") path.setAttribute("stroke-dasharray", (10 * invScale) + " " + (6 * invScale));
-    else if (dash === "dotted") path.setAttribute("stroke-dasharray", (2 * invScale) + " " + (6 * invScale));
+    if (dash === "dashed") path.setAttribute("stroke-dasharray", "10 6");
+    else if (dash === "dotted") path.setAttribute("stroke-dasharray", "2 6");
     path.setAttribute("stroke-linecap", "round");
 
-    // 箭頭：四種模式
     const arrow = edge.arrow || "none";
     const markerUrl = "url(#arrow_" + (edge.color || "e_gray") + ")";
     if (arrow === "forward") {
@@ -444,7 +442,9 @@ function renderCanvasLines() {
       path.setAttribute("marker-end", markerUrl);
     }
 
-    // 標籤：放在曲線 t=0.5 的位置，依 offset 沿法線錯開
+    linesLayer.appendChild(path);
+
+    // 標籤：曲線 t=0.5 位置
     const t = 0.5;
     const mt = 1 - t;
     const bezX = mt*mt*mt*x1 + 3*mt*mt*t*cx1 + 3*mt*t*t*cx2 + t*t*t*x2;
@@ -454,11 +454,12 @@ function renderCanvasLines() {
     const midX = bezX + nx * labelOffset;
     const midY = bezY + ny * labelOffset;
 
-    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const g = document.createElementNS(NS, "g");
     g.style.pointerEvents = "all";
     g.style.cursor = "pointer";
 
-    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    // 文字用固定世界座標字級 12，用 getBBox 量測實際大小
+    const text = document.createElementNS(NS, "text");
     text.setAttribute("x", midX);
     text.setAttribute("y", midY);
     text.setAttribute("class", "line-label-box");
@@ -470,12 +471,11 @@ function renderCanvasLines() {
     text.setAttribute("font-family", "var(--font-ui)");
     text.style.pointerEvents = "none";
     text.style.userSelect = "none";
-    text.textContent = edge.label;
+    text.textContent = edge.label || "關聯";
 
     g.appendChild(text);
-    svg.appendChild(g);
+    labelsLayer.appendChild(g);
 
-    // 量測文字實際大小（世界座標）
     let bbox;
     try {
       bbox = text.getBBox();
@@ -483,10 +483,17 @@ function renderCanvasLines() {
       bbox = { x: midX - 30, y: midY - 8, width: 60, height: 16 };
     }
 
+    if (bbox.width === 0) {
+      bbox.width = Math.max((edge.label || '').length * 14, 30);
+      bbox.height = 16;
+      bbox.x = midX - bbox.width / 2;
+      bbox.y = midY - bbox.height / 2;
+    }
+
     const padX = 8;
     const padY = 4;
 
-    const bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    const bgRect = document.createElementNS(NS, "rect");
     bgRect.setAttribute("x", bbox.x - padX);
     bgRect.setAttribute("y", bbox.y - padY);
     bgRect.setAttribute("width", bbox.width + padX * 2);
@@ -507,11 +514,9 @@ function renderCanvasLines() {
     });
 
     attachLongPressToSvgGroup(g, function() { openEdgeEditModal(edge.id); });
-
-    svg.appendChild(path);
   });
 
-  applySvgTransform();
+  applySvgViewBox();
 }
 
 function attachLongPressToSvgGroup(gEl, callback) {
@@ -571,7 +576,6 @@ function openEdgeEditModal(edgeId) {
     tgtDoc ? ((tgtDoc.icon || '📄') + ' ' + (tgtDoc.title || '無標題')) : '（未知）';
   document.getElementById("edgeEditLabelInput").value = edge.label || '';
 
-  // 顏色 chips
   const colorRow = document.getElementById("edgeColorRow");
   colorRow.innerHTML = "";
   const currentColor = edge.color || "e_gray";
@@ -594,7 +598,6 @@ function openEdgeEditModal(edgeId) {
     colorRow.appendChild(chip);
   });
 
-  // 線條樣式
   const dashRow = document.getElementById("edgeStyleRow");
   const currentDash = edge.dash || "solid";
   dashRow.querySelectorAll(".edge-opt-btn").forEach(function(btn) {
@@ -605,7 +608,6 @@ function openEdgeEditModal(edgeId) {
     };
   });
 
-  // 箭頭
   const arrowRow = document.getElementById("edgeArrowRow");
   const currentArrow = edge.arrow || "none";
   arrowRow.querySelectorAll(".edge-opt-btn").forEach(function(btn) {
@@ -685,7 +687,7 @@ function buildCanvasNodeMenuItems(node, doc) {
   ];
 }
 
-/* ---------- 白板事件：縮放 + 平移 ---------- */
+/* ---------- 白板事件 ---------- */
 
 function setupCanvasEvents() {
   const view = document.getElementById("canvasView");
@@ -697,9 +699,9 @@ function setupCanvasEvents() {
     }
   };
 
+  // 滾輪縮放
   view.addEventListener("wheel", function(e) {
     if (e.target.closest('.canvas-floating-actions')) return;
-
     e.preventDefault();
 
     const rect = view.getBoundingClientRect();
@@ -717,9 +719,11 @@ function setupCanvasEvents() {
     canvasTransform.y = my - worldBefore.y * newScale;
 
     applyCanvasTransform();
-    renderCanvasLines();
+    applySvgViewBox();
+    // 線條不用重繪，viewBox 會自動縮放
   }, { passive: false });
 
+  // 拖曳空白平移
   view.addEventListener("mousedown", function(e) {
     if (e.button !== 0) return;
     if (e.target.closest('.canvas-node')) return;
@@ -738,7 +742,7 @@ function setupCanvasEvents() {
       canvasTransform.x = initX + dx;
       canvasTransform.y = initY + dy;
       applyCanvasTransform();
-      applySvgTransform();
+      applySvgViewBox();
     }
     function onUp() {
       window.removeEventListener("mousemove", onMove);
@@ -752,6 +756,9 @@ function setupCanvasEvents() {
 
   svg.style.touchAction = "none";
   view.style.touchAction = "none";
+
+  // 視窗尺寸變動時更新 viewBox
+  window.addEventListener("resize", applySvgViewBox);
 }
 
 function setupTouchPanZoom(view, svg) {
@@ -785,10 +792,7 @@ function setupTouchPanZoom(view, svg) {
       const onNode = !!e.target.closest('.canvas-node');
       const onSvgChild = !!(e.target.closest && e.target.closest('svg') && e.target.tagName !== 'svg');
 
-      if (onSvgChild) {
-        mode = null;
-        return;
-      }
+      if (onSvgChild) { mode = null; return; }
       if (!onNode) {
         mode = 'pan';
         panStartX = e.touches[0].clientX;
@@ -815,7 +819,7 @@ function setupTouchPanZoom(view, svg) {
       canvasTransform.y = cy - pinchWorldCenter.y * newScale;
 
       applyCanvasTransform();
-      renderCanvasLines();
+      applySvgViewBox();
     } else if (mode === 'pan' && e.touches.length === 1) {
       e.preventDefault();
       const dx = e.touches[0].clientX - panStartX;
@@ -823,7 +827,7 @@ function setupTouchPanZoom(view, svg) {
       canvasTransform.x = panInitX + dx;
       canvasTransform.y = panInitY + dy;
       applyCanvasTransform();
-      applySvgTransform();
+      applySvgViewBox();
     }
   }, { passive: false });
 
