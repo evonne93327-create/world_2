@@ -776,12 +776,12 @@ main.content-workspace {
    桌面：44×44
    ---------------------------------------------------------- */
 .canvas-floating-actions {
-  position: absolute;
-  right: 16px;
-  bottom: 16px;
+  position: fixed;
+  right: var(--sp-28);
+  bottom: var(--sp-28);
   display: flex;
   gap: 8px;
-  z-index: 30;
+  z-index: 75;
 }
 .canvas-floating-btn {
   width: var(--icon-44);
