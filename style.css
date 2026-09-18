@@ -122,7 +122,7 @@ aside.sidebar-directory {
   flex-direction: column;
   transition: width 0.25s ease, min-width 0.25s ease;
   overflow: hidden;
-  z-index: 35;
+  z-index: 80;
   flex-shrink: 0;
 }
 
@@ -584,7 +584,7 @@ main.content-workspace {
   align-items: center;
   gap: var(--sp-8);
   padding: var(--sp-9) var(--sp-14);
-  font-size: var(--fs-12);
+  font-size: var(--fs-14);
   font-weight: 600;
   color: var(--text-primary);
   cursor: pointer;
@@ -748,29 +748,8 @@ main.content-workspace {
 }
 
 /* ----------------------------------------------------------
-   左上角世界觀標題
-   ---------------------------------------------------------- */
-.canvas-world-title {
-  position: absolute;
-  left: 16px;
-  top: 14px;
-  max-width: 60%;
-  background: rgba(42,36,32,0.72);
-  color: #fff;
-  padding: 6px 12px;
-  border-radius: var(--radius-md);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.4;
-  z-index: 20;
-  pointer-events: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* ----------------------------------------------------------
    浮動提示（hint）— 桌面在左下角、手機在上方
+   常駐顯示，不再隱藏
    ---------------------------------------------------------- */
 .canvas-hint-floating {
   position: absolute;
@@ -1304,7 +1283,7 @@ main.content-workspace {
     max-width: 320px;
     transform: translateX(-100%);
     box-shadow: 4px 0 24px rgba(42,36,32,0.2);
-    z-index: 50;
+    z-index: 80;
     transition: transform 0.24s ease;
   }
   aside.sidebar-directory.drawer-open {
@@ -1316,7 +1295,7 @@ main.content-workspace {
     position: fixed;
     inset: 0;
     background: rgba(42,36,32,0.45);
-    z-index: 48;
+    z-index: 79;
     display: none;
   }
   .sidebar-overlay.active { display: block; }
