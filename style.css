@@ -748,7 +748,7 @@ main.content-workspace {
 }
 
 /* ----------------------------------------------------------
-   浮動提示（hint）— 預設在左下角
+   浮動提示（hint）— 桌面在左下角、手機在上方
    ---------------------------------------------------------- */
 .canvas-hint-floating {
   position: absolute;
@@ -773,8 +773,7 @@ main.content-workspace {
 
 /* ----------------------------------------------------------
    右下角浮動按鈕（重置視圖 / 重整）
-   尺寸與快速跳轉按鈕（.quickjump-fab）一致：
-   桌面 44×44、手機 40×40
+   桌面：44×44
    ---------------------------------------------------------- */
 .canvas-floating-actions {
   position: absolute;
@@ -832,10 +831,11 @@ main.content-workspace {
 }
 
 /* ----------------------------------------------------------
-   手機版：hint 移到上方、按鈕縮小成 40×40
+   手機版
+   - hint 移到上方
+   - 按鈕尺寸 / 位置完全比照快速跳轉按鈕（.quickjump-fab）
    ---------------------------------------------------------- */
 @media (max-width: 768px) {
-  /* hint 移到畫面上方 */
   .canvas-hint-floating {
     left: 12px;
     right: 12px;
@@ -847,19 +847,18 @@ main.content-workspace {
     text-align: center;
   }
 
-  /* 按鈕尺寸跟快速跳轉按鈕一致（40×40） */
+  /* 跟 .quickjump-fab 手機版完全相同的定位與尺寸 */
   .canvas-floating-actions {
     right: 16px;
     bottom: calc(56px + var(--safe-b) + 16px);
-    gap: 10px;
+    gap: 8px;
   }
   .canvas-floating-btn {
     width: var(--icon-40);
     height: var(--icon-40);
-    font-size: var(--fs-16);
+    font-size: var(--fs-18);
   }
 
-  /* 倍數指示移到上方（避免被下方導覽列/按鈕擋住） */
   .canvas-zoom-indicator {
     top: 60px;
     bottom: auto;
