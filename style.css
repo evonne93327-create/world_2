@@ -1595,7 +1595,7 @@ main.content-workspace {
 }
 .edge-opt-btn {
   flex: 1;
-  min-width: 80px;
+  min-width: 56px;
   padding: var(--sp-8) var(--sp-10);
   font-size: var(--fs-12);
   font-weight: 600;
