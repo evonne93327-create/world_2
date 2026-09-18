@@ -3,7 +3,7 @@
    含：縮放 / 平移 / 長按編輯關係 / 提示自動隱藏 / 倍數指示
    ========================================================== */
 
-const CANVAS_NODE_W = 200;   // 節點寬度（給連線端點計算用）
+const CANVAS_NODE_W = 200;
 
 let zoomIndicatorTimer = null;
 
@@ -56,20 +56,18 @@ function applyCanvasHintVisibility() {
   hint.classList.toggle("is-hidden", canvasHintDismissed);
 }
 
-/* ---------- 倍數指示 ---------- */
+/* ---------- 倍數指示（1 秒後淡出） ---------- */
 
 function showZoomIndicator() {
   const el = document.getElementById("canvasZoomIndicator");
   if (!el) return;
   el.textContent = Math.round(canvasTransform.scale * 100) + "%";
   el.classList.add("is-visible");
-  if (zoomIndicatorTimer) {
-    clearTimeout(zoomIndicatorTimer);
-  }
+  if (zoomIndicatorTimer) clearTimeout(zoomIndicatorTimer);
   zoomIndicatorTimer = setTimeout(function() {
     el.classList.remove("is-visible");
     zoomIndicatorTimer = null;
-  }, 2000);
+  }, 1000);
 }
 
 /* ---------- 加入白板 ---------- */
@@ -139,7 +137,6 @@ function renderCanvas() {
       switchView('editor');
     };
 
-    // 節點右鍵（桌面）/ 長按（手機）→ 節點選單
     attachContextMenu(
       el,
       function() { return buildCanvasNodeMenuItems(node, doc); },
@@ -150,7 +147,7 @@ function renderCanvas() {
     container.appendChild(el);
   });
 
-  applyCanvasTransform(true); // silent：初始化不顯示倍數
+  applyCanvasTransform(true);
   renderCanvasLines();
 }
 
@@ -197,7 +194,6 @@ function enableDualDrag(element, nodeData) {
     dismissCanvasHint();
   }
 
-  // 滑鼠
   element.addEventListener("mousedown", function(e) {
     if (e.target.tagName === 'BUTTON') return;
     if (e.button !== 0) return;
@@ -215,7 +211,6 @@ function enableDualDrag(element, nodeData) {
     window.addEventListener("mouseup", onMouseUp);
   });
 
-  // 觸控（單指拖節點；雙指交給白板 pinch）
   element.addEventListener("touchstart", function(e) {
     if (e.target.tagName === 'BUTTON') return;
     if (e.touches.length !== 1) return;
@@ -291,7 +286,6 @@ function renderCanvasLines() {
     const dx = (x2 - x1) * 0.3;
     const d = "M " + x1 + " " + y1 + " C " + (x1 + dx) + " " + y1 + ", " + (x2 - dx) + " " + y2 + ", " + x2 + " " + y2;
 
-    // 線段本身：完全不可互動
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", d);
     path.setAttribute("class", "relation-line");
@@ -301,7 +295,6 @@ function renderCanvasLines() {
     const midY = (y1 + y2) / 2;
     const textWidth = Math.max((edge.label || '').length * 13, 36);
 
-    // 只有標籤框接收事件
     const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
     g.style.pointerEvents = "all";
     g.style.cursor = "pointer";
@@ -319,14 +312,12 @@ function renderCanvasLines() {
     text.setAttribute("class", "line-label-box");
     text.textContent = edge.label;
 
-    // 電腦版：只認右鍵
     g.addEventListener("contextmenu", function(e) {
       e.preventDefault();
       e.stopPropagation();
       openEdgeEditModal(edge.id);
     });
 
-    // 手機版：只認長按 280ms
     attachLongPressToSvgGroup(g, function() { openEdgeEditModal(edge.id); });
 
     g.appendChild(bgRect);
@@ -463,7 +454,6 @@ function setupCanvasEvents() {
   const view = document.getElementById("canvasView");
   const svg = document.getElementById("canvasSvg");
 
-  // 點空白處：取消連線模式
   view.onclick = function(e) {
     if (!e.target.closest('.canvas-node')) {
       if (connectingSourceNodeId) {
@@ -473,9 +463,8 @@ function setupCanvasEvents() {
     }
   };
 
-  /* ===== 桌面：滾輪縮放（以滑鼠位置為中心） ===== */
+  /* ===== 桌面：滾輪縮放 ===== */
   view.addEventListener("wheel", function(e) {
-    if (e.target.closest('.canvas-bar')) return;
     if (e.target.closest('.canvas-floating-actions')) return;
     e.preventDefault();
     const rect = view.getBoundingClientRect();
@@ -500,10 +489,9 @@ function setupCanvasEvents() {
   view.addEventListener("mousedown", function(e) {
     if (e.button !== 0) return;
     if (e.target.closest('.canvas-node')) return;
-    if (e.target.closest('.canvas-bar')) return;
     if (e.target.closest('.canvas-floating-actions')) return;
+    if (e.target.closest('.canvas-hint-floating')) return;
     if (e.target.closest('.canvas-zoom-indicator')) return;
-    // 點在 SVG 子元素（標籤框）→ 不啟動平移
     if (e.target.closest('svg') && e.target.tagName !== 'svg') return;
 
     e.preventDefault();
@@ -550,10 +538,9 @@ function setupTouchPanZoom(view, svg) {
   }
 
   view.addEventListener("touchstart", function(e) {
-    if (e.target.closest('.canvas-bar')) return;
     if (e.target.closest('.canvas-floating-actions')) return;
+    if (e.target.closest('.canvas-hint-floating')) return;
 
-    // 雙指：一律 pinch
     if (e.touches.length === 2) {
       mode = 'pinch';
       moved = true;
@@ -566,7 +553,6 @@ function setupTouchPanZoom(view, svg) {
       return;
     }
 
-    // 單指
     if (e.touches.length === 1) {
       const onNode = !!e.target.closest('.canvas-node');
       const onSvgChild = !!(e.target.closest && e.target.closest('svg') && e.target.tagName !== 'svg');
