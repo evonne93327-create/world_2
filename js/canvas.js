@@ -499,9 +499,14 @@ function renderCanvasLines() {
 
     /* ----- 弧度：用 offset 強制給定 ----- */
     // 同一對節點的多條邊：offset = -1 / 0 / +1
-    // 讓中間直、兩側彎（往哪彎由 offset 決定）
+    // 兩側彎（往哪彎由 offset 決定），中間那條（offset=0，或單一連線）
+    // 也給一個最小弧度，避免整條線死直，維持像麻花一樣自然的弧形路徑
+    const maxBend = Math.min(dist * 0.28, 90);
+    const minBend = maxBend * 0.35;
     const offset = edgeOffsetMap[edge.id] || 0;
-    const bendMag = Math.min(dist * 0.28, 90) * offset;
+    const bendMag = offset === 0
+      ? minBend
+      : Math.sign(offset) * Math.max(Math.abs(offset) * maxBend, minBend);
 
     const ext1 = dist * 0.35;
     const ext2 = dist * 0.35;
