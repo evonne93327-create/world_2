@@ -560,7 +560,6 @@ main.content-workspace {
 .action-pill-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .action-pill-btn:disabled:hover { background: var(--bg-card); }
 
-/* 「投射白板」「放圖片」「刪除」合併成單一按鈕，點開跳出小浮動選單 */
 .docactions-wrap { position: relative; }
 .docactions-panel {
   position: absolute;
@@ -619,13 +618,8 @@ main.content-workspace {
   width: 100%;
   min-height: 400px;
   height: auto;
-  overflow-y: hidden; /* 內文不再自己捲動，統一交給外層 .editor-content-area 捲動（標題／內文同一個捲軸），高度由 JS 依內容自動撐開 */
-  flex-shrink: 0; /* 關鍵修正：.editor-content-area 是 flex column 又有 overflow-y:auto，
-    這種情況下 flex 子元素預設仍會被壓縮回容器高度（overflow 不是 visible 時，
-    瀏覽器會取消 min-height:auto 的保護），導致 JS 撐好的高度被壓回去、多出來的內文
-    因為本身 overflow-y:hidden 直接被裁掉看不見，而不是變成外層可以捲動的內容。
-    加上 flex-shrink:0 讓 textarea 維持 JS 撐出來的完整高度，超出容器的部分才會變成
-    .editor-content-area 的捲動內容，往上滑就能看到完整內文。 */
+  overflow-y: hidden;
+  flex-shrink: 0;
   border: none !important;
   outline: none !important;
   resize: none;
@@ -686,6 +680,7 @@ main.content-workspace {
   background-image: radial-gradient(#D7CBB0 1.2px, transparent 1.2px);
   background-size: 24px 24px;
   overflow: hidden;
+  touch-action: none;
 }
 .canvas-bar {
   position: absolute;
@@ -701,7 +696,7 @@ main.content-workspace {
   align-items: center;
   justify-content: space-between;
   z-index: 10;
-  max-width: 650px;
+  max-width: 720px;
 }
 .canvas-svg { 
   position: absolute; 
@@ -709,7 +704,9 @@ main.content-workspace {
   width: 100%; 
   height: 100%; 
   z-index: 1; 
-  pointer-events: none; 
+  pointer-events: none;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 .canvas-svg g, .canvas-svg path, .canvas-svg text { 
   pointer-events: all; 
@@ -751,6 +748,31 @@ main.content-workspace {
 .canvas-node.connecting {
   border-color: var(--accent) !important;
   box-shadow: 0 0 0 2px var(--accent-light) !important;
+}
+
+/* 節點容器：套用 transform */
+#canvasNodesContainer {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+  pointer-events: none;
+  z-index: 2;
+}
+#canvasNodesContainer .canvas-node {
+  pointer-events: auto;
+}
+
+/* 白板提示：第一次操作後淡出 */
+.canvas-hint-text {
+  transition: opacity 0.4s ease, visibility 0.4s ease;
+}
+.canvas-hint-text.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+@media (max-width: 768px) {
+  .canvas-hint-text { font-size: 10px; }
 }
 
 /* 彈出視窗與自定義色盤 */
@@ -1060,12 +1082,10 @@ main.content-workspace {
     order: 1;
   }
 
-  /* 手機刪掉 B（世界觀按鈕） */
   #btnB_WorldBadge {
     display: none !important;
   }
 
-  /* C（文檔／白板）移到 A（漢堡）右邊 */
   .nav-group-center {
     order: 2;
     margin-left: var(--sp-8);
@@ -1076,7 +1096,6 @@ main.content-workspace {
     order: 3;
   }
 
-  /* 文檔／白板切換按鈕 → 只留 Icon 不留文字 */
   .tab-btn {
     font-size: 0 !important;
     padding: var(--sp-6) var(--sp-10);
@@ -1085,14 +1104,10 @@ main.content-workspace {
     font-size: var(--fs-14) !important;
   }
 
-  /* 手機版麵包屑：強制單行，超過就只留「世界觀」跟「目前開啟的檔案」，
-     中間的層級用 … 省略掉，避免擠成兩行；大於號（›）保留在省略號前後。 */
   .breadcrumb-row {
     flex-wrap: nowrap;
     overflow: hidden;
   }
-  /* 下拉選單（.breadcrumb-dropdown）展開時，不能讓上面這個 overflow:hidden
-     把選單往下裁掉，所以開啟時暫時解除裁切。 */
   .breadcrumb-row.dropdown-open {
     overflow: visible;
   }
@@ -1105,12 +1120,9 @@ main.content-workspace {
   .breadcrumb-item:not(:first-child):not(:last-child) {
     display: none;
   }
-  /* 沒有資料夾層級（世界觀 › 文件）：中間只有一個分隔符號，正常顯示即可 */
   .breadcrumb-item:first-child:not(:has(~ .breadcrumb-item:not(:last-child))) + .breadcrumb-sep {
     display: inline;
   }
-  /* 有資料夾層級被省略掉：把緊接在第一項後面的分隔符號換成「› … ›」，
-     取代原本只在第一項後面補一個 … 的做法，讓大於號留在省略號前後。 */
   .breadcrumb-item:first-child:has(~ .breadcrumb-item:not(:last-child)) + .breadcrumb-sep {
     display: inline;
     font-size: 0;
@@ -1240,15 +1252,7 @@ main.content-workspace {
   .action-pill-btn { padding: var(--sp-9) var(--sp-12); }
 
   .doc-title-input { font-size: var(--fs-18); }
-  /* 手機版內文捲動方式改成跟桌面版一致：不再讓 textarea 自己 overflow-y:auto，
-     改回沿用 .content-textarea 基本樣式（overflow-y:hidden，高度由 JS 的
-     autoGrowTextarea 撐到跟內容一樣高），統一交給外層 .editor-content-area
-     （overflow-y:auto）捲動，標題／內文在同一個捲軸上，手感跟桌面版相同。 */
 
-  /* 手機版最下方浮著「文件操作 ⋯／快速跳轉／復原 undo-redo」三顆圓形按鈕
-     （見下方 docactions-wrap／quickjump-fab／undoredo-sticky-bar 的 fixed 定位），
-     會蓋在內文捲動區域的最下緣。這裡幫 .editor-content-area 多留一段底部留白，
-     滾到最底時最後幾行文字才不會被這三顆按鈕擋住／蓋住看不到。 */
   .editor-content-area {
     padding-bottom: calc(56px + var(--safe-b) + 16px + var(--icon-40) + var(--sp-16));
   }
@@ -1282,6 +1286,9 @@ main.content-workspace {
   }
   .ctx-menu-item { padding: var(--sp-13) var(--sp-12); font-size: var(--fs-14); }
   .ctx-menu-title { font-size: var(--fs-12); padding: var(--sp-4) var(--sp-12) var(--sp-10); }
+
+  /* 白板在手機上：提示文字縮小 */
+  .canvas-hint-text { display: inline; }
 }
 
 /* ==========================================================
@@ -1309,10 +1316,6 @@ main.content-workspace {
 .quickjump-fab:hover { transform: scale(1.08); }
 .quickjump-fab:active { transform: scale(0.94); }
 
-/* 文章復原／取消復原：position: fixed，釘在畫面右下角、快速跳轉
-   按鈕（.quickjump-fab）的左邊，兩者 bottom 都是 --sp-28，垂直對齊。
-   改放右側是為了避開左邊的側欄／目錄面板——如果用 left 定位，
-   28px 那個位置剛好會被側欄的不透明背景整個蓋住。 */
 .undoredo-sticky-bar {
   position: fixed;
   right: calc(var(--sp-28) + var(--icon-44) + var(--sp-16));
@@ -1321,7 +1324,7 @@ main.content-workspace {
   display: flex;
   gap: var(--sp-10);
   z-index: 75;
-  pointer-events: none; /* 讓外層透明區域不擋住底下文字的點擊，實際按鈕另外開啟 pointer-events */
+  pointer-events: none;
 }
 .undoredo-fab-btn {
   width: var(--icon-44);
@@ -1422,8 +1425,6 @@ main.content-workspace {
   .undoredo-sticky-bar { bottom: calc(56px + var(--safe-b) + 16px); right: calc(16px + var(--icon-40) + var(--sp-12)); }
   .undoredo-fab-btn { width: var(--icon-40); height: var(--icon-40); font-size: var(--fs-16); }
 
-  /* 合併後的「文件操作」按鈕：手機版改成跟快速跳轉（.quickjump-fab）同一種圓形浮動按鈕，
-     對稱釘在畫面左下角（右下角已經被快速跳轉／復原按鈕佔用），點開後選單從按鈕上方彈出。 */
   .docactions-wrap {
     position: fixed;
     left: 16px;
@@ -1449,7 +1450,6 @@ main.content-workspace {
     transform: translateY(6px) scale(0.96);
   }
 
-  /* 手機版改為從按鈕右下角「彈出」的 Popover，並隱藏標題列叉叉（改由按鈕本身切換成 ✕ 關閉） */
   .quickjump-overlay { background: transparent; }
 
   .quickjump-panel {
