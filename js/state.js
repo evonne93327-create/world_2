@@ -7,6 +7,16 @@ const DEFAULT_PALETTES = {
   "c_rose":   { name: "重要核心伏筆", bg: "#F3DAD5", text: "#8C3527" },
   "c_yellow": { name: "靈感隨筆", bg: "#F2E8C9", text: "#7A5B12" }
 };
+/* 白板連線專屬色（比標籤色更飽和、辨識度更高） */
+const EDGE_COLORS = {
+  "e_red":    { name: "紅",   stroke: "#D9433B" },
+  "e_blue":   { name: "藍",   stroke: "#2F6FB0" },
+  "e_green":  { name: "綠",   stroke: "#2E8B57" },
+  "e_purple": { name: "紫",   stroke: "#7A4FB0" },
+  "e_orange": { name: "橘",   stroke: "#D97A2B" },
+  "e_rose":   { name: "玫紅", stroke: "#C43E6E" },
+  "e_gray":   { name: "灰",   stroke: "#6E6152" }
+};
 
 const COMMON_ICONS = ["📁", "🌍", "⚔️", "🛡️", "📜", "🏰", "🧙", "🐉", "🔮", "🔥", "💎", "🏛️", "👑", "🗡️", "🏹", "📖", "✨", "🔖"];
 const MARKDOWN_HEADING_REGEX = /^#\s+(.+)/;
