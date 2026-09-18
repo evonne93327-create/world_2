@@ -1,5 +1,5 @@
 /* ==========================================================
-   白板 (Graphs) — viewBox 架構 + 邊框分散連線
+   白板 (Graphs) — viewBox 架構 + 扇形發散連線
    ========================================================== */
 
 const CANVAS_NODE_W = 200;
@@ -289,17 +289,10 @@ function getEdgeColor(edge) {
   return EDGE_COLORS[id] || EDGE_COLORS["e_gray"];
 }
 
-/* ---------- 節點邊框交點（支援沿邊分散）---------- */
-/*
-   node       : 節點資料
-   targetX/Y  : 目標中心座標（決定連線方向）
-   slotInfo   : { index, total } — 同一邊的第幾條 / 共幾條（可選）
-                若給定，會沿著「與方向垂直的那一邊」均勻分散。
-*/
+/* ---------- 節點邊框交點（沿該邊 30%~70% 分散）---------- */
 function getNodeBorderPoint(node, targetX, targetY, slotInfo) {
   const el = document.getElementById(node.id);
-  let w, h, cx, cy;
-
+  let w, h;
   if (el) {
     w = el.offsetWidth || CANVAS_NODE_W;
     h = el.offsetHeight || 80;
@@ -308,50 +301,43 @@ function getNodeBorderPoint(node, targetX, targetY, slotInfo) {
     h = 80;
   }
 
-  cx = node.x + w / 2;
-  cy = node.y + h / 2;
+  const cx = node.x + w / 2;
+  const cy = node.y + h / 2;
 
   const dx = targetX - cx;
   const dy = targetY - cy;
-  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+  if (dx === 0 && dy === 0) return { x: cx, y: cy, t: 0.5, side: 'right' };
 
-  // 判斷主要方向：以角度決定哪一邊
-  const angle = Math.atan2(dy, dx);
   const absDx = Math.abs(dx);
   const absDy = Math.abs(dy);
 
-  // 方向權重：右/左 vs 下/上，看哪個分量大
-  // 這邊用 cos/sin 決定「主軸」
-  let side; // 'right' | 'left' | 'bottom' | 'top'
-  if (absDx >= absDy) {
-    side = dx > 0 ? 'right' : 'left';
-  } else {
-    side = dy > 0 ? 'bottom' : 'top';
-  }
+  let side;
+  if (absDx >= absDy) side = dx > 0 ? 'right' : 'left';
+  else side = dy > 0 ? 'bottom' : 'top';
 
-  // 沿邊分散：t 從 0.5（中心）起算，如果有 slotInfo 就依 index 偏移
+  // 分散範圍 0.3 ~ 0.7（依你指定）
   let t = 0.5;
   if (slotInfo && slotInfo.total > 1) {
-    // 分散範圍 [0.2, 0.8]
-    const spread = 0.6;
-    const step = spread / (slotInfo.total - 1);
-    t = 0.2 + step * slotInfo.index;
+    const lo = 0.3, hi = 0.7;
+    const step = (hi - lo) / (slotInfo.total - 1);
+    t = lo + step * slotInfo.index;
   }
 
   const halfW = w / 2 + 2;
   const halfH = h / 2 + 2;
 
+  let px, py;
   if (side === 'right') {
-    return { x: cx + halfW, y: cy - halfH + t * (2 * halfH) };
+    px = cx + halfW; py = cy - halfH + t * (2 * halfH);
+  } else if (side === 'left') {
+    px = cx - halfW; py = cy - halfH + t * (2 * halfH);
+  } else if (side === 'bottom') {
+    px = cx - halfW + t * (2 * halfW); py = cy + halfH;
+  } else {
+    px = cx - halfW + t * (2 * halfW); py = cy - halfH;
   }
-  if (side === 'left') {
-    return { x: cx - halfW, y: cy - halfH + t * (2 * halfH) };
-  }
-  if (side === 'bottom') {
-    return { x: cx - halfW + t * (2 * halfW), y: cy + halfH };
-  }
-  // top
-  return { x: cx - halfW + t * (2 * halfW), y: cy - halfH };
+
+  return { x: px, y: py, t: t, side: side };
 }
 
 /* ---------- 渲染連線 ---------- */
@@ -382,27 +368,13 @@ function renderCanvasLines() {
   });
   svg.appendChild(defs);
 
-  // 兩層：線在下、標籤在上
   const linesLayer = document.createElementNS(NS, "g");
-  linesLayer.setAttribute("class", "canvas-lines-layer");
   svg.appendChild(linesLayer);
 
   const labelsLayer = document.createElementNS(NS, "g");
-  labelsLayer.setAttribute("class", "canvas-labels-layer");
   svg.appendChild(labelsLayer);
 
-  /* ---------- 先統計「每個節點、每個方向」連了幾條 ---------- */
-  // 為每條 edge 決定它在 source 端、target 端各佔哪個 slot
-  const nodeSlotMap = {}; // nodeId -> { right: [], left: [], bottom: [], top: [] }
-
-  function ensureNodeSlot(nodeId) {
-    if (!nodeSlotMap[nodeId]) {
-      nodeSlotMap[nodeId] = { right: [], left: [], bottom: [], top: [] };
-    }
-    return nodeSlotMap[nodeId];
-  }
-
-  // 決定某條邊在指定節點的哪一側
+  /* ---------- 決定側邊 ---------- */
   function determineSide(node, otherCenter) {
     const el = document.getElementById(node.id);
     const w = el ? el.offsetWidth : CANVAS_NODE_W;
@@ -415,8 +387,15 @@ function renderCanvasLines() {
     return dy > 0 ? 'bottom' : 'top';
   }
 
-  // 第一輪：登記
-  const edgeSideInfo = {}; // edgeId -> { source: side, target: side }
+  /* ---------- 統計每節點每側條數 ---------- */
+  const nodeSideCount = {};
+  function ensureCount(nodeId) {
+    if (!nodeSideCount[nodeId]) {
+      nodeSideCount[nodeId] = { right: 0, left: 0, bottom: 0, top: 0 };
+    }
+  }
+
+  const edgeSideInfo = {};
   canvas.edges.forEach(function(edge) {
     const srcNode = canvas.nodes.find(n => n.id === edge.source);
     const tgtNode = canvas.nodes.find(n => n.id === edge.target);
@@ -435,55 +414,40 @@ function renderCanvasLines() {
     const srcSide = determineSide(srcNode, tgtCenter);
     const tgtSide = determineSide(tgtNode, srcCenter);
 
-    edgeSideInfo[edge.id] = { source: srcSide, target: tgtSide };
+    edgeSideInfo[edge.id] = { sourceSide: srcSide, targetSide: tgtSide };
 
-    ensureNodeSlot(srcNode.id)[srcSide].push(edge.id);
-    ensureNodeSlot(tgtNode.id)[tgtSide].push(edge.id);
+    ensureCount(srcNode.id);
+    ensureCount(tgtNode.id);
+    nodeSideCount[srcNode.id][srcSide]++;
+    nodeSideCount[tgtNode.id][tgtSide]++;
   });
 
-  // 第二輪：分配 slot index（依邊的順序）
-  const edgeSlotMap = {}; // edgeId -> { source: {index,total}, target: {index,total} }
-  Object.keys(nodeSlotMap).forEach(function(nodeId) {
-    const slots = nodeSlotMap[nodeId];
-    ['right', 'left', 'bottom', 'top'].forEach(function(side) {
-      const list = slots[side];
-      list.forEach(function(edgeId, idx) {
-        if (!edgeSlotMap[edgeId]) edgeSlotMap[edgeId] = {};
-        edgeSlotMap[edgeId][nodeId === getEdgeSource(edgeId) ? 'source' : 'target'] = {
-          index: idx,
-          total: list.length,
-          side: side
-        };
-      });
-    });
-  });
-
-  function getEdgeSource(edgeId) {
-    const e = canvas.edges.find(x => x.id === edgeId);
-    return e ? e.source : null;
+  /* ---------- 分配 slot ---------- */
+  const nodeSideUsed = {};
+  function nextSlot(nodeId, side) {
+    if (!nodeSideUsed[nodeId]) {
+      nodeSideUsed[nodeId] = { right: 0, left: 0, bottom: 0, top: 0 };
+    }
+    const idx = nodeSideUsed[nodeId][side];
+    nodeSideUsed[nodeId][side]++;
+    return {
+      index: idx,
+      total: nodeSideCount[nodeId][side],
+      side: side
+    };
   }
 
-  /* ---------- 同一對節點的多條邊要分散（弧線）---------- */
-  const pairGroups = {};
+  const edgeSlotInfo = {};
   canvas.edges.forEach(function(edge) {
-    const key = [edge.source, edge.target].sort().join("|");
-    if (!pairGroups[key]) pairGroups[key] = [];
-    pairGroups[key].push(edge);
+    if (!edgeSideInfo[edge.id]) return;
+    const info = edgeSideInfo[edge.id];
+    edgeSlotInfo[edge.id] = {
+      sourceSlot: nextSlot(edge.source, info.sourceSide),
+      targetSlot: nextSlot(edge.target, info.targetSide)
+    };
   });
 
-  const edgeOffsetMap = {};
-  Object.keys(pairGroups).forEach(function(key) {
-    const group = pairGroups[key];
-    const total = group.length;
-    group.forEach(function(edge, idx) {
-      let offset;
-      if (total === 1) offset = 0;
-      else offset = (idx - (total - 1) / 2) / ((total - 1) / 2);
-      edgeOffsetMap[edge.id] = offset;
-    });
-  });
-
-  /* ---------- 繪製 ---------- */
+  /* ---------- 畫 ---------- */
   canvas.edges.forEach(function(edge) {
     const srcNode = canvas.nodes.find(n => n.id === edge.source);
     const tgtNode = canvas.nodes.find(n => n.id === edge.target);
@@ -499,12 +463,9 @@ function renderCanvasLines() {
     const srcCenter = { x: srcNode.x + srcW / 2, y: srcNode.y + srcH / 2 };
     const tgtCenter = { x: tgtNode.x + tgtW / 2, y: tgtNode.y + tgtH / 2 };
 
-    // 取出這條邊在兩端的 slot
-    const srcSlot = (edgeSlotMap[edge.id] && edgeSlotMap[edge.id].source) || null;
-    const tgtSlot = (edgeSlotMap[edge.id] && edgeSlotMap[edge.id].target) || null;
-
-    const p1 = getNodeBorderPoint(srcNode, tgtCenter.x, tgtCenter.y, srcSlot);
-    const p2 = getNodeBorderPoint(tgtNode, srcCenter.x, srcCenter.y, tgtSlot);
+    const slot = edgeSlotInfo[edge.id] || {};
+    const p1 = getNodeBorderPoint(srcNode, tgtCenter.x, tgtCenter.y, slot.sourceSlot);
+    const p2 = getNodeBorderPoint(tgtNode, srcCenter.x, srcCenter.y, slot.targetSlot);
 
     const x1 = p1.x, y1 = p1.y;
     const x2 = p2.x, y2 = p2.y;
@@ -515,14 +476,21 @@ function renderCanvasLines() {
     const nx = -dy / dist;
     const ny = dx / dist;
 
-    const offset = edgeOffsetMap[edge.id] || 0;
-    const bendBase = Math.min(dist * 0.22, 80);
-    const bend = offset * bendBase;
+    /* ----- 扇形弧度 ----- */
+    // 用兩端 t 的平均值決定這條線該往哪邊彎
+    const tAvg = ((p1.t !== undefined ? p1.t : 0.5) + (p2.t !== undefined ? p2.t : 0.5)) / 2;
+    const bias = (tAvg - 0.5) * 2; // -1 ~ 1
+    const bendMag = Math.min(dist * 0.25, 80) * Math.abs(bias);
+    const bendDir = bias >= 0 ? 1 : -1;
 
-    const cx1 = x1 + dx * 0.25 + nx * bend;
-    const cy1 = y1 + dy * 0.25 + ny * bend;
-    const cx2 = x1 + dx * 0.75 + nx * bend;
-    const cy2 = y1 + dy * 0.75 + ny * bend;
+    const ext1 = dist * 0.35;
+    const ext2 = dist * 0.35;
+
+    const cx1 = x1 + (dx / dist) * ext1 + nx * bendMag * bendDir;
+    const cy1 = y1 + (dy / dist) * ext1 + ny * bendMag * bendDir;
+
+    const cx2 = x2 - (dx / dist) * ext2 + nx * bendMag * bendDir;
+    const cy2 = y2 - (dy / dist) * ext2 + ny * bendMag * bendDir;
 
     const d = "M " + x1 + " " + y1 + " C " + cx1 + " " + cy1 + ", " + cx2 + " " + cy2 + ", " + x2 + " " + y2;
 
@@ -554,23 +522,19 @@ function renderCanvasLines() {
 
     linesLayer.appendChild(path);
 
-    // 標籤
-    const t = 0.5;
-    const mt = 1 - t;
-    const bezX = mt*mt*mt*x1 + 3*mt*mt*t*cx1 + 3*mt*t*t*cx2 + t*t*t*x2;
-    const bezY = mt*mt*mt*y1 + 3*mt*mt*t*cy1 + 3*mt*t*t*cy2 + t*t*t*y2;
-
-    const labelOffset = offset * 14;
-    const midX = bezX + nx * labelOffset;
-    const midY = bezY + ny * labelOffset;
+    /* ----- 標籤 ----- */
+    const tt = 0.5;
+    const mt = 1 - tt;
+    const bezX = mt*mt*mt*x1 + 3*mt*mt*tt*cx1 + 3*mt*tt*tt*cx2 + tt*tt*tt*x2;
+    const bezY = mt*mt*mt*y1 + 3*mt*mt*tt*cy1 + 3*mt*tt*tt*cy2 + tt*tt*tt*y2;
 
     const g = document.createElementNS(NS, "g");
     g.style.pointerEvents = "all";
     g.style.cursor = "pointer";
 
     const text = document.createElementNS(NS, "text");
-    text.setAttribute("x", midX);
-    text.setAttribute("y", midY);
+    text.setAttribute("x", bezX);
+    text.setAttribute("y", bezY);
     text.setAttribute("class", "line-label-box");
     text.setAttribute("fill", "var(--text-primary)");
     text.setAttribute("text-anchor", "middle");
@@ -589,7 +553,7 @@ function renderCanvasLines() {
     try { bbox = text.getBBox(); } catch (err) { bbox = null; }
     if (!bbox || bbox.width === 0) {
       const w = Math.max((edge.label || '').length * 14, 30);
-      bbox = { x: midX - w / 2, y: midY - 8, width: w, height: 16 };
+      bbox = { x: bezX - w / 2, y: bezY - 8, width: w, height: 16 };
     }
 
     const padX = 8;
