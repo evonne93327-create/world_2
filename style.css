@@ -748,6 +748,28 @@ main.content-workspace {
 }
 
 /* ----------------------------------------------------------
+   左上角世界觀標題
+   ---------------------------------------------------------- */
+.canvas-world-title {
+  position: absolute;
+  left: 16px;
+  top: 14px;
+  max-width: 60%;
+  background: rgba(42,36,32,0.72);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  z-index: 20;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ----------------------------------------------------------
    浮動提示（hint）— 桌面在左下角、手機在上方
    ---------------------------------------------------------- */
 .canvas-hint-floating {
