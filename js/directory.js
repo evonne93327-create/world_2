@@ -60,7 +60,6 @@ function updateWorldBadge() {
  const icon = world.icon || '🌐';
  document.getElementById("currentWorldIcon").textContent = icon;
  document.getElementById("currentWorldName").textContent = world.name;
- document.getElementById("canvasWorldTitle").textContent = "🕸️ " + icon + " " + world.name + " · 專屬白板";
  }
  renderWorldRail();
 }
