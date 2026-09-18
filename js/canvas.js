@@ -492,8 +492,6 @@ function renderCanvasLines() {
     const dx = x2 - x1;
     const dy = y2 - y1;
     const dist = Math.hypot(dx, dy) || 1;
-    const nx = -dy / dist;
-    const ny = dx / dist;
 
     /* ----- 弧度：用 offset 強制給定 ----- */
     // 同一對節點只有一條線時維持直線。
@@ -504,32 +502,35 @@ function renderCanvasLines() {
     const offset = edgeOffsetMap[edge.id] || 0;
 
     let bendMag = 0;
+    let spreadX = 0, spreadY = 0;
     if (total > 1) {
       const BEND_MIN_RATIO = 0;
       const BEND_MAX_RATIO = 0.7;
       const ratio = BEND_MIN_RATIO + (BEND_MAX_RATIO - BEND_MIN_RATIO) * Math.abs(offset);
-
-      // 彎曲方向不再單靠 offset 正負決定，而是看這條線的起點本來就偏在
-      // 兩節點連心線的哪一側，往「同一側」再彎出去，確保線與線只會往外展開、不會互相交叉
-      const cdx = tgtCenter.x - srcCenter.x;
-      const cdy = tgtCenter.y - srcCenter.y;
-      const cdist = Math.hypot(cdx, cdy) || 1;
-      const pnx = -cdy / cdist;
-      const pny = cdx / cdist;
-      const lateral = (x1 - srcCenter.x) * pnx + (y1 - srcCenter.y) * pny;
-      const sign = lateral === 0 ? 1 : Math.sign(lateral);
-
+      const sign = offset === 0 ? 1 : Math.sign(offset);
       bendMag = sign * ratio * maxBend;
+
+      // 彎曲方向要跟「這條線在節點邊框上排列的分散軸」完全同步，
+      // 而不是用兩點連線的垂直方向。斜向連線時這兩個方向會不一樣，
+      // 只要彎曲方向跟分散順序對不上，線就會在中途互相穿越。
+      // 上/下側：邊框上是左右排開 → 分散軸是水平（x）
+      // 左/右側：邊框上是上下排開 → 分散軸是垂直（y）
+      const srcSide = (edgeSideInfo[edge.id] || {}).sourceSide;
+      if (srcSide === 'bottom' || srcSide === 'top') {
+        spreadX = 1;
+      } else {
+        spreadY = 1;
+      }
     }
 
     const ext1 = dist * 0.35;
     const ext2 = dist * 0.35;
 
-    const cx1 = x1 + (dx / dist) * ext1 + nx * bendMag;
-    const cy1 = y1 + (dy / dist) * ext1 + ny * bendMag;
+    const cx1 = x1 + (dx / dist) * ext1 + spreadX * bendMag;
+    const cy1 = y1 + (dy / dist) * ext1 + spreadY * bendMag;
 
-    const cx2 = x2 - (dx / dist) * ext2 + nx * bendMag;
-    const cy2 = y2 - (dy / dist) * ext2 + ny * bendMag;
+    const cx2 = x2 - (dx / dist) * ext2 + spreadX * bendMag;
+    const cy2 = y2 - (dy / dist) * ext2 + spreadY * bendMag;
 
     const d = "M " + x1 + " " + y1 + " C " + cx1 + " " + cy1 + ", " + cx2 + " " + cy2 + ", " + x2 + " " + y2;
 
