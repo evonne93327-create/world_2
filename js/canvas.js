@@ -440,11 +440,7 @@ function renderCanvasLines() {
     const sSlot = nextSlot(edge.source, info.sourceSide);
     const tSlot = nextSlot(edge.target, info.targetSide);
 
-    // target 端的 index 反轉，讓線從 source 出發後「展開」而不是平行
-    if (tSlot.total > 1) {
-      tSlot.index = (tSlot.total - 1) - tSlot.index;
-    }
-
+    // source、target 兩端維持同一個順序（不反轉），避免多條線因兩端配對錯開而互相交叉
     edgeSlotInfo[edge.id] = { sourceSlot: sSlot, targetSlot: tSlot };
   });
 
@@ -512,7 +508,17 @@ function renderCanvasLines() {
       const BEND_MIN_RATIO = 0.3;
       const BEND_MAX_RATIO = 0.7;
       const ratio = BEND_MIN_RATIO + (BEND_MAX_RATIO - BEND_MIN_RATIO) * Math.abs(offset);
-      const sign = offset === 0 ? 1 : Math.sign(offset);
+
+      // 彎曲方向不再單靠 offset 正負決定，而是看這條線的起點本來就偏在
+      // 兩節點連心線的哪一側，往「同一側」再彎出去，確保線與線只會往外展開、不會互相交叉
+      const cdx = tgtCenter.x - srcCenter.x;
+      const cdy = tgtCenter.y - srcCenter.y;
+      const cdist = Math.hypot(cdx, cdy) || 1;
+      const pnx = -cdy / cdist;
+      const pny = cdx / cdist;
+      const lateral = (x1 - srcCenter.x) * pnx + (y1 - srcCenter.y) * pny;
+      const sign = lateral === 0 ? 1 : Math.sign(lateral);
+
       bendMag = sign * ratio * maxBend;
     }
 
