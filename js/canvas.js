@@ -275,16 +275,17 @@ function completeConnection(targetNodeId) {
     cancelConnect();
     return;
   }
-
   const canvas = getCurrentWorldCanvas();
-  // 避免完全重複的連線（同 source/target 且無標籤差異，這裡允許同向多條，故不阻擋）
   const relation = prompt("請輸入兩者關係：", "盟友 / 敵對 / 密探");
   if (relation !== null) {
     canvas.edges.push({
       id: "edge_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
       source: sourceId,
       target: targetNodeId,
-      label: relation || "關聯"
+      label: relation || "關聯",
+      color: "c_gray",     // 預設顏色
+      dash: "solid",       // 預設樣式
+      arrow: "none"        // 預設箭頭
     });
     saveData();
   }
@@ -299,8 +300,27 @@ function renderCanvasLines() {
   svg.innerHTML = "";
   const canvas = getCurrentWorldCanvas();
 
-  // 先統計每一對 (source, target) 共有幾條邊，計算索引與總數
-  // 以無向視角分組：min|max 作為 key，讓雙向連線一起分散
+  // 箭頭 marker 定義（每個顏色各一組，避免 marker 顏色無法動態套用）
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  Object.keys(appData.colorPalette || DEFAULT_PALETTES).forEach(function(colorId) {
+    const pal = (appData.colorPalette && appData.colorPalette[colorId]) || DEFAULT_PALETTES[colorId];
+    const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+    marker.setAttribute("id", "arrow_" + colorId);
+    marker.setAttribute("viewBox", "0 0 10 10");
+    marker.setAttribute("refX", "9");
+    marker.setAttribute("refY", "5");
+    marker.setAttribute("markerWidth", "6");
+    marker.setAttribute("markerHeight", "6");
+    marker.setAttribute("orient", "auto-start-reverse");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+    path.setAttribute("fill", pal.text);
+    marker.appendChild(path);
+    defs.appendChild(marker);
+  });
+  svg.appendChild(defs);
+
+  // 統計每一對 (source, target) 共有幾條邊
   const pairGroups = {};
   canvas.edges.forEach(function(edge) {
     const key = [edge.source, edge.target].sort().join("|");
@@ -313,12 +333,10 @@ function renderCanvasLines() {
     const group = pairGroups[key];
     const total = group.length;
     group.forEach(function(edge, idx) {
-      // 將多條邊均勻分佈在 -1 ~ 1 之間，並加上 0.5 的位移讓單條邊也稍微彎曲
       let offset;
       if (total === 1) {
         offset = 0;
       } else {
-        // 例如 3 條：-1, 0, 1；4 條：-1.5, -0.5, 0.5, 1.5（再除以 (total-1) 正規化）
         offset = (idx - (total - 1) / 2) / ((total - 1) / 2);
       }
       edgeOffsetMap[edge.id] = offset;
@@ -339,30 +357,64 @@ function renderCanvasLines() {
     const dy = y2 - y1;
     const dist = Math.hypot(dx, dy) || 1;
 
-    // 垂直於連線方向的單位向量
     const nx = -dy / dist;
     const ny = dx / dist;
 
-    // 依 offset 分散弧度：offset=0 走直線；offset≠0 走對稱弧
     const offset = edgeOffsetMap[edge.id] || 0;
     const bendBase = Math.min(dist * 0.25, 90);
     const bend = offset * bendBase;
 
-    const cx1 = x1 + dx * 0.25 + nx * bend;
-    const cy1 = y1 + dy * 0.25 + ny * bend;
-    const cx2 = x1 + dx * 0.75 + nx * bend;
-    const cy2 = y1 + dy * 0.75 + ny * bend;
+    // 依箭頭方向決定實際 path 的起訖點
+    // arrow: "forward"  -> source → target
+    // arrow: "backward" -> target → source（實際 path 反向繪製）
+    // arrow: "none"     -> 無方向
+    let px1 = x1, py1 = y1, px2 = x2, py2 = y2;
+    if (edge.arrow === "backward") {
+      px1 = x2; py1 = y2; px2 = x1; py2 = y1;
+    }
 
-    const d = "M " + x1 + " " + y1 + " C " + cx1 + " " + cy1 + ", " + cx2 + " " + cy2 + ", " + x2 + " " + y2;
+    const pdx = px2 - px1;
+    const pdy = py2 - py1;
+    const pdist = Math.hypot(pdx, pdy) || 1;
+    const pnx = -pdy / pdist;
+    const pny = pdx / pdist;
+
+    // 反向時 bend 也要跟著反向，避免弧線跑錯邊
+    const realBend = (edge.arrow === "backward") ? -bend : bend;
+
+    const cx1 = px1 + pdx * 0.25 + pnx * realBend;
+    const cy1 = py1 + pdy * 0.25 + pny * realBend;
+    const cx2 = px1 + pdx * 0.75 + pnx * realBend;
+    const cy2 = py1 + pdy * 0.75 + pny * realBend;
+
+    const d = "M " + px1 + " " + py1 + " C " + cx1 + " " + cy1 + ", " + cx2 + " " + cy2 + ", " + px2 + " " + py2;
+
+    const colorId = edge.color || "c_gray";
+    const pal = (appData.colorPalette && appData.colorPalette[colorId]) || DEFAULT_PALETTES[colorId];
 
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", d);
     path.setAttribute("class", "relation-line");
+    path.style.stroke = pal.text;
     path.style.pointerEvents = "none";
 
-    // 標籤位置：取曲線的中點，加上同樣的弧度偏移
-    const midX = (x1 + x2) / 2 + nx * bend;
-    const midY = (y1 + y2) / 2 + ny * bend;
+    // 線條樣式
+    const dash = edge.dash || "solid";
+    if (dash === "dashed") path.setAttribute("stroke-dasharray", "10 6");
+    else if (dash === "dotted") path.setAttribute("stroke-dasharray", "2 6");
+    path.setAttribute("stroke-linecap", "round");
+
+    // 箭頭
+    const arrow = edge.arrow || "none";
+    if (arrow === "forward") {
+      path.setAttribute("marker-end", "url(#arrow_" + colorId + ")");
+    } else if (arrow === "backward") {
+      path.setAttribute("marker-end", "url(#arrow_" + colorId + ")");
+    }
+
+    // 標籤位置：取曲線中點（考慮反向時的 bend）
+    const midX = (px1 + px2) / 2 + pnx * realBend;
+    const midY = (py1 + py2) / 2 + pny * realBend;
     const textWidth = Math.max((edge.label || '').length * 13, 36);
 
     const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -375,6 +427,7 @@ function renderCanvasLines() {
     bgRect.setAttribute("width", textWidth);
     bgRect.setAttribute("height", 22);
     bgRect.setAttribute("class", "line-label-bg");
+    bgRect.style.stroke = pal.text;
 
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("x", midX);
@@ -398,7 +451,6 @@ function renderCanvasLines() {
 
   applySvgTransform();
 }
-
 function attachLongPressToSvgGroup(gEl, callback) {
   let timer = null, fired = false, sx = 0, sy = 0;
   const DURATION = 280, TOL = 10;
@@ -456,6 +508,50 @@ function openEdgeEditModal(edgeId) {
     tgtDoc ? ((tgtDoc.icon || '📄') + ' ' + (tgtDoc.title || '無標題')) : '（未知）';
   document.getElementById("edgeEditLabelInput").value = edge.label || '';
 
+  // 顏色 chips
+  const colorRow = document.getElementById("edgeColorRow");
+  colorRow.innerHTML = "";
+  const currentColor = edge.color || "c_gray";
+  Object.keys(DEFAULT_PALETTES).forEach(function(colorId) {
+    const pal = (appData.colorPalette && appData.colorPalette[colorId]) || DEFAULT_PALETTES[colorId];
+    const chip = document.createElement("div");
+    chip.className = "edge-color-chip" + (colorId === currentColor ? " active" : "");
+    chip.style.background = pal.bg;
+    chip.style.borderColor = colorId === currentColor ? pal.text : "transparent";
+    chip.title = pal.name;
+    chip.onclick = function() {
+      colorRow.querySelectorAll(".edge-color-chip").forEach(c => {
+        c.classList.remove("active");
+        c.style.borderColor = "transparent";
+      });
+      chip.classList.add("active");
+      chip.style.borderColor = pal.text;
+    };
+    colorRow.appendChild(chip);
+  });
+
+  // 線條樣式
+  const dashRow = document.getElementById("edgeStyleRow");
+  const currentDash = edge.dash || "solid";
+  dashRow.querySelectorAll(".edge-opt-btn").forEach(function(btn) {
+    btn.classList.toggle("active", btn.getAttribute("data-dash") === currentDash);
+    btn.onclick = function() {
+      dashRow.querySelectorAll(".edge-opt-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+    };
+  });
+
+  // 箭頭
+  const arrowRow = document.getElementById("edgeArrowRow");
+  const currentArrow = edge.arrow || "none";
+  arrowRow.querySelectorAll(".edge-opt-btn").forEach(function(btn) {
+    btn.classList.toggle("active", btn.getAttribute("data-arrow") === currentArrow);
+    btn.onclick = function() {
+      arrowRow.querySelectorAll(".edge-opt-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+    };
+  });
+
   document.getElementById("edgeEditModal").classList.add("active");
   setTimeout(function() {
     const input = document.getElementById("edgeEditLabelInput");
@@ -476,6 +572,27 @@ function saveEditingEdge() {
 
   const val = document.getElementById("edgeEditLabelInput").value.trim();
   edge.label = val || "關聯";
+
+  // 顏色
+  const activeColorChip = document.querySelector("#edgeColorRow .edge-color-chip.active");
+  if (activeColorChip) {
+    // 從 title 反查 colorId
+    const title = activeColorChip.title;
+    const foundId = Object.keys(DEFAULT_PALETTES).find(k => {
+      const pal = (appData.colorPalette && appData.colorPalette[k]) || DEFAULT_PALETTES[k];
+      return pal.name === title;
+    });
+    if (foundId) edge.color = foundId;
+  }
+
+  // 樣式
+  const activeDash = document.querySelector("#edgeStyleRow .edge-opt-btn.active");
+  if (activeDash) edge.dash = activeDash.getAttribute("data-dash");
+
+  // 箭頭
+  const activeArrow = document.querySelector("#edgeArrowRow .edge-opt-btn.active");
+  if (activeArrow) edge.arrow = activeArrow.getAttribute("data-arrow");
+
   saveData();
   renderCanvasLines();
   closeEdgeEditModal();
