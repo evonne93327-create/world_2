@@ -747,7 +747,9 @@ main.content-workspace {
   box-shadow: 0 0 0 2px var(--accent-light) !important;
 }
 
-/* 左下角浮動提示（hint） */
+/* ----------------------------------------------------------
+   浮動提示（hint）— 預設在左下角
+   ---------------------------------------------------------- */
 .canvas-hint-floating {
   position: absolute;
   left: 16px;
@@ -769,7 +771,11 @@ main.content-workspace {
   visibility: hidden;
 }
 
-/* 右下角浮動按鈕（重置視圖 / 重整） */
+/* ----------------------------------------------------------
+   右下角浮動按鈕（重置視圖 / 重整）
+   尺寸與快速跳轉按鈕（.quickjump-fab）一致：
+   桌面 44×44、手機 40×40
+   ---------------------------------------------------------- */
 .canvas-floating-actions {
   position: absolute;
   right: 16px;
@@ -779,8 +785,8 @@ main.content-workspace {
   z-index: 30;
 }
 .canvas-floating-btn {
-  width: 42px;
-  height: 42px;
+  width: var(--icon-44);
+  height: var(--icon-44);
   border-radius: var(--radius-full);
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -825,27 +831,38 @@ main.content-workspace {
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
-/* 手機版：hint 縮小，浮動按鈕調整位置 */
+/* ----------------------------------------------------------
+   手機版：hint 移到上方、按鈕縮小成 40×40
+   ---------------------------------------------------------- */
 @media (max-width: 768px) {
+  /* hint 移到畫面上方 */
   .canvas-hint-floating {
     left: 12px;
-    bottom: 12px;
-    max-width: calc(100% - 24px);
+    right: 12px;
+    top: 12px;
+    bottom: auto;
+    max-width: none;
     font-size: 10px;
     padding: 5px 10px;
+    text-align: center;
   }
+
+  /* 按鈕尺寸跟快速跳轉按鈕一致（40×40） */
   .canvas-floating-actions {
-    right: 12px;
-    bottom: 12px;
-    gap: 6px;
+    right: 16px;
+    bottom: calc(56px + var(--safe-b) + 16px);
+    gap: 10px;
   }
   .canvas-floating-btn {
-    width: 40px;
-    height: 40px;
+    width: var(--icon-40);
+    height: var(--icon-40);
     font-size: var(--fs-16);
   }
+
+  /* 倍數指示移到上方（避免被下方導覽列/按鈕擋住） */
   .canvas-zoom-indicator {
-    bottom: 60px;
+    top: 60px;
+    bottom: auto;
   }
 }
 
