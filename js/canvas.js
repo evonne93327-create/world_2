@@ -1,6 +1,6 @@
 /* ==========================================================
    白板與圖片 (Graphs 邏輯)
-   含：縮放 / 平移 / 長按編輯關係 / 提示自動隱藏 / 倍數指示
+   含：縮放 / 平移 / 長按編輯關係 / 提示常駐 / 倍數指示
    ========================================================== */
 
 const CANVAS_NODE_W = 200;
@@ -41,19 +41,16 @@ function resetCanvasView() {
   applySvgTransform();
 }
 
-/* ---------- 提示隱藏 ---------- */
+/* ---------- 提示：永遠顯示，不做任何隱藏 ---------- */
 
 function dismissCanvasHint() {
-  if (canvasHintDismissed) return;
-  canvasHintDismissed = true;
-  localStorage.setItem("worldbuilder_canvas_hint_dismissed", "1");
-  applyCanvasHintVisibility();
+  // 提示常駐顯示，不再隱藏
 }
 
 function applyCanvasHintVisibility() {
   const hint = document.querySelector(".canvas-hint-text");
   if (!hint) return;
-  hint.classList.toggle("is-hidden", canvasHintDismissed);
+  hint.classList.remove("is-hidden");
 }
 
 /* ---------- 倍數指示（1 秒後淡出） ---------- */
@@ -191,7 +188,6 @@ function enableDualDrag(element, nodeData) {
     if (!dragging) return;
     dragging = false;
     saveData();
-    dismissCanvasHint();
   }
 
   element.addEventListener("mousedown", function(e) {
@@ -258,7 +254,6 @@ function startConnect(nodeId, event) {
         label: relation || "關聯"
       });
       saveData();
-      dismissCanvasHint();
     }
     document.getElementById(connectingSourceNodeId)?.classList.remove("connecting");
     connectingSourceNodeId = null;
@@ -347,287 +342,4 @@ function attachLongPressToSvgGroup(gEl, callback) {
   }
   function move(e) {
     if (!timer) return;
-    const p = (e.touches && e.touches[0]) || e;
-    if (Math.abs(p.clientX - sx) > TOL || Math.abs(p.clientY - sy) > TOL) {
-      clearTimeout(timer); timer = null;
-    }
-  }
-  function cancel() {
-    if (timer) { clearTimeout(timer); timer = null; }
-  }
-  function suppressClick(e) {
-    if (fired) { e.preventDefault(); e.stopPropagation(); fired = false; }
-  }
-
-  gEl.addEventListener("touchstart", start, { passive: true });
-  gEl.addEventListener("touchmove", move, { passive: true });
-  gEl.addEventListener("touchend", cancel);
-  gEl.addEventListener("touchcancel", cancel);
-  gEl.addEventListener("click", suppressClick, true);
-}
-
-/* ---------- 關係編輯彈窗 ---------- */
-
-function openEdgeEditModal(edgeId) {
-  const canvas = getCurrentWorldCanvas();
-  const edge = canvas.edges.find(e => e.id === edgeId);
-  if (!edge) return;
-
-  editingEdgeId = edgeId;
-
-  const srcNode = canvas.nodes.find(n => n.id === edge.source);
-  const tgtNode = canvas.nodes.find(n => n.id === edge.target);
-  const srcDoc = srcNode ? appData.docs.find(d => d.id === srcNode.docId) : null;
-  const tgtDoc = tgtNode ? appData.docs.find(d => d.id === tgtNode.docId) : null;
-
-  document.getElementById("edgeEditFromName").textContent =
-    srcDoc ? ((srcDoc.icon || '📄') + ' ' + (srcDoc.title || '無標題')) : '（未知）';
-  document.getElementById("edgeEditToName").textContent =
-    tgtDoc ? ((tgtDoc.icon || '📄') + ' ' + (tgtDoc.title || '無標題')) : '（未知）';
-  document.getElementById("edgeEditLabelInput").value = edge.label || '';
-
-  document.getElementById("edgeEditModal").classList.add("active");
-  setTimeout(function() {
-    const input = document.getElementById("edgeEditLabelInput");
-    if (input && window.innerWidth > 768) { input.focus(); input.select(); }
-  }, 50);
-}
-
-function closeEdgeEditModal() {
-  document.getElementById("edgeEditModal").classList.remove("active");
-  editingEdgeId = null;
-}
-
-function saveEditingEdge() {
-  if (!editingEdgeId) return;
-  const canvas = getCurrentWorldCanvas();
-  const edge = canvas.edges.find(e => e.id === editingEdgeId);
-  if (!edge) { closeEdgeEditModal(); return; }
-
-  const val = document.getElementById("edgeEditLabelInput").value.trim();
-  edge.label = val || "關聯";
-  saveData();
-  renderCanvasLines();
-  closeEdgeEditModal();
-}
-
-function deleteEditingEdge() {
-  if (!editingEdgeId) return;
-  if (!confirm("確定要刪除此連線嗎？")) return;
-  const canvas = getCurrentWorldCanvas();
-  canvas.edges = canvas.edges.filter(e => e.id !== editingEdgeId);
-  saveData();
-  renderCanvasLines();
-  closeEdgeEditModal();
-}
-
-/* ---------- 節點右鍵 / 長按選單 ---------- */
-
-function buildCanvasNodeMenuItems(node, doc) {
-  return [
-    { icon: "📄", label: "開啟文檔", action: function() {
-        loadDocToEditor(doc.id);
-        switchView('editor');
-    }},
-    { icon: "🔗", label: "從此節點連線", action: function() {
-        if (connectingSourceNodeId) {
-          document.getElementById(connectingSourceNodeId)?.classList.remove("connecting");
-        }
-        connectingSourceNodeId = node.id;
-        document.getElementById(node.id)?.classList.add("connecting");
-    }},
-    { type: "divider" },
-    { icon: "🗑️", label: "從白板移除", danger: true, action: function() {
-        const canvas = getCurrentWorldCanvas();
-        canvas.nodes = canvas.nodes.filter(n => n.id !== node.id);
-        canvas.edges = canvas.edges.filter(e => e.source !== node.id && e.target !== node.id);
-        saveData();
-        renderCanvas();
-    }}
-  ];
-}
-
-/* ---------- 白板事件：縮放 + 平移 ---------- */
-
-function setupCanvasEvents() {
-  const view = document.getElementById("canvasView");
-  const svg = document.getElementById("canvasSvg");
-
-  view.onclick = function(e) {
-    if (!e.target.closest('.canvas-node')) {
-      if (connectingSourceNodeId) {
-        document.getElementById(connectingSourceNodeId)?.classList.remove("connecting");
-        connectingSourceNodeId = null;
-      }
-    }
-  };
-
-  /* ===== 桌面：滾輪縮放 =====
-     支援三種觸發方式：
-       1. 一般滑鼠滾輪（無 Ctrl）
-       2. Ctrl + 滾輪（Windows / Linux 使用者習慣）
-       3. Mac 觸控板雙指捏合（瀏覽器會送 ctrlKey=true 的 wheel 事件）
-     全部走同一段邏輯，不需要另外區分。 */
-  view.addEventListener("wheel", function(e) {
-    if (e.target.closest('.canvas-floating-actions')) return;
-
-    // 一定要 preventDefault，否則 Ctrl+滾輪會被瀏覽器拿去縮放整頁
-    e.preventDefault();
-
-    const rect = view.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-
-    // Ctrl 按住時 deltaY 通常較小，給一點補償倍率讓手感一致
-    const factor = e.ctrlKey ? 0.003 : 0.0015;
-    const zoomFactor = Math.exp(-e.deltaY * factor);
-    const newScale = clampScale(canvasTransform.scale * zoomFactor);
-    if (newScale === canvasTransform.scale) return;
-
-    const worldBefore = screenToWorld(mx, my);
-    canvasTransform.scale = newScale;
-    canvasTransform.x = mx - worldBefore.x * newScale;
-    canvasTransform.y = my - worldBefore.y * newScale;
-
-    applyCanvasTransform();
-    applySvgTransform();
-    dismissCanvasHint();
-  }, { passive: false });
-
-  /* ===== 桌面：拖曳空白平移 ===== */
-  view.addEventListener("mousedown", function(e) {
-    if (e.button !== 0) return;
-    if (e.target.closest('.canvas-node')) return;
-    if (e.target.closest('.canvas-floating-actions')) return;
-    if (e.target.closest('.canvas-hint-floating')) return;
-    if (e.target.closest('.canvas-zoom-indicator')) return;
-    if (e.target.closest('svg') && e.target.tagName !== 'svg') return;
-
-    e.preventDefault();
-    const startX = e.clientX, startY = e.clientY;
-    const initX = canvasTransform.x, initY = canvasTransform.y;
-    let moved = false;
-
-    function onMove(m) {
-      const dx = m.clientX - startX;
-      const dy = m.clientY - startY;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
-      canvasTransform.x = initX + dx;
-      canvasTransform.y = initY + dy;
-      applyCanvasTransform();
-      applySvgTransform();
-    }
-    function onUp() {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      if (moved) dismissCanvasHint();
-    }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  });
-
-  /* ===== 手機：單指拖空白平移 + 雙指 pinch 縮放 ===== */
-  setupTouchPanZoom(view, svg);
-
-  svg.style.touchAction = "none";
-  view.style.touchAction = "none";
-}
-
-function setupTouchPanZoom(view, svg) {
-  let mode = null;
-  let panStartX = 0, panStartY = 0, panInitX = 0, panInitY = 0;
-  let pinchStartDist = 0, pinchStartScale = 1, pinchWorldCenter = null;
-  let moved = false;
-
-  function getTouchCenter(t1, t2) {
-    return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
-  }
-  function getTouchDist(t1, t2) {
-    return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-  }
-
-  view.addEventListener("touchstart", function(e) {
-    if (e.target.closest('.canvas-floating-actions')) return;
-    if (e.target.closest('.canvas-hint-floating')) return;
-
-    if (e.touches.length === 2) {
-      mode = 'pinch';
-      moved = true;
-      pinchStartDist = getTouchDist(e.touches[0], e.touches[1]);
-      pinchStartScale = canvasTransform.scale;
-      const rect = view.getBoundingClientRect();
-      const center = getTouchCenter(e.touches[0], e.touches[1]);
-      pinchWorldCenter = screenToWorld(center.x - rect.left, center.y - rect.top);
-      e.preventDefault();
-      return;
-    }
-
-    if (e.touches.length === 1) {
-      const onNode = !!e.target.closest('.canvas-node');
-      const onSvgChild = !!(e.target.closest && e.target.closest('svg') && e.target.tagName !== 'svg');
-
-      if (onSvgChild) {
-        mode = null;
-        return;
-      }
-      if (!onNode) {
-        mode = 'pan';
-        moved = false;
-        panStartX = e.touches[0].clientX;
-        panStartY = e.touches[0].clientY;
-        panInitX = canvasTransform.x;
-        panInitY = canvasTransform.y;
-      } else {
-        mode = null;
-      }
-    }
-  }, { passive: false });
-
-  view.addEventListener("touchmove", function(e) {
-    if (mode === 'pinch' && e.touches.length === 2) {
-      e.preventDefault();
-      const dist = getTouchDist(e.touches[0], e.touches[1]);
-      const newScale = clampScale(pinchStartScale * (dist / pinchStartDist));
-      const rect = view.getBoundingClientRect();
-      const center = getTouchCenter(e.touches[0], e.touches[1]);
-      const cx = center.x - rect.left, cy = center.y - rect.top;
-
-      canvasTransform.scale = newScale;
-      canvasTransform.x = cx - pinchWorldCenter.x * newScale;
-      canvasTransform.y = cy - pinchWorldCenter.y * newScale;
-
-      applyCanvasTransform();
-      applySvgTransform();
-      dismissCanvasHint();
-    } else if (mode === 'pan' && e.touches.length === 1) {
-      e.preventDefault();
-      const dx = e.touches[0].clientX - panStartX;
-      const dy = e.touches[0].clientY - panStartY;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
-      canvasTransform.x = panInitX + dx;
-      canvasTransform.y = panInitY + dy;
-      applyCanvasTransform();
-      applySvgTransform();
-    }
-  }, { passive: false });
-
-  function endTouch(e) {
-    if (mode === 'pinch' && e.touches.length < 2) {
-      if (e.touches.length === 1) {
-        mode = 'pan';
-        panStartX = e.touches[0].clientX;
-        panStartY = e.touches[0].clientY;
-        panInitX = canvasTransform.x;
-        panInitY = canvasTransform.y;
-      } else {
-        mode = null;
-        dismissCanvasHint();
-      }
-    } else if (mode === 'pan' && e.touches.length === 0) {
-      mode = null;
-      if (moved) dismissCanvasHint();
-    }
-  }
-  view.addEventListener("touchend", endTouch);
-  view.addEventListener("touchcancel", endTouch);
-}
+    const p = (e.touches &&
