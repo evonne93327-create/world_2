@@ -151,9 +151,12 @@
         <div class="canvas-bar">
           <div style="display:flex; align-items:center; gap:8px;">
             <span style="font-weight:700; font-size:13px;" id="canvasWorldTitle">🕸️ 關係白板</span>
-            <span style="font-size:11px; color:var(--text-secondary);">💡 點擊「🔗」可連線並填寫雙方關係！</span>
+            <span style="font-size:11px; color:var(--text-secondary);" class="canvas-hint-text">💡 點「🔗」連線；點連線中段可編輯；拖空白處平移，滾輪／雙指縮放</span>
           </div>
-          <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="renderCanvas()">🔄 重整</button>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="resetCanvasView()">🎯 重置視圖</button>
+            <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="renderCanvas()">🔄 重整</button>
+          </div>
         </div>
         <svg class="canvas-svg" id="canvasSvg"></svg>
         <div id="canvasNodesContainer"></div>
@@ -261,6 +264,29 @@
     </div>
   </div>
 
+  <!-- 彈窗：編輯關係（手機長按 / 桌面點連線標籤） -->
+  <div class="modal-overlay" id="edgeEditModal">
+    <div class="modal-card" style="width:400px;">
+      <div class="modal-title">🔗 編輯人物關係</div>
+      <div style="display:flex; flex-direction:column; gap:6px;">
+        <div style="font-size:12px; color:var(--text-secondary);">
+          <span id="edgeEditFromName">—</span>
+          <span style="margin:0 6px; color:var(--accent); font-weight:700;">↔</span>
+          <span id="edgeEditToName">—</span>
+        </div>
+        <label style="font-size:12px; color:var(--text-secondary); margin-top:6px;">關係說明：</label>
+        <input type="text" id="edgeEditLabelInput" class="form-input" placeholder="例如：盟友 / 敵對 / 密探">
+      </div>
+      <div style="display:flex; justify-content:space-between; gap:8px; margin-top:8px;">
+        <button class="btn btn-danger" onclick="deleteEditingEdge()">🗑️ 刪除連線</button>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-secondary" onclick="closeEdgeEditModal()">取消</button>
+          <button class="btn btn-primary" onclick="saveEditingEdge()">儲存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 彈窗：垃圾桶 -->
   <div class="modal-overlay" id="trashModal">
     <div class="modal-card" style="width:480px;">
@@ -281,7 +307,6 @@
   <div class="ctx-menu-overlay" id="ctxMenuOverlay"></div>
   <div class="ctx-menu" id="customContextMenu"></div>
 
-  <!-- 替換原本的 <script src="app.js"></script> -->
   <script src="js/state.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/main.js"></script>
@@ -293,7 +318,5 @@
   <script src="js/canvas.js"></script>
   <script src="js/api.js"></script>
   <script src="js/app.js"></script>
-</body>
-</html>
 </body>
 </html>
