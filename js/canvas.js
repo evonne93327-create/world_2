@@ -112,6 +112,10 @@ function renderCanvas() {
     el.style.left = node.x + "px";
     el.style.top = node.y + "px";
 
+    if (connectingSourceNodeId === node.id) {
+      el.classList.add("connecting");
+    }
+
     const title = (doc.icon || '📄') + " " + (doc.title || "無標題文檔");
     const preview = (doc.content || "").replace(/\n/g, " ");
 
@@ -122,14 +126,15 @@ function renderCanvas() {
 
     el.innerHTML =
       '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
-        '<span style="font-size:12px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:130px;">' + escapeHtml(title) + '</span>' +
-        '<button style="border-radius:50%; width:22px; height:22px; border:1px solid var(--border); background:#fff; cursor:pointer;" onclick="startConnect(\'' + node.id + '\', event)">🔗</button>' +
+        '<span style="font-size:12px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:170px;">' + escapeHtml(title) + '</span>' +
       '</div>' +
       imgHtml +
       '<div style="font-size:11px; color:var(--text-secondary); line-height:1.4; max-height:32px; overflow:hidden; margin-bottom:4px;">' + escapeHtml(preview) + '</div>' +
       '<div style="font-size:10px; color:var(--text-muted); text-align:right;">' + (doc.wordCount || 0) + ' 字</div>';
 
     el.ondblclick = function() {
+      // 連線模式下雙擊不觸發開啟文檔
+      if (connectingSourceNodeId) return;
       loadDocToEditor(doc.id);
       switchView('editor');
     };
@@ -171,15 +176,20 @@ function applySvgTransform() {
 
 function enableDualDrag(element, nodeData) {
   let startX, startY, initialLeft, initialTop, dragging = false;
+  let pointerMoved = false;
 
   function beginDrag(clientX, clientY) {
     dragging = true;
+    pointerMoved = false;
     startX = clientX; startY = clientY;
     initialLeft = nodeData.x; initialTop = nodeData.y;
   }
   function moveDrag(clientX, clientY) {
-    nodeData.x = initialLeft + (clientX - startX) / canvasTransform.scale;
-    nodeData.y = initialTop + (clientY - startY) / canvasTransform.scale;
+    const dx = clientX - startX;
+    const dy = clientY - startY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) pointerMoved = true;
+    nodeData.x = initialLeft + dx / canvasTransform.scale;
+    nodeData.y = initialTop + dy / canvasTransform.scale;
     element.style.left = nodeData.x + "px";
     element.style.top = nodeData.y + "px";
     renderCanvasLines();
@@ -191,7 +201,6 @@ function enableDualDrag(element, nodeData) {
   }
 
   element.addEventListener("mousedown", function(e) {
-    if (e.target.tagName === 'BUTTON') return;
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
@@ -208,7 +217,6 @@ function enableDualDrag(element, nodeData) {
   });
 
   element.addEventListener("touchstart", function(e) {
-    if (e.target.tagName === 'BUTTON') return;
     if (e.touches.length !== 1) return;
     e.stopPropagation();
     const touch = e.touches[0];
@@ -229,36 +237,59 @@ function enableDualDrag(element, nodeData) {
     window.addEventListener("touchend", onTouchEnd);
     window.addEventListener("touchcancel", onTouchEnd);
   }, { passive: true });
+
+  // 點擊節點：若處於連線模式，直接完成連線
+  element.addEventListener("click", function(e) {
+    if (pointerMoved) return;             // 拖曳過就不算點擊
+    if (!connectingSourceNodeId) return;  // 非連線模式，什麼都不做
+    e.stopPropagation();
+    completeConnection(nodeData.id);
+  });
 }
 
 /* ---------- 連線 ---------- */
 
-function startConnect(nodeId, event) {
-  event.stopPropagation();
-  const nodeEl = document.getElementById(nodeId);
-  const canvas = getCurrentWorldCanvas();
-
-  if (!connectingSourceNodeId) {
-    connectingSourceNodeId = nodeId;
-    nodeEl.classList.add("connecting");
-  } else if (connectingSourceNodeId === nodeId) {
-    connectingSourceNodeId = null;
-    nodeEl.classList.remove("connecting");
-  } else {
-    const relation = prompt("請輸入兩者關係：", "盟友 / 敵對 / 密探");
-    if (relation !== null) {
-      canvas.edges.push({
-        id: "edge_" + Date.now(),
-        source: connectingSourceNodeId,
-        target: nodeId,
-        label: relation || "關聯"
-      });
-      saveData();
-    }
-    document.getElementById(connectingSourceNodeId)?.classList.remove("connecting");
-    connectingSourceNodeId = null;
-    renderCanvasLines();
+function startConnect(nodeId) {
+  if (connectingSourceNodeId === nodeId) {
+    // 再點一次自己 = 取消連線模式
+    cancelConnect();
+    return;
   }
+  connectingSourceNodeId = nodeId;
+  // 更新所有節點的 connecting 樣式
+  document.querySelectorAll(".canvas-node").forEach(function(el) {
+    el.classList.toggle("connecting", el.id === nodeId);
+  });
+}
+
+function cancelConnect() {
+  connectingSourceNodeId = null;
+  document.querySelectorAll(".canvas-node.connecting").forEach(function(el) {
+    el.classList.remove("connecting");
+  });
+}
+
+function completeConnection(targetNodeId) {
+  const sourceId = connectingSourceNodeId;
+  if (!sourceId || sourceId === targetNodeId) {
+    cancelConnect();
+    return;
+  }
+
+  const canvas = getCurrentWorldCanvas();
+  // 避免完全重複的連線（同 source/target 且無標籤差異，這裡允許同向多條，故不阻擋）
+  const relation = prompt("請輸入兩者關係：", "盟友 / 敵對 / 密探");
+  if (relation !== null) {
+    canvas.edges.push({
+      id: "edge_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+      source: sourceId,
+      target: targetNodeId,
+      label: relation || "關聯"
+    });
+    saveData();
+  }
+  cancelConnect();
+  renderCanvasLines();
 }
 
 /* ---------- 渲染連線 ---------- */
@@ -267,6 +298,32 @@ function renderCanvasLines() {
   const svg = document.getElementById("canvasSvg");
   svg.innerHTML = "";
   const canvas = getCurrentWorldCanvas();
+
+  // 先統計每一對 (source, target) 共有幾條邊，計算索引與總數
+  // 以無向視角分組：min|max 作為 key，讓雙向連線一起分散
+  const pairGroups = {};
+  canvas.edges.forEach(function(edge) {
+    const key = [edge.source, edge.target].sort().join("|");
+    if (!pairGroups[key]) pairGroups[key] = [];
+    pairGroups[key].push(edge);
+  });
+
+  const edgeOffsetMap = {};
+  Object.keys(pairGroups).forEach(function(key) {
+    const group = pairGroups[key];
+    const total = group.length;
+    group.forEach(function(edge, idx) {
+      // 將多條邊均勻分佈在 -1 ~ 1 之間，並加上 0.5 的位移讓單條邊也稍微彎曲
+      let offset;
+      if (total === 1) {
+        offset = 0;
+      } else {
+        // 例如 3 條：-1, 0, 1；4 條：-1.5, -0.5, 0.5, 1.5（再除以 (total-1) 正規化）
+        offset = (idx - (total - 1) / 2) / ((total - 1) / 2);
+      }
+      edgeOffsetMap[edge.id] = offset;
+    });
+  });
 
   canvas.edges.forEach(function(edge) {
     const srcNode = canvas.nodes.find(n => n.id === edge.source);
@@ -278,16 +335,34 @@ function renderCanvasLines() {
     const x2 = tgtNode.x + CANVAS_NODE_W / 2;
     const y2 = tgtNode.y + 40;
 
-    const dx = (x2 - x1) * 0.3;
-    const d = "M " + x1 + " " + y1 + " C " + (x1 + dx) + " " + y1 + ", " + (x2 - dx) + " " + y2 + ", " + x2 + " " + y2;
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const dist = Math.hypot(dx, dy) || 1;
+
+    // 垂直於連線方向的單位向量
+    const nx = -dy / dist;
+    const ny = dx / dist;
+
+    // 依 offset 分散弧度：offset=0 走直線；offset≠0 走對稱弧
+    const offset = edgeOffsetMap[edge.id] || 0;
+    const bendBase = Math.min(dist * 0.25, 90);
+    const bend = offset * bendBase;
+
+    const cx1 = x1 + dx * 0.25 + nx * bend;
+    const cy1 = y1 + dy * 0.25 + ny * bend;
+    const cx2 = x1 + dx * 0.75 + nx * bend;
+    const cy2 = y1 + dy * 0.75 + ny * bend;
+
+    const d = "M " + x1 + " " + y1 + " C " + cx1 + " " + cy1 + ", " + cx2 + " " + cy2 + ", " + x2 + " " + y2;
 
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", d);
     path.setAttribute("class", "relation-line");
     path.style.pointerEvents = "none";
 
-    const midX = (x1 + x2) / 2;
-    const midY = (y1 + y2) / 2;
+    // 標籤位置：取曲線的中點，加上同樣的弧度偏移
+    const midX = (x1 + x2) / 2 + nx * bend;
+    const midY = (y1 + y2) / 2 + ny * bend;
     const textWidth = Math.max((edge.label || '').length * 13, 36);
 
     const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -425,11 +500,7 @@ function buildCanvasNodeMenuItems(node, doc) {
         switchView('editor');
     }},
     { icon: "🔗", label: "從此節點連線", action: function() {
-        if (connectingSourceNodeId) {
-          document.getElementById(connectingSourceNodeId)?.classList.remove("connecting");
-        }
-        connectingSourceNodeId = node.id;
-        document.getElementById(node.id)?.classList.add("connecting");
+        startConnect(node.id);
     }},
     { type: "divider" },
     { icon: "🗑️", label: "從白板移除", danger: true, action: function() {
@@ -450,10 +521,8 @@ function setupCanvasEvents() {
 
   view.onclick = function(e) {
     if (!e.target.closest('.canvas-node')) {
-      if (connectingSourceNodeId) {
-        document.getElementById(connectingSourceNodeId)?.classList.remove("connecting");
-        connectingSourceNodeId = null;
-      }
+      // 點空白處：取消連線模式
+      if (connectingSourceNodeId) cancelConnect();
     }
   };
 
@@ -500,12 +569,10 @@ function setupCanvasEvents() {
     e.preventDefault();
     const startX = e.clientX, startY = e.clientY;
     const initX = canvasTransform.x, initY = canvasTransform.y;
-    let moved = false;
 
     function onMove(m) {
       const dx = m.clientX - startX;
       const dy = m.clientY - startY;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
       canvasTransform.x = initX + dx;
       canvasTransform.y = initY + dy;
       applyCanvasTransform();
@@ -530,7 +597,6 @@ function setupTouchPanZoom(view, svg) {
   let mode = null;
   let panStartX = 0, panStartY = 0, panInitX = 0, panInitY = 0;
   let pinchStartDist = 0, pinchStartScale = 1, pinchWorldCenter = null;
-  let moved = false;
 
   function getTouchCenter(t1, t2) {
     return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
@@ -545,7 +611,6 @@ function setupTouchPanZoom(view, svg) {
 
     if (e.touches.length === 2) {
       mode = 'pinch';
-      moved = true;
       pinchStartDist = getTouchDist(e.touches[0], e.touches[1]);
       pinchStartScale = canvasTransform.scale;
       const rect = view.getBoundingClientRect();
@@ -565,7 +630,6 @@ function setupTouchPanZoom(view, svg) {
       }
       if (!onNode) {
         mode = 'pan';
-        moved = false;
         panStartX = e.touches[0].clientX;
         panStartY = e.touches[0].clientY;
         panInitX = canvasTransform.x;
@@ -595,7 +659,6 @@ function setupTouchPanZoom(view, svg) {
       e.preventDefault();
       const dx = e.touches[0].clientX - panStartX;
       const dy = e.touches[0].clientY - panStartY;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
       canvasTransform.x = panInitX + dx;
       canvasTransform.y = panInitY + dy;
       applyCanvasTransform();
