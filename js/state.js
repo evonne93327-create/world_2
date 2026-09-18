@@ -102,6 +102,3 @@ const CANVAS_MAX_SCALE = 3;
 
 /* ===== 關係編輯彈窗目前編輯的 edge ===== */
 let editingEdgeId = null;
-
-/* ===== 白板操作提示是否已隱藏（跨 session 記住） ===== */
-let canvasHintDismissed = localStorage.getItem("worldbuilder_canvas_hint_dismissed") === "1";
