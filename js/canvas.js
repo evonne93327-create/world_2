@@ -237,7 +237,6 @@ function enableDualDrag(element, nodeData) {
     window.addEventListener("touchcancel", onTouchEnd);
   }, { passive: true });
 
-  // 點擊節點：連線模式下直接完成連線
   element.addEventListener("click", function(e) {
     if (pointerMoved) return;
     if (!connectingSourceNodeId) return;
@@ -298,17 +297,32 @@ function getEdgeColor(edge) {
   return EDGE_COLORS[id] || EDGE_COLORS["e_gray"];
 }
 
-/* 從節點中心往目標方向，交於節點邊框的點 */
+/* 從節點中心往目標方向，交於「實際節點 DOM 邊框」的點（世界座標） */
 function getNodeBorderPoint(node, targetX, targetY) {
-  const cx = node.x + CANVAS_NODE_W / 2;
-  const cy = node.y + 40;
-  const halfW = CANVAS_NODE_W / 2 + 6;
-  const halfH = 44;
+  const el = document.getElementById(node.id);
+  let halfW, halfH, cx, cy;
+
+  if (el) {
+    // 使用實際 DOM 尺寸（未受 CSS transform 影響，因為 offsetWidth/Height 回傳的是 layout 尺寸）
+    const w = el.offsetWidth || CANVAS_NODE_W;
+    const h = el.offsetHeight || 80;
+    halfW = w / 2 + 4;   // +4 = 節點邊框外留一點縫隙，箭頭才不會貼在框上
+    halfH = h / 2 + 4;
+    cx = node.x + w / 2;
+    cy = node.y + h / 2;
+  } else {
+    // 尚未渲染時的 fallback
+    halfW = CANVAS_NODE_W / 2 + 4;
+    halfH = 44;
+    cx = node.x + CANVAS_NODE_W / 2;
+    cy = node.y + 40;
+  }
 
   const dx = targetX - cx;
   const dy = targetY - cy;
   if (dx === 0 && dy === 0) return { x: cx, y: cy };
 
+  // 射線與矩形邊框的交點
   const scaleX = dx !== 0 ? halfW / Math.abs(dx) : Infinity;
   const scaleY = dy !== 0 ? halfH / Math.abs(dy) : Infinity;
   const t = Math.min(scaleX, scaleY);
@@ -323,7 +337,11 @@ function renderCanvasLines() {
   svg.innerHTML = "";
   const canvas = getCurrentWorldCanvas();
 
+  // 反比補償：讓線條、箭頭、文字在視覺上不隨縮放變大/模糊
+  const invScale = 1 / canvasTransform.scale;
+
   // 箭頭 marker：每個顏色各一組
+  // markerUnits="userSpaceOnUse" + markerWidth 反比 → 縮放時箭頭大小固定
   const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
   Object.keys(EDGE_COLORS).forEach(function(colorId) {
     const col = EDGE_COLORS[colorId];
@@ -332,8 +350,9 @@ function renderCanvasLines() {
     marker.setAttribute("viewBox", "0 0 10 10");
     marker.setAttribute("refX", "10");
     marker.setAttribute("refY", "5");
-    marker.setAttribute("markerWidth", "7");
-    marker.setAttribute("markerHeight", "7");
+    marker.setAttribute("markerWidth", String(7 * invScale));
+    marker.setAttribute("markerHeight", String(7 * invScale));
+    marker.setAttribute("markerUnits", "userSpaceOnUse");
     marker.setAttribute("orient", "auto-start-reverse");
     const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
     p.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
@@ -368,16 +387,23 @@ function renderCanvasLines() {
     const tgtNode = canvas.nodes.find(n => n.id === edge.target);
     if (!srcNode || !tgtNode) return;
 
-    const srcCenter = { x: srcNode.x + CANVAS_NODE_W / 2, y: srcNode.y + 40 };
-    const tgtCenter = { x: tgtNode.x + CANVAS_NODE_W / 2, y: tgtNode.y + 40 };
+    // 用實際 DOM 算出中心
+    const srcEl = document.getElementById(srcNode.id);
+    const tgtEl = document.getElementById(tgtNode.id);
+    const srcW = srcEl ? srcEl.offsetWidth : CANVAS_NODE_W;
+    const srcH = srcEl ? srcEl.offsetHeight : 80;
+    const tgtW = tgtEl ? tgtEl.offsetWidth : CANVAS_NODE_W;
+    const tgtH = tgtEl ? tgtEl.offsetHeight : 80;
 
-    // 依箭頭方向決定 path 起訖中心
+    const srcCenter = { x: srcNode.x + srcW / 2, y: srcNode.y + srcH / 2 };
+    const tgtCenter = { x: tgtNode.x + tgtW / 2, y: tgtNode.y + tgtH / 2 };
+
+    // 依箭頭方向決定 path 起訖
     let c1 = srcCenter, c2 = tgtCenter;
     if (edge.arrow === "backward") {
       c1 = tgtCenter; c2 = srcCenter;
     }
 
-    // 交於節點邊框
     const p1 = getNodeBorderPoint(srcNode, c2.x, c2.y);
     const p2 = getNodeBorderPoint(tgtNode, c1.x, c1.y);
 
@@ -411,12 +437,14 @@ function renderCanvasLines() {
     path.setAttribute("d", d);
     path.setAttribute("class", "relation-line");
     path.style.stroke = col.stroke;
-    path.style.strokeWidth = "3";
+    path.style.strokeWidth = (2.5 * invScale) + "px";
     path.style.pointerEvents = "none";
+    path.setAttribute("vector-effect", "non-scaling-stroke");
 
     const dash = edge.dash || "solid";
-    if (dash === "dashed") path.setAttribute("stroke-dasharray", "10 6");
-    else if (dash === "dotted") path.setAttribute("stroke-dasharray", "2 6");
+    // 虛線 dash 也反比補償
+    if (dash === "dashed") path.setAttribute("stroke-dasharray", (10 * invScale) + " " + (6 * invScale));
+    else if (dash === "dotted") path.setAttribute("stroke-dasharray", (2 * invScale) + " " + (6 * invScale));
     path.setAttribute("stroke-linecap", "round");
 
     const arrow = edge.arrow || "none";
@@ -424,10 +452,21 @@ function renderCanvasLines() {
       path.setAttribute("marker-end", "url(#arrow_" + (edge.color || "e_gray") + ")");
     }
 
-    // 標籤位置：取曲線中點
-    const midX = (x1 + x2) / 2 + nx * bend;
-    const midY = (y1 + y2) / 2 + ny * bend;
-    const textWidth = Math.max((edge.label || '').length * 13, 36);
+    // 標籤：放在曲線的中點（t=0.5），但依 offset 沿弧線錯開
+    // 取二次曲線參數式：B(0.5) = 0.125*p0 + 0.375*p1 + 0.375*p2 + 0.125*p3（三次貝茲）
+    const t = 0.5;
+    const mt = 1 - t;
+    const bezX = mt*mt*mt*x1 + 3*mt*mt*t*cx1 + 3*mt*t*t*cx2 + t*t*t*x2;
+    const bezY = mt*mt*mt*y1 + 3*mt*mt*t*cy1 + 3*mt*t*t*cy2 + t*t*t*y2;
+
+    // 依 offset 沿法線再推一點，避免多條邊的標籤黏在一起
+    const labelOffset = offset * 14;
+    const midX = bezX + nx * labelOffset;
+    const midY = bezY + ny * labelOffset;
+
+    // 文字與外框尺寸也反比補償
+    const textWidth = Math.max((edge.label || '').length * 13, 36) * invScale;
+    const textHeight = 22 * invScale;
 
     const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
     g.style.pointerEvents = "all";
@@ -435,16 +474,28 @@ function renderCanvasLines() {
 
     const bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     bgRect.setAttribute("x", midX - textWidth / 2);
-    bgRect.setAttribute("y", midY - 11);
+    bgRect.setAttribute("y", midY - textHeight / 2);
     bgRect.setAttribute("width", textWidth);
-    bgRect.setAttribute("height", 22);
-    bgRect.setAttribute("class", "line-label-bg");
-    bgRect.style.stroke = col.stroke;
+    bgRect.setAttribute("height", textHeight);
+    bgRect.setAttribute("rx", 6 * invScale);
+    bgRect.setAttribute("ry", 6 * invScale);
+    bgRect.setAttribute("fill", "var(--bg-card)");
+    bgRect.setAttribute("stroke", col.stroke);
+    bgRect.setAttribute("stroke-width", 1.5 * invScale);
+    bgRect.style.pointerEvents = "all";
 
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("x", midX);
     text.setAttribute("y", midY);
     text.setAttribute("class", "line-label-box");
+    text.setAttribute("fill", "var(--text-primary)");
+    text.setAttribute("text-anchor", "middle");
+    text.setAttribute("dominant-baseline", "central");
+    text.setAttribute("font-size", (10 * invScale) + "px");
+    text.setAttribute("font-weight", "600");
+    text.setAttribute("font-family", "var(--font-ui)");
+    text.style.pointerEvents = "none";
+    text.style.userSelect = "none";
     text.textContent = edge.label;
 
     g.addEventListener("contextmenu", function(e) {
@@ -647,23 +698,15 @@ function setupCanvasEvents() {
     }
   };
 
-  /* ===== 桌面：滾輪縮放 =====
-     支援三種觸發方式：
-       1. 一般滑鼠滾輪（無 Ctrl）
-       2. Ctrl + 滾輪（Windows / Linux 使用者習慣）
-       3. Mac 觸控板雙指捏合（瀏覽器會送 ctrlKey=true 的 wheel 事件）
-     全部走同一段邏輯，不需要另外區分。 */
   view.addEventListener("wheel", function(e) {
     if (e.target.closest('.canvas-floating-actions')) return;
 
-    // 一定要 preventDefault，否則 Ctrl+滾輪會被瀏覽器拿去縮放整頁
     e.preventDefault();
 
     const rect = view.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
 
-    // Ctrl 按住時 deltaY 通常較小，給一點補償倍率讓手感一致
     const factor = e.ctrlKey ? 0.003 : 0.0015;
     const zoomFactor = Math.exp(-e.deltaY * factor);
     const newScale = clampScale(canvasTransform.scale * zoomFactor);
@@ -675,10 +718,10 @@ function setupCanvasEvents() {
     canvasTransform.y = my - worldBefore.y * newScale;
 
     applyCanvasTransform();
-    applySvgTransform();
+    // 縮放時線條/文字需要重繪，才能套用反比補償
+    renderCanvasLines();
   }, { passive: false });
 
-  /* ===== 桌面：拖曳空白平移 ===== */
   view.addEventListener("mousedown", function(e) {
     if (e.button !== 0) return;
     if (e.target.closest('.canvas-node')) return;
@@ -707,7 +750,6 @@ function setupCanvasEvents() {
     window.addEventListener("mouseup", onUp);
   });
 
-  /* ===== 手機：單指拖空白平移 + 雙指 pinch 縮放 ===== */
   setupTouchPanZoom(view, svg);
 
   svg.style.touchAction = "none";
@@ -775,7 +817,8 @@ function setupTouchPanZoom(view, svg) {
       canvasTransform.y = cy - pinchWorldCenter.y * newScale;
 
       applyCanvasTransform();
-      applySvgTransform();
+      // 縮放時重繪，套用反比補償
+      renderCanvasLines();
     } else if (mode === 'pan' && e.touches.length === 1) {
       e.preventDefault();
       const dx = e.touches[0].clientX - panStartX;
