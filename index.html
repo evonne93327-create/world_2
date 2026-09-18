@@ -268,7 +268,7 @@
 
   <!-- 彈窗：編輯關係（手機長按 / 桌面右鍵連線標籤） -->
   <div class="modal-overlay" id="edgeEditModal">
-    <div class="modal-card" style="width:400px;">
+    <div class="modal-card" style="width:460px;">
       <div class="modal-title">🔗 編輯人物關係</div>
       <div style="display:flex; flex-direction:column; gap:6px;">
         <div style="font-size:12px; color:var(--text-secondary);">
@@ -278,6 +278,23 @@
         </div>
         <label style="font-size:12px; color:var(--text-secondary); margin-top:6px;">關係說明：</label>
         <input type="text" id="edgeEditLabelInput" class="form-input" placeholder="例如：盟友 / 敵對 / 密探">
+
+        <label style="font-size:12px; color:var(--text-secondary); margin-top:6px;">連線顏色：</label>
+        <div class="edge-color-row" id="edgeColorRow"></div>
+
+        <label style="font-size:12px; color:var(--text-secondary); margin-top:6px;">線條樣式：</label>
+        <div class="edge-style-row" id="edgeStyleRow">
+          <button type="button" class="edge-opt-btn" data-dash="solid">—— 實線</button>
+          <button type="button" class="edge-opt-btn" data-dash="dashed">– – 虛線</button>
+          <button type="button" class="edge-opt-btn" data-dash="dotted">· · 點線</button>
+        </div>
+
+        <label style="font-size:12px; color:var(--text-secondary); margin-top:6px;">箭頭方向：</label>
+        <div class="edge-style-row" id="edgeArrowRow">
+          <button type="button" class="edge-opt-btn" data-arrow="none">無箭頭</button>
+          <button type="button" class="edge-opt-btn" data-arrow="forward">→ 單向</button>
+          <button type="button" class="edge-opt-btn" data-arrow="backward">← 反向</button>
+        </div>
       </div>
       <div style="display:flex; justify-content:space-between; gap:8px; margin-top:8px;">
         <button class="btn btn-danger" onclick="deleteEditingEdge()">🗑️ 刪除連線</button>
