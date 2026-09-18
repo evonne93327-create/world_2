@@ -149,15 +149,21 @@
       <!-- 2. 白板關係區 (Graphs) -->
       <section id="canvasView" class="view-panel" style="display:none;">
         <div class="canvas-bar">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span style="font-weight:700; font-size:13px;" id="canvasWorldTitle">🕸️ 關係白板</span>
-            <span style="font-size:11px; color:var(--text-secondary);" class="canvas-hint-text">💡 點「🔗」連線；點連線中段可編輯；拖空白處平移，滾輪／雙指縮放</span>
-          </div>
-          <div style="display:flex; align-items:center; gap:6px;">
-            <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="resetCanvasView()">🎯 重置視圖</button>
-            <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="renderCanvas()">🔄 重整</button>
+          <div class="canvas-bar-left">
+            <span class="canvas-title" id="canvasWorldTitle">🕸️ 關係白板</span>
+            <span class="canvas-hint-text">💡 點「🔗」連線；長按／右鍵連線中段可編輯；拖空白處平移，滾輪／雙指縮放</span>
           </div>
         </div>
+
+        <!-- 右下角浮動按鈕 -->
+        <div class="canvas-floating-actions">
+          <button class="canvas-floating-btn" onclick="resetCanvasView()" title="重置視圖">🎯</button>
+          <button class="canvas-floating-btn" onclick="renderCanvas()" title="重整白板">🔄</button>
+        </div>
+
+        <!-- 中央底部倍數指示 -->
+        <div class="canvas-zoom-indicator" id="canvasZoomIndicator">100%</div>
+
         <svg class="canvas-svg" id="canvasSvg"></svg>
         <div id="canvasNodesContainer"></div>
       </section>
@@ -264,7 +270,7 @@
     </div>
   </div>
 
-  <!-- 彈窗：編輯關係（手機長按 / 桌面點連線標籤） -->
+  <!-- 彈窗：編輯關係（手機長按 / 桌面右鍵連線標籤） -->
   <div class="modal-overlay" id="edgeEditModal">
     <div class="modal-card" style="width:400px;">
       <div class="modal-title">🔗 編輯人物關係</div>
