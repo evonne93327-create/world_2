@@ -274,21 +274,20 @@ function renderCanvasLines() {
     const dx = (x2 - x1) * 0.3;
     const d = "M " + x1 + " " + y1 + " C " + (x1 + dx) + " " + y1 + ", " + (x2 - dx) + " " + y2 + ", " + x2 + " " + y2;
 
+    // 線段本身：完全不可互動（不吃事件、不可點、不能觸發編輯）
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", d);
     path.setAttribute("class", "relation-line");
-    path.style.pointerEvents = "stroke";
-    path.onclick = function(e) {
-      e.stopPropagation();
-      openEdgeEditModal(edge.id);
-    };
+    path.style.pointerEvents = "none";
 
     const midX = (x1 + x2) / 2;
     const midY = (y1 + y2) / 2;
     const textWidth = Math.max((edge.label || '').length * 13, 36);
 
+    // 只有標籤框（含文字）會接收事件
     const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
     g.style.pointerEvents = "all";
+    g.style.cursor = "pointer";
 
     const bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     bgRect.setAttribute("x", midX - textWidth / 2);
@@ -303,10 +302,14 @@ function renderCanvasLines() {
     text.setAttribute("class", "line-label-box");
     text.textContent = edge.label;
 
-    // 點擊標籤 → 編輯；右鍵 → 編輯；長按 → 編輯
-    g.style.cursor = "pointer";
-    g.onclick = function(e) { e.stopPropagation(); openEdgeEditModal(edge.id); };
-    g.oncontextmenu = function(e) { e.preventDefault(); e.stopPropagation(); openEdgeEditModal(edge.id); };
+    // 電腦版：只認右鍵，不認左鍵點擊
+    g.addEventListener("contextmenu", function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      openEdgeEditModal(edge.id);
+    });
+
+    // 手機版：只認長按 280ms
     attachLongPressToSvgGroup(g, function() { openEdgeEditModal(edge.id); });
 
     g.appendChild(bgRect);
@@ -318,10 +321,10 @@ function renderCanvasLines() {
   applySvgTransform();
 }
 
-// 給 SVG <g> 用的長按偵測（手機）
+// SVG <g> 用的長按偵測（手機 280ms）
 function attachLongPressToSvgGroup(gEl, callback) {
   let timer = null, fired = false, sx = 0, sy = 0;
-  const DURATION = 480, TOL = 10;
+  const DURATION = 280, TOL = 10;
 
   function start(e) {
     const p = (e.touches && e.touches[0]) || e;
@@ -480,7 +483,7 @@ function setupCanvasEvents() {
     if (e.button !== 0) return;
     if (e.target.closest('.canvas-node')) return;
     if (e.target.closest('.canvas-bar')) return;
-    // 點在 SVG 的線或標籤上：不啟動平移（交給它自己的點擊）
+    // 點在 SVG 子元素（標籤框）→ 不啟動平移
     if (e.target.closest('svg') && e.target.tagName !== 'svg') return;
 
     e.preventDefault();
@@ -528,8 +531,8 @@ function setupTouchPanZoom(view, svg) {
 
   view.addEventListener("touchstart", function(e) {
     if (e.target.closest('.canvas-bar')) return;
-    const onNode = !!e.target.closest('.canvas-node');
 
+    // 雙指：一律 pinch（不管按到節點或標籤）
     if (e.touches.length === 2) {
       mode = 'pinch';
       moved = true;
@@ -539,15 +542,29 @@ function setupTouchPanZoom(view, svg) {
       const center = getTouchCenter(e.touches[0], e.touches[1]);
       pinchWorldCenter = screenToWorld(center.x - rect.left, center.y - rect.top);
       e.preventDefault();
-    } else if (e.touches.length === 1 && !onNode) {
-      mode = 'pan';
-      moved = false;
-      panStartX = e.touches[0].clientX;
-      panStartY = e.touches[0].clientY;
-      panInitX = canvasTransform.x;
-      panInitY = canvasTransform.y;
-    } else {
-      mode = null;
+      return;
+    }
+
+    // 單指：判斷按到什麼
+    if (e.touches.length === 1) {
+      const onNode = !!e.target.closest('.canvas-node');
+      // SVG 子元素（標籤框）：交給長按處理，不平移
+      const onSvgChild = !!(e.target.closest && e.target.closest('svg') && e.target.tagName !== 'svg');
+
+      if (onSvgChild) {
+        mode = null;
+        return;
+      }
+      if (!onNode) {
+        mode = 'pan';
+        moved = false;
+        panStartX = e.touches[0].clientX;
+        panStartY = e.touches[0].clientY;
+        panInitX = canvasTransform.x;
+        panInitY = canvasTransform.y;
+      } else {
+        mode = null;
+      }
     }
   }, { passive: false });
 
