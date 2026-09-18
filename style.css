@@ -1612,3 +1612,11 @@ main.content-workspace {
   border-color: var(--accent);
   color: var(--accent-hover);
 }
+/* 連線標籤：避免被外部樣式蓋掉 */
+.line-label-box {
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
