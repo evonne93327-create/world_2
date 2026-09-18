@@ -457,6 +457,7 @@ function renderCanvasLines() {
   });
 
   const edgeOffsetMap = {};
+  const edgeGroupTotalMap = {};
   Object.keys(pairGroups).forEach(function(key) {
     const group = pairGroups[key];
     const total = group.length;
@@ -465,6 +466,7 @@ function renderCanvasLines() {
       if (total === 1) offset = 0;
       else offset = (idx - (total - 1) / 2) / ((total - 1) / 2); // -1 .. 1
       edgeOffsetMap[edge.id] = offset;
+      edgeGroupTotalMap[edge.id] = total;
     });
   });
 
@@ -498,15 +500,21 @@ function renderCanvasLines() {
     const ny = dx / dist;
 
     /* ----- 弧度：用 offset 強制給定 ----- */
-    // 同一對節點的多條邊：offset = -1 / 0 / +1
-    // 兩側彎（往哪彎由 offset 決定），中間那條（offset=0，或單一連線）
-    // 也給一個最小弧度，避免整條線死直，維持像麻花一樣自然的弧形路徑
+    // 同一對節點只有一條線時維持直線。
+    // 多條線時（offset = -1 / 0 / +1），彎曲幅度統一落在 maxBend 的 0.3～0.7 倍範圍，
+    // 中間那條（offset=0）取最小值 0.3，最外側（offset=±1）取最大值 0.7。
     const maxBend = Math.min(dist * 0.28, 90);
-    const minBend = maxBend * 0.35;
+    const total = edgeGroupTotalMap[edge.id] || 1;
     const offset = edgeOffsetMap[edge.id] || 0;
-    const bendMag = offset === 0
-      ? minBend
-      : Math.sign(offset) * Math.max(Math.abs(offset) * maxBend, minBend);
+
+    let bendMag = 0;
+    if (total > 1) {
+      const BEND_MIN_RATIO = 0.3;
+      const BEND_MAX_RATIO = 0.7;
+      const ratio = BEND_MIN_RATIO + (BEND_MAX_RATIO - BEND_MIN_RATIO) * Math.abs(offset);
+      const sign = offset === 0 ? 1 : Math.sign(offset);
+      bendMag = sign * ratio * maxBend;
+    }
 
     const ext1 = dist * 0.35;
     const ext2 = dist * 0.35;
