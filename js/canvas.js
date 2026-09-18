@@ -341,7 +341,6 @@ function renderCanvasLines() {
   const invScale = 1 / canvasTransform.scale;
 
   // 箭頭 marker：每個顏色各一組
-  // markerUnits="userSpaceOnUse" + markerWidth 反比 → 縮放時箭頭大小固定
   const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
   Object.keys(EDGE_COLORS).forEach(function(colorId) {
     const col = EDGE_COLORS[colorId];
@@ -398,21 +397,12 @@ function renderCanvasLines() {
     const srcCenter = { x: srcNode.x + srcW / 2, y: srcNode.y + srcH / 2 };
     const tgtCenter = { x: tgtNode.x + tgtW / 2, y: tgtNode.y + tgtH / 2 };
 
-    // 依箭頭方向決定 path 起訖
-    let c1 = srcCenter, c2 = tgtCenter;
-    if (edge.arrow === "backward") {
-      c1 = tgtCenter; c2 = srcCenter;
-    }
+    // 永遠從 source 邊框畫到 target 邊框（path 幾何固定，箭頭方向用 marker 控制）
+    const p1 = getNodeBorderPoint(srcNode, tgtCenter.x, tgtCenter.y);
+    const p2 = getNodeBorderPoint(tgtNode, srcCenter.x, srcCenter.y);
 
-    const p1 = getNodeBorderPoint(srcNode, c2.x, c2.y);
-    const p2 = getNodeBorderPoint(tgtNode, c1.x, c1.y);
-
-    let x1, y1, x2, y2;
-    if (edge.arrow === "backward") {
-      x1 = p2.x; y1 = p2.y; x2 = p1.x; y2 = p1.y;
-    } else {
-      x1 = p1.x; y1 = p1.y; x2 = p2.x; y2 = p2.y;
-    }
+    const x1 = p1.x, y1 = p1.y;
+    const x2 = p2.x, y2 = p2.y;
 
     const dx = x2 - x1;
     const dy = y2 - y1;
@@ -442,29 +432,32 @@ function renderCanvasLines() {
     path.setAttribute("vector-effect", "non-scaling-stroke");
 
     const dash = edge.dash || "solid";
-    // 虛線 dash 也反比補償
     if (dash === "dashed") path.setAttribute("stroke-dasharray", (10 * invScale) + " " + (6 * invScale));
     else if (dash === "dotted") path.setAttribute("stroke-dasharray", (2 * invScale) + " " + (6 * invScale));
     path.setAttribute("stroke-linecap", "round");
 
+    // 箭頭：四種模式
     const arrow = edge.arrow || "none";
-    if (arrow === "forward" || arrow === "backward") {
-      path.setAttribute("marker-end", "url(#arrow_" + (edge.color || "e_gray") + ")");
+    const markerUrl = "url(#arrow_" + (edge.color || "e_gray") + ")";
+    if (arrow === "forward") {
+      path.setAttribute("marker-end", markerUrl);
+    } else if (arrow === "backward") {
+      path.setAttribute("marker-start", markerUrl);
+    } else if (arrow === "both") {
+      path.setAttribute("marker-start", markerUrl);
+      path.setAttribute("marker-end", markerUrl);
     }
 
-    // 標籤：放在曲線的中點（t=0.5），但依 offset 沿弧線錯開
-    // 取二次曲線參數式：B(0.5) = 0.125*p0 + 0.375*p1 + 0.375*p2 + 0.125*p3（三次貝茲）
+    // 標籤：放在曲線 t=0.5 的位置，依 offset 沿法線錯開
     const t = 0.5;
     const mt = 1 - t;
     const bezX = mt*mt*mt*x1 + 3*mt*mt*t*cx1 + 3*mt*t*t*cx2 + t*t*t*x2;
     const bezY = mt*mt*mt*y1 + 3*mt*mt*t*cy1 + 3*mt*t*t*cy2 + t*t*t*y2;
 
-    // 依 offset 沿法線再推一點，避免多條邊的標籤黏在一起
     const labelOffset = offset * 14;
     const midX = bezX + nx * labelOffset;
     const midY = bezY + ny * labelOffset;
 
-    // 文字與外框尺寸也反比補償
     const textWidth = Math.max((edge.label || '').length * 13, 36) * invScale;
     const textHeight = 22 * invScale;
 
