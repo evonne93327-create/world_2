@@ -329,7 +329,6 @@ function renderCanvasLines() {
   applySvgTransform();
 }
 
-// SVG <g> 用的長按偵測（手機 280ms）
 function attachLongPressToSvgGroup(gEl, callback) {
   let timer = null, fired = false, sx = 0, sy = 0;
   const DURATION = 280, TOL = 10;
@@ -463,15 +462,25 @@ function setupCanvasEvents() {
     }
   };
 
-  /* ===== 桌面：滾輪縮放 ===== */
+  /* ===== 桌面：滾輪縮放 =====
+     支援三種觸發方式：
+       1. 一般滑鼠滾輪（無 Ctrl）
+       2. Ctrl + 滾輪（Windows / Linux 使用者習慣）
+       3. Mac 觸控板雙指捏合（瀏覽器會送 ctrlKey=true 的 wheel 事件）
+     全部走同一段邏輯，不需要另外區分。 */
   view.addEventListener("wheel", function(e) {
     if (e.target.closest('.canvas-floating-actions')) return;
+
+    // 一定要 preventDefault，否則 Ctrl+滾輪會被瀏覽器拿去縮放整頁
     e.preventDefault();
+
     const rect = view.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
 
-    const zoomFactor = Math.exp(-e.deltaY * 0.0015);
+    // Ctrl 按住時 deltaY 通常較小，給一點補償倍率讓手感一致
+    const factor = e.ctrlKey ? 0.003 : 0.0015;
+    const zoomFactor = Math.exp(-e.deltaY * factor);
     const newScale = clampScale(canvasTransform.scale * zoomFactor);
     if (newScale === canvasTransform.scale) return;
 
