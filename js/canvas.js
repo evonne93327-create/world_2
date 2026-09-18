@@ -303,15 +303,13 @@ function getNodeBorderPoint(node, targetX, targetY) {
   let halfW, halfH, cx, cy;
 
   if (el) {
-    // 使用實際 DOM 尺寸（未受 CSS transform 影響，因為 offsetWidth/Height 回傳的是 layout 尺寸）
     const w = el.offsetWidth || CANVAS_NODE_W;
     const h = el.offsetHeight || 80;
-    halfW = w / 2 + 4;   // +4 = 節點邊框外留一點縫隙，箭頭才不會貼在框上
+    halfW = w / 2 + 4;
     halfH = h / 2 + 4;
     cx = node.x + w / 2;
     cy = node.y + h / 2;
   } else {
-    // 尚未渲染時的 fallback
     halfW = CANVAS_NODE_W / 2 + 4;
     halfH = 44;
     cx = node.x + CANVAS_NODE_W / 2;
@@ -322,7 +320,6 @@ function getNodeBorderPoint(node, targetX, targetY) {
   const dy = targetY - cy;
   if (dx === 0 && dy === 0) return { x: cx, y: cy };
 
-  // 射線與矩形邊框的交點
   const scaleX = dx !== 0 ? halfW / Math.abs(dx) : Infinity;
   const scaleY = dy !== 0 ? halfH / Math.abs(dy) : Infinity;
   const t = Math.min(scaleX, scaleY);
@@ -337,7 +334,6 @@ function renderCanvasLines() {
   svg.innerHTML = "";
   const canvas = getCurrentWorldCanvas();
 
-  // 反比補償：讓線條、箭頭、文字在視覺上不隨縮放變大/模糊
   const invScale = 1 / canvasTransform.scale;
 
   // 箭頭 marker：每個顏色各一組
@@ -347,10 +343,10 @@ function renderCanvasLines() {
     const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
     marker.setAttribute("id", "arrow_" + colorId);
     marker.setAttribute("viewBox", "0 0 10 10");
-    marker.setAttribute("refX", "10");
+    marker.setAttribute("refX", "9");
     marker.setAttribute("refY", "5");
-    marker.setAttribute("markerWidth", String(7 * invScale));
-    marker.setAttribute("markerHeight", String(7 * invScale));
+    marker.setAttribute("markerWidth", String(8 * invScale));
+    marker.setAttribute("markerHeight", String(8 * invScale));
     marker.setAttribute("markerUnits", "userSpaceOnUse");
     marker.setAttribute("orient", "auto-start-reverse");
     const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -397,7 +393,7 @@ function renderCanvasLines() {
     const srcCenter = { x: srcNode.x + srcW / 2, y: srcNode.y + srcH / 2 };
     const tgtCenter = { x: tgtNode.x + tgtW / 2, y: tgtNode.y + tgtH / 2 };
 
-    // 永遠從 source 邊框畫到 target 邊框（path 幾何固定，箭頭方向用 marker 控制）
+    // 永遠從 source 邊框畫到 target 邊框
     const p1 = getNodeBorderPoint(srcNode, tgtCenter.x, tgtCenter.y);
     const p2 = getNodeBorderPoint(tgtNode, srcCenter.x, srcCenter.y);
 
@@ -458,24 +454,9 @@ function renderCanvasLines() {
     const midX = bezX + nx * labelOffset;
     const midY = bezY + ny * labelOffset;
 
-    const textWidth = Math.max((edge.label || '').length * 13, 36) * invScale;
-    const textHeight = 22 * invScale;
-
     const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
     g.style.pointerEvents = "all";
     g.style.cursor = "pointer";
-
-    const bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    bgRect.setAttribute("x", midX - textWidth / 2);
-    bgRect.setAttribute("y", midY - textHeight / 2);
-    bgRect.setAttribute("width", textWidth);
-    bgRect.setAttribute("height", textHeight);
-    bgRect.setAttribute("rx", 6 * invScale);
-    bgRect.setAttribute("ry", 6 * invScale);
-    bgRect.setAttribute("fill", "var(--bg-card)");
-    bgRect.setAttribute("stroke", col.stroke);
-    bgRect.setAttribute("stroke-width", 1.5 * invScale);
-    bgRect.style.pointerEvents = "all";
 
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("x", midX);
@@ -484,12 +465,40 @@ function renderCanvasLines() {
     text.setAttribute("fill", "var(--text-primary)");
     text.setAttribute("text-anchor", "middle");
     text.setAttribute("dominant-baseline", "central");
-    text.setAttribute("font-size", (10 * invScale) + "px");
+    text.setAttribute("font-size", "12");
     text.setAttribute("font-weight", "600");
     text.setAttribute("font-family", "var(--font-ui)");
     text.style.pointerEvents = "none";
     text.style.userSelect = "none";
     text.textContent = edge.label;
+
+    g.appendChild(text);
+    svg.appendChild(g);
+
+    // 量測文字實際大小（世界座標）
+    let bbox;
+    try {
+      bbox = text.getBBox();
+    } catch (err) {
+      bbox = { x: midX - 30, y: midY - 8, width: 60, height: 16 };
+    }
+
+    const padX = 8;
+    const padY = 4;
+
+    const bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bgRect.setAttribute("x", bbox.x - padX);
+    bgRect.setAttribute("y", bbox.y - padY);
+    bgRect.setAttribute("width", bbox.width + padX * 2);
+    bgRect.setAttribute("height", bbox.height + padY * 2);
+    bgRect.setAttribute("rx", 6);
+    bgRect.setAttribute("ry", 6);
+    bgRect.setAttribute("fill", "var(--bg-card)");
+    bgRect.setAttribute("stroke", col.stroke);
+    bgRect.setAttribute("stroke-width", "1.5");
+    bgRect.style.pointerEvents = "all";
+
+    g.insertBefore(bgRect, text);
 
     g.addEventListener("contextmenu", function(e) {
       e.preventDefault();
@@ -499,10 +508,7 @@ function renderCanvasLines() {
 
     attachLongPressToSvgGroup(g, function() { openEdgeEditModal(edge.id); });
 
-    g.appendChild(bgRect);
-    g.appendChild(text);
     svg.appendChild(path);
-    svg.appendChild(g);
   });
 
   applySvgTransform();
@@ -565,7 +571,7 @@ function openEdgeEditModal(edgeId) {
     tgtDoc ? ((tgtDoc.icon || '📄') + ' ' + (tgtDoc.title || '無標題')) : '（未知）';
   document.getElementById("edgeEditLabelInput").value = edge.label || '';
 
-  // 顏色 chips（用專屬線色）
+  // 顏色 chips
   const colorRow = document.getElementById("edgeColorRow");
   colorRow.innerHTML = "";
   const currentColor = edge.color || "e_gray";
@@ -711,7 +717,6 @@ function setupCanvasEvents() {
     canvasTransform.y = my - worldBefore.y * newScale;
 
     applyCanvasTransform();
-    // 縮放時線條/文字需要重繪，才能套用反比補償
     renderCanvasLines();
   }, { passive: false });
 
@@ -810,7 +815,6 @@ function setupTouchPanZoom(view, svg) {
       canvasTransform.y = cy - pinchWorldCenter.y * newScale;
 
       applyCanvasTransform();
-      // 縮放時重繪，套用反比補償
       renderCanvasLines();
     } else if (mode === 'pan' && e.touches.length === 1) {
       e.preventDefault();
