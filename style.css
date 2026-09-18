@@ -703,7 +703,7 @@ main.content-workspace {
   inset: 0; 
   width: 100%; 
   height: 100%; 
-  z-index: 1; 
+  z-index: 1;          /* 線條圖層：比節點低 */
   pointer-events: none;
   transform-origin: 0 0;
   will-change: transform;
@@ -715,8 +715,8 @@ main.content-workspace {
   stroke: var(--jade); 
   stroke-width: 2.5; 
   fill: none; 
-  cursor: pointer; 
 }
+/* 線段本身不吃事件（由 JS 用 pointer-events:none 處理） */
 .line-label-bg { 
   fill: var(--bg-card); 
   stroke: var(--jade-light); 
@@ -750,14 +750,14 @@ main.content-workspace {
   box-shadow: 0 0 0 2px var(--accent-light) !important;
 }
 
-/* 節點容器：套用 transform */
+/* 節點容器：套用 transform，且要蓋在線條上方 */
 #canvasNodesContainer {
   position: absolute;
   inset: 0;
   transform-origin: 0 0;
   will-change: transform;
   pointer-events: none;
-  z-index: 2;
+  z-index: 2;          /* 節點圖層：比線條高 */
 }
 #canvasNodesContainer .canvas-node {
   pointer-events: auto;
