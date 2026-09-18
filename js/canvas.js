@@ -1,5 +1,5 @@
 /* ==========================================================
-   白板 (Graphs) — viewBox 架構
+   白板 (Graphs) — viewBox 架構 + 邊框分散連線
    ========================================================== */
 
 const CANVAS_NODE_W = 200;
@@ -140,7 +140,7 @@ function renderCanvas() {
   renderCanvasLines();
 }
 
-/* ---------- 節點定位（用 CSS transform）---------- */
+/* ---------- 節點定位 ---------- */
 
 function applyCanvasTransform(silent) {
   const container = document.getElementById("canvasNodesContainer");
@@ -151,7 +151,7 @@ function applyCanvasTransform(silent) {
   if (!silent) showZoomIndicator();
 }
 
-/* ---------- SVG viewBox（線條用）---------- */
+/* ---------- SVG viewBox ---------- */
 
 function applySvgViewBox() {
   const svg = document.getElementById("canvasSvg");
@@ -282,53 +282,87 @@ function completeConnection(targetNodeId) {
   renderCanvasLines();
 }
 
-/* ---------- 顏色 / 邊框交點 ---------- */
+/* ---------- 顏色 ---------- */
 
 function getEdgeColor(edge) {
   const id = edge.color || "e_gray";
   return EDGE_COLORS[id] || EDGE_COLORS["e_gray"];
 }
 
-function getNodeBorderPoint(node, targetX, targetY) {
+/* ---------- 節點邊框交點（支援沿邊分散）---------- */
+/*
+   node       : 節點資料
+   targetX/Y  : 目標中心座標（決定連線方向）
+   slotInfo   : { index, total } — 同一邊的第幾條 / 共幾條（可選）
+                若給定，會沿著「與方向垂直的那一邊」均勻分散。
+*/
+function getNodeBorderPoint(node, targetX, targetY, slotInfo) {
   const el = document.getElementById(node.id);
-  let halfW, halfH, cx, cy;
+  let w, h, cx, cy;
 
   if (el) {
-    const w = el.offsetWidth || CANVAS_NODE_W;
-    const h = el.offsetHeight || 80;
-    halfW = w / 2 + 2;
-    halfH = h / 2 + 2;
-    cx = node.x + w / 2;
-    cy = node.y + h / 2;
+    w = el.offsetWidth || CANVAS_NODE_W;
+    h = el.offsetHeight || 80;
   } else {
-    halfW = CANVAS_NODE_W / 2 + 2;
-    halfH = 44;
-    cx = node.x + CANVAS_NODE_W / 2;
-    cy = node.y + 40;
+    w = CANVAS_NODE_W;
+    h = 80;
   }
+
+  cx = node.x + w / 2;
+  cy = node.y + h / 2;
 
   const dx = targetX - cx;
   const dy = targetY - cy;
   if (dx === 0 && dy === 0) return { x: cx, y: cy };
 
-  const scaleX = dx !== 0 ? halfW / Math.abs(dx) : Infinity;
-  const scaleY = dy !== 0 ? halfH / Math.abs(dy) : Infinity;
-  const t = Math.min(scaleX, scaleY);
+  // 判斷主要方向：以角度決定哪一邊
+  const angle = Math.atan2(dy, dx);
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
 
-  return { x: cx + dx * t, y: cy + dy * t };
+  // 方向權重：右/左 vs 下/上，看哪個分量大
+  // 這邊用 cos/sin 決定「主軸」
+  let side; // 'right' | 'left' | 'bottom' | 'top'
+  if (absDx >= absDy) {
+    side = dx > 0 ? 'right' : 'left';
+  } else {
+    side = dy > 0 ? 'bottom' : 'top';
+  }
+
+  // 沿邊分散：t 從 0.5（中心）起算，如果有 slotInfo 就依 index 偏移
+  let t = 0.5;
+  if (slotInfo && slotInfo.total > 1) {
+    // 分散範圍 [0.2, 0.8]
+    const spread = 0.6;
+    const step = spread / (slotInfo.total - 1);
+    t = 0.2 + step * slotInfo.index;
+  }
+
+  const halfW = w / 2 + 2;
+  const halfH = h / 2 + 2;
+
+  if (side === 'right') {
+    return { x: cx + halfW, y: cy - halfH + t * (2 * halfH) };
+  }
+  if (side === 'left') {
+    return { x: cx - halfW, y: cy - halfH + t * (2 * halfH) };
+  }
+  if (side === 'bottom') {
+    return { x: cx - halfW + t * (2 * halfW), y: cy + halfH };
+  }
+  // top
+  return { x: cx - halfW + t * (2 * halfW), y: cy - halfH };
 }
 
-/* ---------- 渲染連線（viewBox 座標，1:1 世界座標）---------- */
+/* ---------- 渲染連線 ---------- */
 
 function renderCanvasLines() {
   const svg = document.getElementById("canvasSvg");
   svg.innerHTML = "";
   const canvas = getCurrentWorldCanvas();
-
-  // 圖層分組：先線、再標籤（避免標籤被線壓住）
   const NS = "http://www.w3.org/2000/svg";
 
-  // 箭頭 marker：每色一組
+  // 箭頭 marker
   const defs = document.createElementNS(NS, "defs");
   Object.keys(EDGE_COLORS).forEach(function(colorId) {
     const col = EDGE_COLORS[colorId];
@@ -348,17 +382,88 @@ function renderCanvasLines() {
   });
   svg.appendChild(defs);
 
-  // 圖層 1：線條
+  // 兩層：線在下、標籤在上
   const linesLayer = document.createElementNS(NS, "g");
   linesLayer.setAttribute("class", "canvas-lines-layer");
   svg.appendChild(linesLayer);
 
-  // 圖層 2：標籤（永遠在線上面）
   const labelsLayer = document.createElementNS(NS, "g");
   labelsLayer.setAttribute("class", "canvas-labels-layer");
   svg.appendChild(labelsLayer);
 
-  // 同一對節點的多條邊要分散
+  /* ---------- 先統計「每個節點、每個方向」連了幾條 ---------- */
+  // 為每條 edge 決定它在 source 端、target 端各佔哪個 slot
+  const nodeSlotMap = {}; // nodeId -> { right: [], left: [], bottom: [], top: [] }
+
+  function ensureNodeSlot(nodeId) {
+    if (!nodeSlotMap[nodeId]) {
+      nodeSlotMap[nodeId] = { right: [], left: [], bottom: [], top: [] };
+    }
+    return nodeSlotMap[nodeId];
+  }
+
+  // 決定某條邊在指定節點的哪一側
+  function determineSide(node, otherCenter) {
+    const el = document.getElementById(node.id);
+    const w = el ? el.offsetWidth : CANVAS_NODE_W;
+    const h = el ? el.offsetHeight : 80;
+    const cx = node.x + w / 2;
+    const cy = node.y + h / 2;
+    const dx = otherCenter.x - cx;
+    const dy = otherCenter.y - cy;
+    if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? 'right' : 'left';
+    return dy > 0 ? 'bottom' : 'top';
+  }
+
+  // 第一輪：登記
+  const edgeSideInfo = {}; // edgeId -> { source: side, target: side }
+  canvas.edges.forEach(function(edge) {
+    const srcNode = canvas.nodes.find(n => n.id === edge.source);
+    const tgtNode = canvas.nodes.find(n => n.id === edge.target);
+    if (!srcNode || !tgtNode) return;
+
+    const srcEl = document.getElementById(srcNode.id);
+    const tgtEl = document.getElementById(tgtNode.id);
+    const srcW = srcEl ? srcEl.offsetWidth : CANVAS_NODE_W;
+    const srcH = srcEl ? srcEl.offsetHeight : 80;
+    const tgtW = tgtEl ? tgtEl.offsetWidth : CANVAS_NODE_W;
+    const tgtH = tgtEl ? tgtEl.offsetHeight : 80;
+
+    const srcCenter = { x: srcNode.x + srcW / 2, y: srcNode.y + srcH / 2 };
+    const tgtCenter = { x: tgtNode.x + tgtW / 2, y: tgtNode.y + tgtH / 2 };
+
+    const srcSide = determineSide(srcNode, tgtCenter);
+    const tgtSide = determineSide(tgtNode, srcCenter);
+
+    edgeSideInfo[edge.id] = { source: srcSide, target: tgtSide };
+
+    ensureNodeSlot(srcNode.id)[srcSide].push(edge.id);
+    ensureNodeSlot(tgtNode.id)[tgtSide].push(edge.id);
+  });
+
+  // 第二輪：分配 slot index（依邊的順序）
+  const edgeSlotMap = {}; // edgeId -> { source: {index,total}, target: {index,total} }
+  Object.keys(nodeSlotMap).forEach(function(nodeId) {
+    const slots = nodeSlotMap[nodeId];
+    ['right', 'left', 'bottom', 'top'].forEach(function(side) {
+      const list = slots[side];
+      list.forEach(function(edgeId, idx) {
+        if (!edgeSlotMap[edgeId]) edgeSlotMap[edgeId] = {};
+        edgeSlotMap[edgeId][nodeId === getEdgeSource(edgeId) ? 'source' : 'target'] = {
+          index: idx,
+          total: list.length,
+          side: side
+        };
+      });
+    });
+  });
+
+  function getEdgeSource(edgeId) {
+    const e = canvas.edges.find(x => x.id === edgeId);
+    return e ? e.source : null;
+  }
+
+  /* ---------- 同一對節點的多條邊要分散（弧線）---------- */
   const pairGroups = {};
   canvas.edges.forEach(function(edge) {
     const key = [edge.source, edge.target].sort().join("|");
@@ -378,6 +483,7 @@ function renderCanvasLines() {
     });
   });
 
+  /* ---------- 繪製 ---------- */
   canvas.edges.forEach(function(edge) {
     const srcNode = canvas.nodes.find(n => n.id === edge.source);
     const tgtNode = canvas.nodes.find(n => n.id === edge.target);
@@ -393,8 +499,12 @@ function renderCanvasLines() {
     const srcCenter = { x: srcNode.x + srcW / 2, y: srcNode.y + srcH / 2 };
     const tgtCenter = { x: tgtNode.x + tgtW / 2, y: tgtNode.y + tgtH / 2 };
 
-    const p1 = getNodeBorderPoint(srcNode, tgtCenter.x, tgtCenter.y);
-    const p2 = getNodeBorderPoint(tgtNode, srcCenter.x, srcCenter.y);
+    // 取出這條邊在兩端的 slot
+    const srcSlot = (edgeSlotMap[edge.id] && edgeSlotMap[edge.id].source) || null;
+    const tgtSlot = (edgeSlotMap[edge.id] && edgeSlotMap[edge.id].target) || null;
+
+    const p1 = getNodeBorderPoint(srcNode, tgtCenter.x, tgtCenter.y, srcSlot);
+    const p2 = getNodeBorderPoint(tgtNode, srcCenter.x, srcCenter.y, tgtSlot);
 
     const x1 = p1.x, y1 = p1.y;
     const x2 = p2.x, y2 = p2.y;
@@ -444,7 +554,7 @@ function renderCanvasLines() {
 
     linesLayer.appendChild(path);
 
-    // 標籤：曲線 t=0.5 位置
+    // 標籤
     const t = 0.5;
     const mt = 1 - t;
     const bezX = mt*mt*mt*x1 + 3*mt*mt*t*cx1 + 3*mt*t*t*cx2 + t*t*t*x2;
@@ -458,7 +568,6 @@ function renderCanvasLines() {
     g.style.pointerEvents = "all";
     g.style.cursor = "pointer";
 
-    // 文字用固定世界座標字級 12，用 getBBox 量測實際大小
     const text = document.createElementNS(NS, "text");
     text.setAttribute("x", midX);
     text.setAttribute("y", midY);
@@ -477,17 +586,10 @@ function renderCanvasLines() {
     labelsLayer.appendChild(g);
 
     let bbox;
-    try {
-      bbox = text.getBBox();
-    } catch (err) {
-      bbox = { x: midX - 30, y: midY - 8, width: 60, height: 16 };
-    }
-
-    if (bbox.width === 0) {
-      bbox.width = Math.max((edge.label || '').length * 14, 30);
-      bbox.height = 16;
-      bbox.x = midX - bbox.width / 2;
-      bbox.y = midY - bbox.height / 2;
+    try { bbox = text.getBBox(); } catch (err) { bbox = null; }
+    if (!bbox || bbox.width === 0) {
+      const w = Math.max((edge.label || '').length * 14, 30);
+      bbox = { x: midX - w / 2, y: midY - 8, width: w, height: 16 };
     }
 
     const padX = 8;
@@ -699,7 +801,6 @@ function setupCanvasEvents() {
     }
   };
 
-  // 滾輪縮放
   view.addEventListener("wheel", function(e) {
     if (e.target.closest('.canvas-floating-actions')) return;
     e.preventDefault();
@@ -720,10 +821,8 @@ function setupCanvasEvents() {
 
     applyCanvasTransform();
     applySvgViewBox();
-    // 線條不用重繪，viewBox 會自動縮放
   }, { passive: false });
 
-  // 拖曳空白平移
   view.addEventListener("mousedown", function(e) {
     if (e.button !== 0) return;
     if (e.target.closest('.canvas-node')) return;
@@ -757,7 +856,6 @@ function setupCanvasEvents() {
   svg.style.touchAction = "none";
   view.style.touchAction = "none";
 
-  // 視窗尺寸變動時更新 viewBox
   window.addEventListener("resize", applySvgViewBox);
 }
 
