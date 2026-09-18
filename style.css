@@ -687,8 +687,7 @@ main.content-workspace {
   height: 100%; 
   z-index: 1;
   pointer-events: none;
-  transform-origin: 0 0;
-  will-change: transform;
+  overflow: visible;
 }
 .canvas-svg g, .canvas-svg path, .canvas-svg text { 
   pointer-events: all; 
@@ -706,13 +705,10 @@ main.content-workspace {
   ry: 6; 
   cursor: pointer; 
 }
-.line-label-box { 
-  font-size: var(--fs-10); 
-  font-weight: 600; 
-  fill: var(--text-primary); 
-  text-anchor: middle; 
-  dominant-baseline: central; 
-  cursor: pointer; 
+.line-label-box {
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
 }
