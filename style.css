@@ -1,12 +1,6 @@
 /* ==========================================================
    style.css
-   本檔案為元件樣式，所有顏色／圓角／陰影／字級／間距／
-   icon 尺寸等設計變數，統一定義在 ui-tokens.css。
-   請確保 HTML 中先載入 ui-tokens.css，再載入本檔案：
-   <link rel="stylesheet" href="ui-tokens.css">
-   <link rel="stylesheet" href="style.css">
    ========================================================== */
-
 
 * {
   box-sizing: border-box;
@@ -671,7 +665,9 @@ main.content-workspace {
   cursor: pointer;
 }
 
-/* 白板樣式 (Graphs 專用) */
+/* ==========================================================
+   白板 (Graphs)
+   ========================================================== */
 #canvasView {
   position: relative;
   width: 100%;
@@ -682,6 +678,8 @@ main.content-workspace {
   overflow: hidden;
   touch-action: none;
 }
+
+/* 頂部資訊列（只剩標題 + hint） */
 .canvas-bar {
   position: absolute;
   top: 12px;
@@ -694,16 +692,50 @@ main.content-workspace {
   border: 1px solid var(--border);
   display: flex;
   align-items: center;
-  justify-content: space-between;
   z-index: 10;
   max-width: 720px;
 }
+
+.canvas-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.canvas-title {
+  font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.canvas-hint-text {
+  font-size: 11px;
+  color: var(--text-secondary);
+  transition: opacity 0.4s ease, visibility 0.4s ease;
+}
+
+.canvas-hint-text.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* 手機版：hint 換到下一行 */
+@media (max-width: 768px) {
+  .canvas-hint-text {
+    flex-basis: 100%;
+    font-size: 10px;
+  }
+}
+
+/* SVG 線條圖層：在節點下方 */
 .canvas-svg { 
   position: absolute; 
   inset: 0; 
   width: 100%; 
   height: 100%; 
-  z-index: 1;          /* 線條圖層：比節點低 */
+  z-index: 1;
   pointer-events: none;
   transform-origin: 0 0;
   will-change: transform;
@@ -716,7 +748,6 @@ main.content-workspace {
   stroke-width: 2.5; 
   fill: none; 
 }
-/* 線段本身不吃事件（由 JS 用 pointer-events:none 處理） */
 .line-label-bg { 
   fill: var(--bg-card); 
   stroke: var(--jade-light); 
@@ -732,7 +763,23 @@ main.content-workspace {
   text-anchor: middle; 
   dominant-baseline: central; 
   cursor: pointer; 
+  user-select: none;
+  -webkit-user-select: none;
 }
+
+/* 節點圖層：在線條上方 */
+#canvasNodesContainer {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+  pointer-events: none;
+  z-index: 2;
+}
+#canvasNodesContainer .canvas-node {
+  pointer-events: auto;
+}
+
 .canvas-node {
   position: absolute;
   width: 200px;
@@ -750,29 +797,60 @@ main.content-workspace {
   box-shadow: 0 0 0 2px var(--accent-light) !important;
 }
 
-/* 節點容器：套用 transform，且要蓋在線條上方 */
-#canvasNodesContainer {
+/* 右下角浮動按鈕（重置視圖 / 重整） */
+.canvas-floating-actions {
   position: absolute;
-  inset: 0;
-  transform-origin: 0 0;
-  will-change: transform;
-  pointer-events: none;
-  z-index: 2;          /* 節點圖層：比線條高 */
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 8px;
+  z-index: 20;
 }
-#canvasNodesContainer .canvas-node {
-  pointer-events: auto;
+.canvas-floating-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-full);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  font-size: var(--fs-18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+.canvas-floating-btn:hover {
+  background: var(--bg-sunken);
+  transform: scale(1.08);
+}
+.canvas-floating-btn:active {
+  transform: scale(0.94);
 }
 
-/* 白板提示：第一次操作後淡出 */
-.canvas-hint-text {
-  transition: opacity 0.4s ease, visibility 0.4s ease;
-}
-.canvas-hint-text.is-hidden {
+/* 中央底部倍數指示 */
+.canvas-zoom-indicator {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%) translateY(6px);
+  background: rgba(42,36,32,0.78);
+  color: #fff;
+  padding: 6px 16px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-12);
+  font-weight: 700;
+  font-family: var(--font-ui);
+  letter-spacing: 0.5px;
+  pointer-events: none;
+  z-index: 25;
   opacity: 0;
-  visibility: hidden;
+  transition: opacity 0.5s ease, transform 0.5s ease;
 }
-@media (max-width: 768px) {
-  .canvas-hint-text { font-size: 10px; }
+.canvas-zoom-indicator.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 /* 彈出視窗與自定義色盤 */
@@ -1286,13 +1364,10 @@ main.content-workspace {
   }
   .ctx-menu-item { padding: var(--sp-13) var(--sp-12); font-size: var(--fs-14); }
   .ctx-menu-title { font-size: var(--fs-12); padding: var(--sp-4) var(--sp-12) var(--sp-10); }
-
-  /* 白板在手機上：提示文字縮小 */
-  .canvas-hint-text { display: inline; }
 }
 
 /* ==========================================================
-   章節 / Hashtag 快速跳轉：浮動按鈕與側邊欄
+   章節 / Hashtag 快速跳轉
    ========================================================== */
 .quickjump-fab {
   position: fixed;
