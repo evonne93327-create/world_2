@@ -1562,8 +1562,10 @@ main.content-workspace {
     opacity: 1;
     pointer-events: auto;
   }
-   .quickjump-close-btn { display: none; }
-  }
+
+  .quickjump-close-btn { display: none; }
+}
+
 /* ==========================================================
    編輯關係彈窗：顏色 / 樣式 / 箭頭 選項
    ========================================================== */
@@ -1583,8 +1585,7 @@ main.content-workspace {
 }
 .edge-color-chip:hover { transform: scale(1.1); }
 .edge-color-chip.active {
-  border-color: var(--text-primary);
-  transform: scale(1.1);
+  transform: scale(1.15);
 }
 
 .edge-style-row {
