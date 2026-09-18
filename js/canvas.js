@@ -422,7 +422,7 @@ function renderCanvasLines() {
     nodeSideCount[tgtNode.id][tgtSide]++;
   });
 
-  /* ---------- 分配 slot ---------- */
+  /* ---------- 分配 slot：source 順序、target 鏡像反轉 ---------- */
   const nodeSideUsed = {};
   function nextSlot(nodeId, side) {
     if (!nodeSideUsed[nodeId]) {
@@ -430,21 +430,42 @@ function renderCanvasLines() {
     }
     const idx = nodeSideUsed[nodeId][side];
     nodeSideUsed[nodeId][side]++;
-    return {
-      index: idx,
-      total: nodeSideCount[nodeId][side],
-      side: side
-    };
+    return { index: idx, total: nodeSideCount[nodeId][side], side: side };
   }
 
   const edgeSlotInfo = {};
   canvas.edges.forEach(function(edge) {
     if (!edgeSideInfo[edge.id]) return;
     const info = edgeSideInfo[edge.id];
-    edgeSlotInfo[edge.id] = {
-      sourceSlot: nextSlot(edge.source, info.sourceSide),
-      targetSlot: nextSlot(edge.target, info.targetSide)
-    };
+    const sSlot = nextSlot(edge.source, info.sourceSide);
+    const tSlot = nextSlot(edge.target, info.targetSide);
+
+    // target 端的 index 反轉，讓線從 source 出發後「展開」而不是平行
+    if (tSlot.total > 1) {
+      tSlot.index = (tSlot.total - 1) - tSlot.index;
+    }
+
+    edgeSlotInfo[edge.id] = { sourceSlot: sSlot, targetSlot: tSlot };
+  });
+
+  /* ---------- 同一對節點多條邊的偏移值（給弧度用）---------- */
+  const pairGroups = {};
+  canvas.edges.forEach(function(edge) {
+    const key = [edge.source, edge.target].sort().join("|");
+    if (!pairGroups[key]) pairGroups[key] = [];
+    pairGroups[key].push(edge);
+  });
+
+  const edgeOffsetMap = {};
+  Object.keys(pairGroups).forEach(function(key) {
+    const group = pairGroups[key];
+    const total = group.length;
+    group.forEach(function(edge, idx) {
+      let offset;
+      if (total === 1) offset = 0;
+      else offset = (idx - (total - 1) / 2) / ((total - 1) / 2); // -1 .. 1
+      edgeOffsetMap[edge.id] = offset;
+    });
   });
 
   /* ---------- 畫 ---------- */
@@ -476,21 +497,20 @@ function renderCanvasLines() {
     const nx = -dy / dist;
     const ny = dx / dist;
 
-    /* ----- 扇形弧度 ----- */
-    // 用兩端 t 的平均值決定這條線該往哪邊彎
-    const tAvg = ((p1.t !== undefined ? p1.t : 0.5) + (p2.t !== undefined ? p2.t : 0.5)) / 2;
-    const bias = (tAvg - 0.5) * 2; // -1 ~ 1
-    const bendMag = Math.min(dist * 0.25, 80) * Math.abs(bias);
-    const bendDir = bias >= 0 ? 1 : -1;
+    /* ----- 弧度：用 offset 強制給定 ----- */
+    // 同一對節點的多條邊：offset = -1 / 0 / +1
+    // 讓中間直、兩側彎（往哪彎由 offset 決定）
+    const offset = edgeOffsetMap[edge.id] || 0;
+    const bendMag = Math.min(dist * 0.28, 90) * offset;
 
     const ext1 = dist * 0.35;
     const ext2 = dist * 0.35;
 
-    const cx1 = x1 + (dx / dist) * ext1 + nx * bendMag * bendDir;
-    const cy1 = y1 + (dy / dist) * ext1 + ny * bendMag * bendDir;
+    const cx1 = x1 + (dx / dist) * ext1 + nx * bendMag;
+    const cy1 = y1 + (dy / dist) * ext1 + ny * bendMag;
 
-    const cx2 = x2 - (dx / dist) * ext2 + nx * bendMag * bendDir;
-    const cy2 = y2 - (dy / dist) * ext2 + ny * bendMag * bendDir;
+    const cx2 = x2 - (dx / dist) * ext2 + nx * bendMag;
+    const cy2 = y2 - (dy / dist) * ext2 + ny * bendMag;
 
     const d = "M " + x1 + " " + y1 + " C " + cx1 + " " + cy1 + ", " + cx2 + " " + cy2 + ", " + x2 + " " + y2;
 
@@ -522,8 +542,9 @@ function renderCanvasLines() {
 
     linesLayer.appendChild(path);
 
-    /* ----- 標籤 ----- */
-    const tt = 0.5;
+    /* ----- 標籤：沿曲線 t 錯開，避免重疊 ----- */
+    // 依 offset 把 t 錯開：-1 → 0.35、0 → 0.5、+1 → 0.65
+    const tt = 0.5 + offset * 0.15;
     const mt = 1 - tt;
     const bezX = mt*mt*mt*x1 + 3*mt*mt*tt*cx1 + 3*mt*tt*tt*cx2 + tt*tt*tt*x2;
     const bezY = mt*mt*mt*y1 + 3*mt*mt*tt*cy1 + 3*mt*tt*tt*cy2 + tt*tt*tt*y2;
@@ -584,7 +605,6 @@ function renderCanvasLines() {
 
   applySvgViewBox();
 }
-
 function attachLongPressToSvgGroup(gEl, callback) {
   let timer = null, fired = false, sx = 0, sy = 0;
   const DURATION = 280, TOL = 10;
