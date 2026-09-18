@@ -679,56 +679,6 @@ main.content-workspace {
   touch-action: none;
 }
 
-/* 頂部資訊列（只剩標題 + hint） */
-.canvas-bar {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  right: 12px;
-  background: rgba(255,253,248,0.95);
-  backdrop-filter: blur(8px);
-  padding: var(--sp-8) var(--sp-14);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  z-index: 10;
-  max-width: 720px;
-}
-
-.canvas-bar-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  width: 100%;
-}
-
-.canvas-title {
-  font-weight: 700;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.canvas-hint-text {
-  font-size: 11px;
-  color: var(--text-secondary);
-  transition: opacity 0.4s ease, visibility 0.4s ease;
-}
-
-.canvas-hint-text.is-hidden {
-  opacity: 0;
-  visibility: hidden;
-}
-
-/* 手機版：hint 換到下一行 */
-@media (max-width: 768px) {
-  .canvas-hint-text {
-    flex-basis: 100%;
-    font-size: 10px;
-  }
-}
-
 /* SVG 線條圖層：在節點下方 */
 .canvas-svg { 
   position: absolute; 
@@ -797,6 +747,28 @@ main.content-workspace {
   box-shadow: 0 0 0 2px var(--accent-light) !important;
 }
 
+/* 左下角浮動提示（hint） */
+.canvas-hint-floating {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  max-width: 55%;
+  background: rgba(42,36,32,0.72);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  z-index: 20;
+  pointer-events: none;
+  transition: opacity 0.4s ease, visibility 0.4s ease;
+}
+.canvas-hint-floating.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
 /* 右下角浮動按鈕（重置視圖 / 重整） */
 .canvas-floating-actions {
   position: absolute;
@@ -804,7 +776,7 @@ main.content-workspace {
   bottom: 16px;
   display: flex;
   gap: 8px;
-  z-index: 20;
+  z-index: 30;
 }
 .canvas-floating-btn {
   width: 42px;
@@ -851,6 +823,30 @@ main.content-workspace {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
   transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+/* 手機版：hint 縮小，浮動按鈕調整位置 */
+@media (max-width: 768px) {
+  .canvas-hint-floating {
+    left: 12px;
+    bottom: 12px;
+    max-width: calc(100% - 24px);
+    font-size: 10px;
+    padding: 5px 10px;
+  }
+  .canvas-floating-actions {
+    right: 12px;
+    bottom: 12px;
+    gap: 6px;
+  }
+  .canvas-floating-btn {
+    width: 40px;
+    height: 40px;
+    font-size: var(--fs-16);
+  }
+  .canvas-zoom-indicator {
+    bottom: 60px;
+  }
 }
 
 /* 彈出視窗與自定義色盤 */
