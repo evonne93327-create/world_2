@@ -482,15 +482,22 @@ function renderCanvasLines() {
     return pickClosestSidePair(getNodeRect(nodeA), getNodeRect(nodeB));
   }
 
-  /* ---------- 統計每節點每側條數 ---------- */
-  const nodeSideCount = {};
-  function ensureCount(nodeId) {
-    if (!nodeSideCount[nodeId]) {
-      nodeSideCount[nodeId] = { right: 0, left: 0, bottom: 0, top: 0 };
-    }
+  /* ---------- 決定每側連線的排列順序 ----------
+     同一節點同一側若有多條線，port 順序不能只依邊的建立先後，
+     否則一旦線的「目標」在空間上的左右／上下順序跟建立順序對不上，
+     線一出節點邊框就會先天互相交叉。
+     這裡改成：每條邊在某節點某側的位置，依照「對面那個節點中心」
+     沿該側分散軸（上/下側看 x、左/右側看 y）的座標排序，
+     port 順序自然貼合對面節點的實際空間分佈，才能避免無謂的交叉。
+  ------------------------------------------------------------- */
+  const edgeSideInfo = {};
+  const sideGroups = {}; // key: nodeId + "|" + side -> [{ edgeId, endpoint, otherX, otherY }]
+  function pushToSideGroup(nodeId, side, edgeId, endpoint, otherCenter) {
+    const key = nodeId + "|" + side;
+    if (!sideGroups[key]) sideGroups[key] = [];
+    sideGroups[key].push({ edgeId: edgeId, endpoint: endpoint, otherX: otherCenter.x, otherY: otherCenter.y });
   }
 
-  const edgeSideInfo = {};
   canvas.edges.forEach(function(edge) {
     const srcNode = canvas.nodes.find(n => n.id === edge.source);
     const tgtNode = canvas.nodes.find(n => n.id === edge.target);
@@ -502,32 +509,25 @@ function renderCanvasLines() {
 
     edgeSideInfo[edge.id] = { sourceSide: srcSide, targetSide: tgtSide };
 
-    ensureCount(srcNode.id);
-    ensureCount(tgtNode.id);
-    nodeSideCount[srcNode.id][srcSide]++;
-    nodeSideCount[tgtNode.id][tgtSide]++;
+    const srcRect = getNodeRect(srcNode);
+    const tgtRect = getNodeRect(tgtNode);
+    const srcCenter = { x: (srcRect.left + srcRect.right) / 2, y: (srcRect.top + srcRect.bottom) / 2 };
+    const tgtCenter = { x: (tgtRect.left + tgtRect.right) / 2, y: (tgtRect.top + tgtRect.bottom) / 2 };
+
+    pushToSideGroup(srcNode.id, srcSide, edge.id, 'source', tgtCenter);
+    pushToSideGroup(tgtNode.id, tgtSide, edge.id, 'target', srcCenter);
   });
 
-  /* ---------- 分配 slot：source 順序、target 鏡像反轉 ---------- */
-  const nodeSideUsed = {};
-  function nextSlot(nodeId, side) {
-    if (!nodeSideUsed[nodeId]) {
-      nodeSideUsed[nodeId] = { right: 0, left: 0, bottom: 0, top: 0 };
-    }
-    const idx = nodeSideUsed[nodeId][side];
-    nodeSideUsed[nodeId][side]++;
-    return { index: idx, total: nodeSideCount[nodeId][side], side: side };
-  }
-
   const edgeSlotInfo = {};
-  canvas.edges.forEach(function(edge) {
-    if (!edgeSideInfo[edge.id]) return;
-    const info = edgeSideInfo[edge.id];
-    const sSlot = nextSlot(edge.source, info.sourceSide);
-    const tSlot = nextSlot(edge.target, info.targetSide);
-
-    // source、target 兩端維持同一個順序（不反轉），避免多條線因兩端配對錯開而互相交叉
-    edgeSlotInfo[edge.id] = { sourceSlot: sSlot, targetSlot: tSlot };
+  Object.keys(sideGroups).forEach(function(key) {
+    const group = sideGroups[key];
+    const side = key.slice(key.lastIndexOf("|") + 1);
+    const axisKey = (side === 'bottom' || side === 'top') ? 'otherX' : 'otherY';
+    group.sort(function(a, b) { return a[axisKey] - b[axisKey]; });
+    group.forEach(function(item, idx) {
+      if (!edgeSlotInfo[item.edgeId]) edgeSlotInfo[item.edgeId] = {};
+      edgeSlotInfo[item.edgeId][item.endpoint + "Slot"] = { index: idx, total: group.length, side: side };
+    });
   });
 
   /* ---------- 同一對節點多條邊的偏移值（給弧度用）---------- */
@@ -553,6 +553,7 @@ function renderCanvasLines() {
   });
 
   /* ---------- 畫 ---------- */
+  const labelJobs = []; // 先收集所有標籤候選位置，畫完全部連線後再統一防重疊
   canvas.edges.forEach(function(edge) {
     const srcNode = canvas.nodes.find(n => n.id === edge.source);
     const tgtNode = canvas.nodes.find(n => n.id === edge.target);
@@ -649,20 +650,102 @@ function renderCanvasLines() {
 
     linesLayer.appendChild(path);
 
-    /* ----- 標籤：沿曲線 t 錯開，避免重疊 ----- */
+    /* ----- 標籤：先算出曲線上的候選落點，稍後統一防重疊再畫 ----- */
     // 依 offset 把 t 錯開：-1 → 0.35、0 → 0.5、+1 → 0.65
     const tt = 0.5 + offset * 0.15;
     const mt = 1 - tt;
     const bezX = mt*mt*mt*x1 + 3*mt*mt*tt*cx1 + 3*mt*tt*tt*cx2 + tt*tt*tt*x2;
     const bezY = mt*mt*mt*y1 + 3*mt*mt*tt*cy1 + 3*mt*tt*tt*cy2 + tt*tt*tt*y2;
 
+    labelJobs.push({ edge: edge, col: col, x: bezX, y: bezY, cx: bezX, cy: bezY });
+  });
+
+  /* ----- 標籤防重疊：量測每個標籤實際尺寸，再用簡單的推擠鬆弛法互相讓開 -----
+     單一條邊自己算出來的落點只跟「這條邊自己」有關，遇到同一個節點扇形發散
+     出去的一大堆邊時，各自的中點常常仍然彼此靠得很近而互疊。這裡改成：
+     所有標籤位置先收集起來，量出各自的寬高後，成對檢查是否重疊，
+     重疊就把兩者沿重疊量較小的那個軸推開，反覆幾輪直到不再重疊為止。
+     若某個標籤因此被推離原本落點太多，改畫一條細虛線指回原本的線段位置，
+     讓使用者仍能看出這個標籤屬於哪一條連線。
+  ------------------------------------------------------------- */
+  labelJobs.forEach(function(job) {
+    const text = document.createElementNS(NS, "text");
+    text.setAttribute("x", job.x);
+    text.setAttribute("y", job.y);
+    text.setAttribute("font-size", "12");
+    text.setAttribute("font-weight", "600");
+    text.setAttribute("font-family", "var(--font-ui)");
+    text.textContent = job.edge.label || "關聯";
+    labelsLayer.appendChild(text);
+
+    let bbox;
+    try { bbox = text.getBBox(); } catch (err) { bbox = null; }
+    labelsLayer.removeChild(text);
+
+    if (!bbox || bbox.width === 0) {
+      const w = Math.max((job.edge.label || '').length * 14, 30);
+      bbox = { width: w, height: 16 };
+    }
+
+    const padX = 8, padY = 4;
+    job.w = bbox.width + padX * 2;
+    job.h = bbox.height + padY * 2;
+  });
+
+  const DECLUTTER_ITER = 60;
+  for (let iter = 0; iter < DECLUTTER_ITER; iter++) {
+    let moved = false;
+    for (let i = 0; i < labelJobs.length; i++) {
+      for (let j = i + 1; j < labelJobs.length; j++) {
+        const a = labelJobs[i], b = labelJobs[j];
+        const gap = 4;
+        const overlapX = (a.w / 2 + b.w / 2 + gap) - Math.abs(a.cx - b.cx);
+        const overlapY = (a.h / 2 + b.h / 2 + gap) - Math.abs(a.cy - b.cy);
+        if (overlapX > 0 && overlapY > 0) {
+          moved = true;
+          if (overlapX < overlapY) {
+            const dir = (a.cx <= b.cx) ? -1 : 1;
+            const push = overlapX / 2 + 0.5;
+            a.cx += dir * push;
+            b.cx -= dir * push;
+          } else {
+            const dir = (a.cy <= b.cy) ? -1 : 1;
+            const push = overlapY / 2 + 0.5;
+            a.cy += dir * push;
+            b.cy -= dir * push;
+          }
+        }
+      }
+    }
+    if (!moved) break;
+  }
+
+  labelJobs.forEach(function(job) {
+    const edge = job.edge;
+    const col = job.col;
+
     const g = document.createElementNS(NS, "g");
     g.style.pointerEvents = "all";
     g.style.cursor = "pointer";
 
+    const displaced = Math.hypot(job.cx - job.x, job.cy - job.y) > 10;
+    if (displaced) {
+      const leader = document.createElementNS(NS, "line");
+      leader.setAttribute("x1", job.x);
+      leader.setAttribute("y1", job.y);
+      leader.setAttribute("x2", job.cx);
+      leader.setAttribute("y2", job.cy);
+      leader.setAttribute("stroke", col.stroke);
+      leader.setAttribute("stroke-width", "1");
+      leader.setAttribute("stroke-dasharray", "2 3");
+      leader.setAttribute("opacity", "0.6");
+      leader.style.pointerEvents = "none";
+      g.appendChild(leader);
+    }
+
     const text = document.createElementNS(NS, "text");
-    text.setAttribute("x", bezX);
-    text.setAttribute("y", bezY);
+    text.setAttribute("x", job.cx);
+    text.setAttribute("y", job.cy);
     text.setAttribute("class", "line-label-box");
     text.setAttribute("fill", "var(--text-primary)");
     text.setAttribute("text-anchor", "middle");
@@ -681,7 +764,7 @@ function renderCanvasLines() {
     try { bbox = text.getBBox(); } catch (err) { bbox = null; }
     if (!bbox || bbox.width === 0) {
       const w = Math.max((edge.label || '').length * 14, 30);
-      bbox = { x: bezX - w / 2, y: bezY - 8, width: w, height: 16 };
+      bbox = { x: job.cx - w / 2, y: job.cy - 8, width: w, height: 16 };
     }
 
     const padX = 8;
