@@ -838,6 +838,8 @@ function applyCustomIcon() {
  saveData();
  renderSidebarTree();
  renderBreadcrumb();
+ // 節點左上角顯示的就是這個圖示，正在看白板時要一起更新
+ refreshCanvasIfVisible();
  closeIconPickerModal();
 }
 

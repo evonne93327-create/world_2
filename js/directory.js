@@ -583,6 +583,8 @@ function promptRenameItem(type, id, currentName) {
  renderSidebarTree();
  renderBreadcrumb();
  updateWorldBadge();
+ // 白板上的節點顯示的就是這個標題，正在看白板時要一起更新
+ refreshCanvasIfVisible();
  }
 }
 

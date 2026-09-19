@@ -179,6 +179,17 @@ function renderCanvas() {
   renderCanvasLines();
 }
 
+/* 節點上顯示的是文檔的標題、圖示、內文摘要與字數，但改這些欄位的程式
+   都在白板以外（目錄改名、換圖示…），很容易忘記通知白板重畫。包成一個
+   函式讓那些地方呼叫，不用各自判斷現在是不是在看白板。
+
+   右下角的「重整白板」按鈕留著當保險：這類「某條路徑忘了重畫」的漏洞
+   不會只發生一次，留一個使用者自己救得回來的出口比較實際。 */
+function refreshCanvasIfVisible() {
+  if (typeof activeView !== "undefined" && activeView !== "canvas") return;
+  renderCanvas();
+}
+
 /* ---------- 縮放指示（節點/連線都已在 SVG 裡，viewBox 自動處理縮放）---------- */
 
 function applyCanvasTransform(silent) {
