@@ -349,6 +349,18 @@
     </div>
   </div>
 
+  <!-- 閒置提醒：一段時間沒動作且本機有還沒備份的修改時跳出來 -->
+  <div class="modal-overlay" id="idleBackupModal">
+    <div class="modal-card" style="width:460px;">
+      <div class="modal-head">
+        <div class="modal-title">💤 要備份一下嗎？</div>
+        <button class="icon-sm-btn" title="稍後再說" onclick="dismissIdleBackup()">✕</button>
+      </div>
+      <div id="idleBackupInfo" style="font-size:13px; line-height:1.7;"></div>
+      <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;" id="idleBackupActions"></div>
+    </div>
+  </div>
+
   <!-- 同步衝突：兩邊都有改動時，讓使用者決定保留哪一份 -->
   <div class="modal-overlay" id="syncConflictModal">
     <div class="modal-card" style="width:460px;">

@@ -735,6 +735,17 @@ main.content-workspace {
   border-color: var(--accent) !important;
   box-shadow: 0 0 0 2px var(--accent-light) !important;
 }
+/* 從目錄跳過來時短暫標示，讓使用者知道畫面停在哪個節點上 */
+.canvas-node.is-focused {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-light) !important;
+  animation: canvasNodePulse 1.6s ease-out;
+}
+@keyframes canvasNodePulse {
+  0%   { box-shadow: 0 0 0 0 var(--accent-light); }
+  30%  { box-shadow: 0 0 0 10px transparent; }
+  100% { box-shadow: 0 0 0 3px var(--accent-light); }
+}
 
 /* ----------------------------------------------------------
    浮動提示（hint）— 桌面在左下角、手機在上方

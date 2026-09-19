@@ -203,6 +203,51 @@ function applySvgViewBox() {
   svg.setAttribute("height", rect.height);
 }
 
+/* ---------- 定位到某個節點 ----------
+   在白板檢視下從目錄點文檔時用的：把畫面平移到該節點置中，並短暫highlight。
+   縮放倍率不動——使用者自己調過的倍率不該被我們蓋掉。
+   回傳 false 代表這篇文檔還沒被投射到白板上，呼叫端要自己決定怎麼辦。 */
+
+function focusCanvasNode(docId) {
+  const canvas = getCurrentWorldCanvas();
+  const node = canvas.nodes.find(function(n) { return n.docId === docId; });
+  if (!node) return false;
+
+  const view = document.getElementById("canvasView");
+  if (!view) return false;
+  const rect = view.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return false;
+
+  const nr = getNodeRect(node);
+  const cx = nr.left + nr.w / 2;
+  const cy = nr.top + nr.h / 2;
+
+  // worldToScreen 是 wx * scale + tx，要讓節點中心落在容器正中間
+  canvasTransform.x = rect.width / 2 - cx * canvasTransform.scale;
+  canvasTransform.y = rect.height / 2 - cy * canvasTransform.scale;
+
+  applySvgViewBox();
+  renderCanvasLines();
+  highlightCanvasNode(node.id);
+  return true;
+}
+
+let canvasHighlightTimer = null;
+
+function highlightCanvasNode(nodeId) {
+  const prev = document.querySelector(".canvas-node.is-focused");
+  if (prev) prev.classList.remove("is-focused");
+  if (canvasHighlightTimer) clearTimeout(canvasHighlightTimer);
+
+  const el = document.getElementById(nodeId);
+  if (!el) return;
+  el.classList.add("is-focused");
+  canvasHighlightTimer = setTimeout(function() {
+    el.classList.remove("is-focused");
+    canvasHighlightTimer = null;
+  }, 1600);
+}
+
 /* ---------- 節點拖曳 ---------- */
 
 function enableDualDrag(element, nodeData) {

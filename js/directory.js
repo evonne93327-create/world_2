@@ -260,7 +260,7 @@ function createDocRowElement(doc) {
  activeFolderId = null;
  updateWorldBadge();
  loadDocToEditor(doc.id);
- if (activeView !== 'editor') switchView('editor');
+ openDocFromDirectory(doc);
  if (window.innerWidth <= 768) closeSidebarMobile();
  };
 
@@ -478,6 +478,20 @@ function promptCreateWorldview() {
 
 function createFolderInCurrentContext() {
  promptCreateFolder(activeFolderId || null, activeWorldId);
+}
+
+/* 從目錄點一篇文檔之後要停在哪個檢視。
+   在白板檢視下點目錄，使用者想看的是白板上的那個節點，不是被踢回編輯器，
+   所以把畫面平移過去並highlight，留在白板。
+   但這篇文檔不一定被投射到白板上——那種情況白板上沒有東西可以看，
+   維持原本的行為切回編輯器，至少看得到內容。 */
+function openDocFromDirectory(doc) {
+ if (activeView === 'canvas' && typeof focusCanvasNode === 'function') {
+  // 切換世界觀時白板畫的還是上一個世界觀的節點，要先重畫才找得到
+  if (typeof renderCanvas === 'function') renderCanvas();
+  if (focusCanvasNode(doc.id)) return;
+ }
+ if (activeView !== 'editor') switchView('editor');
 }
 
 /* 決定「新增文檔」要放在哪一層。優先順序：
