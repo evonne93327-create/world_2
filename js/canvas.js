@@ -608,6 +608,7 @@ function renderCanvasLines() {
   }
 
   const pairPerpMap = {};
+  const pairUpperNodeIdMap = {}; // 記錄每一對節點裡，目錄樹順序較前面的那個節點 id
   Object.keys(pairGroups).forEach(function(key) {
     const ids = key.split("|");
     const nodeX = canvas.nodes.find(n => n.id === ids[0]);
@@ -616,6 +617,7 @@ function renderCanvasLines() {
     const xIsUpper = nodeTreeOrder(nodeX) <= nodeTreeOrder(nodeY);
     const upperNode = xIsUpper ? nodeX : nodeY;
     const lowerNode = xIsUpper ? nodeY : nodeX;
+    pairUpperNodeIdMap[key] = upperNode.id;
     const rectU = getNodeRect(upperNode), rectL = getNodeRect(lowerNode);
     const cU = { x: (rectU.left + rectU.right) / 2, y: (rectU.top + rectU.bottom) / 2 };
     const cL = { x: (rectL.left + rectL.right) / 2, y: (rectL.top + rectL.bottom) / 2 };
@@ -661,6 +663,14 @@ function renderCanvasLines() {
     const total = edgeGroupTotalMap[edge.id] || 1;
     const offset = edgeOffsetMap[edge.id] || 0;
 
+    // 同一對節點的所有邊共用同一把 key，判斷「這條邊自己的 source」
+    // 跟目錄樹順序較前面的那個節點是不是同一個——如果不是（也就是這條邊
+    // 實際上是反向存的，例如 B→A），底下算標籤 t 的時候要把方向反過來，
+    // 否則兩條反向的邊會各自從自己的 source 起算 t，物理位置反而重疊。
+    const pairKey = [edge.source, edge.target].sort().join("|");
+    const canonicalUpperId = pairUpperNodeIdMap[pairKey];
+    const matchesCanonicalDir = !canonicalUpperId || edge.source === canonicalUpperId;
+
     let bendMag = 0;
     let spreadX = 0, spreadY = 0;
     if (total > 1) {
@@ -672,7 +682,6 @@ function renderCanvasLines() {
       // 彎曲方向用這一對節點共用的垂直方向（見上方 pairPerpMap，
       // 由目錄樹順序決定基準方向），同一對節點的所有邊固定沿同一個
       // 方向展開，斜向連線也能真正撐出扇形，而不會只在單一軸上微幅錯開。
-      const pairKey = [edge.source, edge.target].sort().join("|");
       const perp = pairPerpMap[pairKey] || { x: 0, y: 1 };
       spreadX = perp.x;
       spreadY = perp.y;
@@ -720,8 +729,12 @@ function renderCanvasLines() {
     /* ----- 標籤：先算出曲線上的候選落點，稍後統一防重疊再畫 ----- */
     // 依 labelSpread 把 t 沿曲線長度錯開：-1 → 0.35、0 → 0.5、+1 → 0.65
     // （跟彎曲方向 offset 分開算，才不會因為彎曲一律同向就讓標籤擠在一起）
+    // 若這條邊的 source 不是目錄樹順序較前面的那個節點（即反向存的邊），
+    // 把錯開量反過來，讓 t 統一以「目錄樹上方者」為起點量測，兩條反向邊
+    // 才不會因為各自從自己的 source 起算，落在同一個物理位置。
     const labelSpread = edgeLabelSpreadMap[edge.id] || 0;
-    const tt = 0.5 + labelSpread * 0.15;
+    const effectiveLabelSpread = matchesCanonicalDir ? labelSpread : -labelSpread;
+    const tt = 0.5 + effectiveLabelSpread * 0.15;
     const mt = 1 - tt;
     const bezX = mt*mt*mt*x1 + 3*mt*mt*tt*cx1 + 3*mt*tt*tt*cx2 + tt*tt*tt*x2;
     const bezY = mt*mt*mt*y1 + 3*mt*mt*tt*cy1 + 3*mt*tt*tt*cy2 + tt*tt*tt*y2;
