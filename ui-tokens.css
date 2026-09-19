@@ -141,4 +141,9 @@
   --z-floating-controls: 92;
   --z-sidebar-overlay: 93;
   --z-sidebar-drawer: 94;
+  /* 更新提示要蓋過抽屜，但仍在彈窗（100）底下 */
+  --z-update-toast: 96;
+  /* 更新提示的位置：壓在上方導覽列（54px + 安全區）底下，
+     不要蓋住世界觀名稱和分頁切換那些還要按的東西 */
+  --toast-top: calc(54px + var(--safe-t) + 12px);
 }

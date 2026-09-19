@@ -379,6 +379,13 @@
   <div class="color-picker-popup" id="colorPickerPopover"></div>
 
   <!-- 右鍵 / 長按 自訂選單 -->
+  <!-- 有新版本時的提示。不自動重載——正在打字的人被硬生生重整會很惱火 -->
+  <div class="update-toast" id="updateToast" role="status" aria-live="polite">
+    <span class="update-toast-text">有新版本可以用了</span>
+    <button class="btn btn-primary update-toast-btn" onclick="reloadForUpdate()">重新載入</button>
+    <button class="icon-sm-btn" title="稍後再說" onclick="dismissUpdateToast()">✕</button>
+  </div>
+
   <div class="ctx-menu-overlay" id="ctxMenuOverlay"></div>
   <div class="ctx-menu" id="customContextMenu"></div>
 
