@@ -91,7 +91,6 @@ function renderCanvas() {
   const container = document.getElementById("canvasNodesContainer");
   container.innerHTML = "";
   const canvas = getCurrentWorldCanvas();
-  applySvgViewBox();
 
   canvas.nodes.forEach(function(node) {
     const doc = appData.docs.find(d => d.id === node.docId);
@@ -312,32 +311,20 @@ function getNodeBorderPoint(node, targetX, targetY, slotInfo) {
   const absDx = Math.abs(dx);
   const absDy = Math.abs(dy);
 
-  // 用「相對於自己長寬」的比例來判斷要接哪一邊，而不是直接比較 dx、dy 的絕對值。
-  // 這樣長方形節點對角線方向的連線，即使角度差不多，寬的節點還是偏好接上/下（長邊），
-  // 窄的節點偏好接左/右（短邊）——兩端不用被迫接同一種邊（都水平或都垂直）。
-  const halfW = w / 2 + 2;
-  const halfH = h / 2 + 2;
-
   let side;
-  if (absDx / halfW >= absDy / halfH) side = dx > 0 ? 'right' : 'left';
+  if (absDx >= absDy) side = dx > 0 ? 'right' : 'left';
   else side = dy > 0 ? 'bottom' : 'top';
 
-  // 分散範圍 0.3 ~ 0.7（依你指定）：用「跟兩節點連心線垂直方向同向還是反向」（os）
-  // 決定往哪邊分散，而不是單純照 index 遞增排 —— 這樣就算兩端接的是不同種邊
-  // （一個上/下、一個左/右，長邊接短邊時常發生），排列順序在空間中還是對得起來，不會互相穿越。
+  // 分散範圍 0.3 ~ 0.7（依你指定）
   let t = 0.5;
-  let os = 1;
   if (slotInfo && slotInfo.total > 1) {
-    const axisX = (side === 'bottom' || side === 'top') ? 1 : 0;
-    const axisY = axisX ? 0 : 1;
-    const pnx = typeof slotInfo.pnx === 'number' ? slotInfo.pnx : 0;
-    const pny = typeof slotInfo.pny === 'number' ? slotInfo.pny : 0;
-    os = (axisX * pnx + axisY * pny) >= 0 ? 1 : -1;
-
-    const hi = 0.7;
-    const posOffset = (slotInfo.index - (slotInfo.total - 1) / 2) / ((slotInfo.total - 1) / 2); // -1..1
-    t = 0.5 + os * posOffset * (hi - 0.5);
+    const lo = 0.3, hi = 0.7;
+    const step = (hi - lo) / (slotInfo.total - 1);
+    t = lo + step * slotInfo.index;
   }
+
+  const halfW = w / 2 + 2;
+  const halfH = h / 2 + 2;
 
   let px, py;
   if (side === 'right') {
@@ -350,7 +337,7 @@ function getNodeBorderPoint(node, targetX, targetY, slotInfo) {
     px = cx - halfW + t * (2 * halfW); py = cy - halfH;
   }
 
-  return { x: px, y: py, t: t, side: side, os: os };
+  return { x: px, y: py, t: t, side: side };
 }
 
 /* ---------- 渲染連線 ---------- */
@@ -388,8 +375,6 @@ function renderCanvasLines() {
   svg.appendChild(labelsLayer);
 
   /* ---------- 決定側邊 ---------- */
-  // 跟 getNodeBorderPoint 用同一套「相對長寬比例」判斷法，確保這裡算出來的側邊
-  // 跟實際畫連線用的側邊一致（不然分散順序跟彎曲方向會對不上）
   function determineSide(node, otherCenter) {
     const el = document.getElementById(node.id);
     const w = el ? el.offsetWidth : CANVAS_NODE_W;
@@ -398,9 +383,7 @@ function renderCanvasLines() {
     const cy = node.y + h / 2;
     const dx = otherCenter.x - cx;
     const dy = otherCenter.y - cy;
-    const halfW = w / 2 + 2;
-    const halfH = h / 2 + 2;
-    if (Math.abs(dx) / halfW >= Math.abs(dy) / halfH) return dx > 0 ? 'right' : 'left';
+    if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? 'right' : 'left';
     return dy > 0 ? 'bottom' : 'top';
   }
 
@@ -431,16 +414,7 @@ function renderCanvasLines() {
     const srcSide = determineSide(srcNode, tgtCenter);
     const tgtSide = determineSide(tgtNode, srcCenter);
 
-    // 兩節點連心線的垂直方向，整組（同一對節點）共用同一個值，
-    // 用來判斷「邊框分散軸」實際上是跟這個方向同向還是反向 —— 這是斜向、
-    // 兩端接不同種邊（一個上/下、一個左/右）時，避免線互相穿越的關镵。
-    const cdx = tgtCenter.x - srcCenter.x;
-    const cdy = tgtCenter.y - srcCenter.y;
-    const cdist = Math.hypot(cdx, cdy) || 1;
-    const pnx = -cdy / cdist;
-    const pny = cdx / cdist;
-
-    edgeSideInfo[edge.id] = { sourceSide: srcSide, targetSide: tgtSide, pnx: pnx, pny: pny };
+    edgeSideInfo[edge.id] = { sourceSide: srcSide, targetSide: tgtSide };
 
     ensureCount(srcNode.id);
     ensureCount(tgtNode.id);
@@ -465,10 +439,6 @@ function renderCanvasLines() {
     const info = edgeSideInfo[edge.id];
     const sSlot = nextSlot(edge.source, info.sourceSide);
     const tSlot = nextSlot(edge.target, info.targetSide);
-    // 把這條邊自己的「連心線垂直方向」一併帶給兩端的 slot，
-    // 讓 getNodeBorderPoint 能各自判斷邊框分散軸跟這個方向是同向還是反向
-    sSlot.pnx = info.pnx; sSlot.pny = info.pny;
-    tSlot.pnx = info.pnx; tSlot.pny = info.pny;
 
     // source、target 兩端維持同一個順序（不反轉），避免多條線因兩端配對錯開而互相交叉
     edgeSlotInfo[edge.id] = { sourceSlot: sSlot, targetSlot: tSlot };
@@ -488,10 +458,9 @@ function renderCanvasLines() {
     const group = pairGroups[key];
     const total = group.length;
     group.forEach(function(edge, idx) {
-      // 同一組線全部往同一個方向彎，彎曲幅度隨順序遞增（0 ~ 1），
-      // 而不是從中間對稱往兩側展開；這樣一組線裡只有最後一條會
-      // 大幅度繞出去，其餘幾條會靠在一起、貼近直線路徑。
-      const offset = total === 1 ? 0 : idx / (total - 1); // 0 .. 1
+      let offset;
+      if (total === 1) offset = 0;
+      else offset = (idx - (total - 1) / 2) / ((total - 1) / 2); // -1 .. 1
       edgeOffsetMap[edge.id] = offset;
       edgeGroupTotalMap[edge.id] = total;
     });
@@ -526,45 +495,42 @@ function renderCanvasLines() {
 
     /* ----- 弧度：用 offset 強制給定 ----- */
     // 同一對節點只有一條線時維持直線。
-    // 多條線時（offset = 0 ~ 1，依順序遞增），彎曲幅度統一往同一個方向
-    // 從 0 線性增加到 maxBend 的 0.7 倍：第一條幾乎貼著直線，最後一條彎最多。
+    // 多條線時（offset = -1 / 0 / +1），彎曲幅度統一落在 maxBend 的 0.3～0.7 倍範圍，
+    // 中間那條（offset=0）取最小值 0.3，最外側（offset=±1）取最大值 0.7。
     const maxBend = Math.min(dist * 0.28, 90);
     const total = edgeGroupTotalMap[edge.id] || 1;
     const offset = edgeOffsetMap[edge.id] || 0;
 
     let bendMag = 0;
-    let srcSpreadX = 0, srcSpreadY = 0;
-    let tgtSpreadX = 0, tgtSpreadY = 0;
+    let spreadX = 0, spreadY = 0;
     if (total > 1) {
+      const BEND_MIN_RATIO = 0;
       const BEND_MAX_RATIO = 0.7;
-      bendMag = BEND_MAX_RATIO * offset * maxBend;
+      const ratio = BEND_MIN_RATIO + (BEND_MAX_RATIO - BEND_MIN_RATIO) * Math.abs(offset);
+      const sign = offset === 0 ? 1 : Math.sign(offset);
+      bendMag = sign * ratio * maxBend;
 
       // 彎曲方向要跟「這條線在節點邊框上排列的分散軸」完全同步，
-      // 而且兩端要各自用自己那端的分散軸、各自的 os（跟連心線垂直方向同向還是反向）。
-      // 長邊接短邊時，兩端的分散軸不一樣（一個水平、一個垂直），
-      // 只用單一邊的方向兩端一起套，線在中途還是會互相穿越。
+      // 而不是用兩點連線的垂直方向。斜向連線時這兩個方向會不一樣，
+      // 只要彎曲方向跟分散順序對不上，線就會在中途互相穿越。
       // 上/下側：邊框上是左右排開 → 分散軸是水平（x）
       // 左/右側：邊框上是上下排開 → 分散軸是垂直（y）
       const srcSide = (edgeSideInfo[edge.id] || {}).sourceSide;
-      const tgtSide = (edgeSideInfo[edge.id] || {}).targetSide;
-      const srcOs = typeof p1.os === 'number' ? p1.os : 1;
-      const tgtOs = typeof p2.os === 'number' ? p2.os : 1;
-
-      if (srcSide === 'bottom' || srcSide === 'top') srcSpreadX = srcOs;
-      else srcSpreadY = srcOs;
-
-      if (tgtSide === 'bottom' || tgtSide === 'top') tgtSpreadX = tgtOs;
-      else tgtSpreadY = tgtOs;
+      if (srcSide === 'bottom' || srcSide === 'top') {
+        spreadX = 1;
+      } else {
+        spreadY = 1;
+      }
     }
 
     const ext1 = dist * 0.35;
     const ext2 = dist * 0.35;
 
-    const cx1 = x1 + (dx / dist) * ext1 + srcSpreadX * bendMag;
-    const cy1 = y1 + (dy / dist) * ext1 + srcSpreadY * bendMag;
+    const cx1 = x1 + (dx / dist) * ext1 + spreadX * bendMag;
+    const cy1 = y1 + (dy / dist) * ext1 + spreadY * bendMag;
 
-    const cx2 = x2 - (dx / dist) * ext2 + tgtSpreadX * bendMag;
-    const cy2 = y2 - (dy / dist) * ext2 + tgtSpreadY * bendMag;
+    const cx2 = x2 - (dx / dist) * ext2 + spreadX * bendMag;
+    const cy2 = y2 - (dy / dist) * ext2 + spreadY * bendMag;
 
     const d = "M " + x1 + " " + y1 + " C " + cx1 + " " + cy1 + ", " + cx2 + " " + cy2 + ", " + x2 + " " + y2;
 
