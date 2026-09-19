@@ -286,11 +286,11 @@ function renderSyncModal() {
     '修改後會自動上傳。整包資料一起同步，所以<b>兩台裝置同時編輯時只能擇一保留</b>，' +
     '遇到這種情況會跳出來問你，不會默默覆蓋。</p>' +
     '<div id="syncModalMsg" style="font-size:12px; margin-top:8px;"></div>' +
-    '<div style="display:flex; gap:8px; margin-top:10px;">' +
-    '<button class="btn btn-primary" style="flex:1;" onclick="pushNow(false)">立即上傳</button>' +
-    '<button class="btn btn-secondary" style="flex:1;" onclick="manualPull()">從雲端取回</button>' +
-    '</div>' +
-    '<button class="btn btn-secondary" style="margin-top:10px; font-size:11px;" onclick="submitSyncSignOut()">登出</button>';
+    '<div style="display:flex; gap:8px; margin-top:8px;">' +
+    '<button class="btn btn-primary" onclick="pushNow(false)">立即上傳</button>' +
+    '<button class="btn btn-secondary" onclick="manualPull()">從雲端取回</button>' +
+    '<button class="btn btn-secondary" onclick="submitSyncSignOut()">登出</button>' +
+    '</div>';
 }
 
 /* 後端選擇器。兩邊各自獨立記住自己的設定與帳號，
@@ -299,11 +299,11 @@ function renderSyncModal() {
 function renderProviderChooser() {
   const current = loadProviderId();
   const opts = [supabaseProvider, gdriveProvider];
-  let html = '<div style="display:flex; gap:6px; margin-bottom:10px;">';
+  let html = '<div style="display:flex; gap:8px; margin-bottom:10px;">';
   opts.forEach(function(o) {
     const on = o.id === current;
     html += '<button class="btn ' + (on ? 'btn-primary' : 'btn-secondary') + '" ' +
-      'style="flex:1; font-size:12px;" onclick="switchSyncProvider(\'' + o.id + '\')">' +
+      'onclick="switchSyncProvider(\'' + o.id + '\')">' +
       escapeHtml(o.label) + '</button>';
   });
   html += '</div>';

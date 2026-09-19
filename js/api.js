@@ -311,7 +311,9 @@ const supabaseProvider = {
         '<label style="font-size:12px; font-weight:600; margin-top:8px; display:block;">anon public key</label>' +
         '<input type="password" id="syncKeyInput" class="form-input" placeholder="eyJhbGciOi..." value="' + escapeHtml(cfg.anonKey) + '">' +
         '<div id="syncModalMsg" style="font-size:12px; color:var(--danger); margin-top:8px;"></div>' +
-        '<button class="btn btn-primary" style="margin-top:10px;" onclick="submitSyncConfig()">儲存連線資訊</button>';
+        '<div style="display:flex; gap:8px; margin-top:8px;">' +
+        '<button class="btn btn-primary" onclick="submitSyncConfig()">儲存連線資訊</button>' +
+        '</div>';
     }
     return '<p style="font-size:12px; color:var(--text-secondary); line-height:1.7;">' +
       '用信箱建立帳號或登入。資料綁在這個帳號底下，' +
@@ -321,11 +323,11 @@ const supabaseProvider = {
       '<label style="font-size:12px; font-weight:600; margin-top:8px; display:block;">密碼</label>' +
       '<input type="password" id="syncPasswordInput" class="form-input" placeholder="至少 6 個字元">' +
       '<div id="syncModalMsg" style="font-size:12px; margin-top:8px;"></div>' +
-      '<div style="display:flex; gap:8px; margin-top:10px;">' +
-      '<button class="btn btn-primary" style="flex:1;" onclick="submitSyncSignIn()">登入</button>' +
-      '<button class="btn btn-secondary" style="flex:1;" onclick="submitSyncSignUp()">建立帳號</button>' +
-      '</div>' +
-      '<button class="btn btn-secondary" style="margin-top:10px; font-size:11px;" onclick="clearSyncConfig()">更改連線資訊</button>';
+      '<div style="display:flex; gap:8px; margin-top:8px;">' +
+      '<button class="btn btn-primary" onclick="submitSyncSignIn()">登入</button>' +
+      '<button class="btn btn-secondary" onclick="submitSyncSignUp()">建立帳號</button>' +
+      '<button class="btn btn-secondary" onclick="clearSyncConfig()">更改連線資訊</button>' +
+      '</div>';
   }
 };
 

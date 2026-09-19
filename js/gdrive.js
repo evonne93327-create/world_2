@@ -288,14 +288,18 @@ const gdriveProvider = {
         '<label style="font-size:12px; font-weight:600;">OAuth 用戶端 ID</label>' +
         '<input type="text" id="gdriveClientIdInput" class="form-input" placeholder="xxxxx.apps.googleusercontent.com">' +
         '<div id="syncModalMsg" style="font-size:12px; color:var(--danger); margin-top:8px;"></div>' +
-        '<button class="btn btn-primary" style="margin-top:10px;" onclick="submitGdriveConfig()">儲存</button>';
+        '<div style="display:flex; gap:8px; margin-top:8px;">' +
+        '<button class="btn btn-primary" onclick="submitGdriveConfig()">儲存</button>' +
+        '</div>';
     }
     return '<p style="font-size:12px; color:var(--text-secondary); line-height:1.7;">' +
       '按下授權後會跳出 Google 的登入視窗。本 app 只會取得' +
       '「存取自己建立的檔案」這個權限，碰不到你雲端硬碟裡的其他東西。</p>' +
       '<div id="syncModalMsg" style="font-size:12px; margin-top:8px;"></div>' +
-      '<button class="btn btn-primary" style="margin-top:6px;" onclick="submitGdriveAuthorize()">授權 Google 雲端硬碟</button>' +
-      '<button class="btn btn-secondary" style="margin-top:10px; font-size:11px;" onclick="clearGdriveConfig()">更改用戶端 ID</button>';
+      '<div style="display:flex; gap:8px; margin-top:8px;">' +
+      '<button class="btn btn-primary" onclick="submitGdriveAuthorize()">授權 Google 雲端硬碟</button>' +
+      '<button class="btn btn-secondary" onclick="clearGdriveConfig()">更改用戶端 ID</button>' +
+      '</div>';
   }
 };
 
