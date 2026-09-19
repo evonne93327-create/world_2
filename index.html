@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <title>世界觀架構工作台 | WorldBuilder Canvas</title>
 
+  <!-- 分頁上的小圖示。manifest 裡的圖示只給「安裝成 app」用，
+       瀏覽器分頁不會拿來當 favicon，少了這幾行分頁會是空白預設圖。
+       另外 /favicon.ico 的自動請求是打在網域根目錄，但這個 app 部署在
+       /world_2/ 子路徑下，靠不到，所以一定要明寫出來。 -->
+  <link rel="icon" type="image/png" sizes="48x48" href="icons/favicon-48.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+
   <!-- PWA：可安裝到主畫面、離線可用。
        manifest 的 start_url / scope 用相對路徑，GitHub Pages 的
        /world_2/ 子路徑與本機執行才能共用同一份設定。 -->
