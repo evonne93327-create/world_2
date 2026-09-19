@@ -37,8 +37,26 @@ function setSyncStatus(status, detail) {
   }
 }
 
+/* ---------- 目前選用的後端 ---------- */
+
+const SYNC_PROVIDER_KEY = "world_sync_provider_v1";
+
+function loadProviderId() {
+  return localStorage.getItem(SYNC_PROVIDER_KEY) || "supabase";
+}
+
+function saveProviderId(id) {
+  localStorage.setItem(SYNC_PROVIDER_KEY, id);
+}
+
+/* 同步流程一律透過這個物件跟後端講話，不直接碰 Supabase 或 Google 的東西 */
+function P() {
+  return loadProviderId() === "gdrive" ? gdriveProvider : supabaseProvider;
+}
+
 function syncIsActive() {
-  return isSyncConfigured() && !!syncAuth.currentUser();
+  const p = P();
+  return p.isConfigured() && !!p.account();
 }
 
 /* ---------- 啟動時的對帳 ---------- */
@@ -54,7 +72,7 @@ function localLooksUntouched() {
 
 function adoptRemote(row) {
   appData = row.data;
-  saveSyncState(row.version, row.updated_at);
+  saveSyncState(row.version, row.at);
   setLocalDirty(false);
   lastPushedPayload = JSON.stringify(appData);
 
@@ -83,7 +101,7 @@ async function initSync() {
 
   setSyncStatus("syncing", "正在對帳…");
   try {
-    const remote = await syncData.pull();
+    const remote = await P().pull();
     const state = loadSyncState();
 
     // 雲端還沒有資料：把本機推上去當作第一版
@@ -140,16 +158,16 @@ async function pushNow(silent) {
   setSyncStatus("syncing", "上傳中…");
   try {
     const state = loadSyncState();
-    const result = await syncData.push(appData, state.version);
+    const result = await P().push(appData, state.version);
 
     if (result.conflict) {
       // 雲端被別台裝置改過，先把對方的版本抓回來給使用者比較
-      const remote = await syncData.pull();
+      const remote = await P().pull();
       openSyncConflictModal(remote);
       return;
     }
 
-    saveSyncState(result.row.version, result.row.updated_at);
+    saveSyncState(result.version, result.at);
     setLocalDirty(false);
     lastPushedPayload = payload;
     setSyncStatus("idle", silent ? "已同步" : "已同步");
@@ -169,8 +187,8 @@ function openSyncConflictModal(remote) {
 
   const info = document.getElementById("syncConflictInfo");
   if (info) {
-    const when = remote && remote.updated_at
-      ? new Date(remote.updated_at).toLocaleString()
+    const when = remote && remote.at
+      ? new Date(remote.at).toLocaleString()
       : "未知時間";
     const remoteDocs = remote && remote.data && Array.isArray(remote.data.docs)
       ? remote.data.docs.length : 0;
@@ -202,8 +220,8 @@ async function resolveConflictUseLocal() {
   closeSyncConflictModal();
   setSyncStatus("syncing", "上傳中…");
   try {
-    const result = await syncData.overwrite(appData);
-    saveSyncState(result.row.version, result.row.updated_at);
+    const result = await P().overwrite(appData);
+    saveSyncState(result.version, result.at);
     setLocalDirty(false);
     lastPushedPayload = JSON.stringify(appData);
     pendingConflictRemote = null;
@@ -250,51 +268,22 @@ function renderSyncModal() {
   const body = document.getElementById("syncModalBody");
   if (!body) return;
 
-  const cfg = loadSyncConfig();
-  const user = syncAuth.currentUser();
+  const p = P();
+  const account = p.account();
 
-  // 第一步：填連線資訊
-  if (!cfg.url || !cfg.anonKey) {
-    body.innerHTML =
-      '<p style="font-size:12px; color:var(--text-secondary); line-height:1.7;">' +
-      '填入你的 Supabase 專案資訊。只需要 <b>anon public</b> 那把金鑰，' +
-      '它設計上就可以公開；<b>service_role</b> 那把絕對不要貼在這裡。<br>' +
-      '這些資訊只會存在這台裝置的瀏覽器裡。</p>' +
-      '<label style="font-size:12px; font-weight:600;">Project URL</label>' +
-      '<input type="text" id="syncUrlInput" class="form-input" placeholder="https://xxxxx.supabase.co" value="' + escapeHtml(cfg.url) + '">' +
-      '<label style="font-size:12px; font-weight:600; margin-top:8px; display:block;">anon public key</label>' +
-      '<input type="password" id="syncKeyInput" class="form-input" placeholder="eyJhbGciOi..." value="' + escapeHtml(cfg.anonKey) + '">' +
-      '<div id="syncModalMsg" style="font-size:12px; color:var(--danger); margin-top:8px;"></div>' +
-      '<button class="btn btn-primary" style="margin-top:10px;" onclick="submitSyncConfig()">儲存連線資訊</button>';
+  let html = renderProviderChooser();
+
+  // 還沒設定好、或還沒登入 → 顯示該後端自己的設定步驟
+  if (!p.isConfigured() || !account) {
+    body.innerHTML = html + p.renderSetup();
     return;
   }
 
-  // 第二步：登入
-  if (!user) {
-    body.innerHTML =
-      syncStatusLine() +
-      '<p style="font-size:12px; color:var(--text-secondary); line-height:1.7;">' +
-      '用信箱建立帳號或登入。資料會綁在這個帳號底下，' +
-      '在別台裝置登入同一個帳號就能取得同一份資料。</p>' +
-      '<label style="font-size:12px; font-weight:600;">信箱</label>' +
-      '<input type="email" id="syncEmailInput" class="form-input" placeholder="you@example.com">' +
-      '<label style="font-size:12px; font-weight:600; margin-top:8px; display:block;">密碼</label>' +
-      '<input type="password" id="syncPasswordInput" class="form-input" placeholder="至少 6 個字元">' +
-      '<div id="syncModalMsg" style="font-size:12px; margin-top:8px;"></div>' +
-      '<div style="display:flex; gap:8px; margin-top:10px;">' +
-      '<button class="btn btn-primary" style="flex:1;" onclick="submitSyncSignIn()">登入</button>' +
-      '<button class="btn btn-secondary" style="flex:1;" onclick="submitSyncSignUp()">建立帳號</button>' +
-      '</div>' +
-      '<button class="btn btn-secondary" style="margin-top:10px; font-size:11px;" onclick="clearSyncConfig()">更改連線資訊</button>';
-    return;
-  }
-
-  // 第三步：已登入
-  body.innerHTML =
+  body.innerHTML = html +
     syncStatusLine() +
-    '<div style="font-size:13px; margin-bottom:12px;">已登入：<b>' + escapeHtml(user.email || "") + '</b></div>' +
+    '<div style="font-size:13px; margin-bottom:12px;">目前帳號：<b>' + escapeHtml(account) + '</b></div>' +
     '<p style="font-size:12px; color:var(--text-secondary); line-height:1.7;">' +
-    '修改後會自動上傳。整包資料會一起同步，所以<b>兩台裝置同時編輯時只能擇一保留</b>，' +
+    '修改後會自動上傳。整包資料一起同步，所以<b>兩台裝置同時編輯時只能擇一保留</b>，' +
     '遇到這種情況會跳出來問你，不會默默覆蓋。</p>' +
     '<div id="syncModalMsg" style="font-size:12px; margin-top:8px;"></div>' +
     '<div style="display:flex; gap:8px; margin-top:10px;">' +
@@ -304,6 +293,39 @@ function renderSyncModal() {
     '<button class="btn btn-secondary" style="margin-top:10px; font-size:11px;" onclick="submitSyncSignOut()">登出</button>';
 }
 
+/* 後端選擇器。兩邊各自獨立記住自己的設定與帳號，
+   所以切換不會弄丟另一邊的設定，但資料也不會自動搬過去——
+   這點要講明，否則使用者會以為換一下就全部跟著走。 */
+function renderProviderChooser() {
+  const current = loadProviderId();
+  const opts = [supabaseProvider, gdriveProvider];
+  let html = '<div style="display:flex; gap:6px; margin-bottom:10px;">';
+  opts.forEach(function(o) {
+    const on = o.id === current;
+    html += '<button class="btn ' + (on ? 'btn-primary' : 'btn-secondary') + '" ' +
+      'style="flex:1; font-size:12px;" onclick="switchSyncProvider(\'' + o.id + '\')">' +
+      escapeHtml(o.label) + '</button>';
+  });
+  html += '</div>';
+  html += '<div style="font-size:11px; color:var(--text-muted); margin-bottom:12px; line-height:1.6;">' +
+    escapeHtml((current === 'gdrive' ? gdriveProvider : supabaseProvider).blurb) + '</div>';
+  return html;
+}
+
+function switchSyncProvider(id) {
+  if (id === loadProviderId()) return;
+  if (isLocalDirty() &&
+      !confirm("這台裝置還有尚未上傳的修改。切換後端不會自動搬移資料，" +
+               "建議先切回原本的後端上傳完再換。確定現在切換嗎？")) {
+    return;
+  }
+  saveProviderId(id);
+  saveSyncState(null, null); // 新後端的版本紀錄跟舊的無關
+  setSyncStatus("off");
+  renderSyncModal();
+  initSync();
+}
+
 function setSyncModalMsg(text, isError) {
   const el = document.getElementById("syncModalMsg");
   if (!el) return;
@@ -311,56 +333,8 @@ function setSyncModalMsg(text, isError) {
   el.textContent = text;
 }
 
-function submitSyncConfig() {
-  const url = document.getElementById("syncUrlInput").value.trim();
-  const key = document.getElementById("syncKeyInput").value.trim();
-  if (!url || !key) { setSyncModalMsg("兩個欄位都要填。", true); return; }
-  if (!/^https:\/\/.+/.test(url)) { setSyncModalMsg("Project URL 應該長得像 https://xxxxx.supabase.co", true); return; }
-  saveSyncConfig(url, key);
-  renderSyncModal();
-}
-
-function clearSyncConfig() {
-  localStorage.removeItem(SYNC_CONFIG_KEY);
-  syncAuth.signOut();
-  setSyncStatus("off");
-  renderSyncModal();
-}
-
-async function submitSyncSignIn() {
-  const email = document.getElementById("syncEmailInput").value.trim();
-  const password = document.getElementById("syncPasswordInput").value;
-  if (!email || !password) { setSyncModalMsg("請填入信箱與密碼。", true); return; }
-  setSyncModalMsg("登入中…");
-  try {
-    await syncAuth.signIn(email, password);
-    renderSyncModal();
-    await initSync();
-  } catch (e) {
-    setSyncModalMsg(e.message || "登入失敗", true);
-  }
-}
-
-async function submitSyncSignUp() {
-  const email = document.getElementById("syncEmailInput").value.trim();
-  const password = document.getElementById("syncPasswordInput").value;
-  if (!email || !password) { setSyncModalMsg("請填入信箱與密碼。", true); return; }
-  setSyncModalMsg("建立中…");
-  try {
-    const result = await syncAuth.signUp(email, password);
-    if (!result.signedIn) {
-      setSyncModalMsg("帳號已建立，請先到信箱收驗證信，完成後再回來登入。");
-      return;
-    }
-    renderSyncModal();
-    await initSync();
-  } catch (e) {
-    setSyncModalMsg(e.message || "建立帳號失敗", true);
-  }
-}
-
 function submitSyncSignOut() {
-  syncAuth.signOut();
+  P().signOut();
   setSyncStatus("off");
   renderSyncModal();
 }
@@ -373,7 +347,7 @@ async function manualPull() {
   }
   setSyncStatus("syncing", "下載中…");
   try {
-    const remote = await syncData.pull();
+    const remote = await P().pull();
     if (!remote) { setSyncStatus("idle", "雲端還沒有資料"); return; }
     adoptRemote(remote);
     setSyncStatus("idle", "已從雲端更新");
@@ -395,9 +369,9 @@ function renderSyncIndicator() {
     conflict: "❗"
   };
   btn.textContent = marks[syncStatus] || "☁️";
-  const user = syncAuth.currentUser();
-  btn.title = "雲端同步" +
-    (user ? "（" + user.email + "）" : "（未登入）") +
+  const account = P().account();
+  btn.title = "雲端同步 · " + P().label +
+    (account ? "（" + account + "）" : "（未登入）") +
     (syncStatusDetail ? " — " + syncStatusDetail : "");
   btn.classList.toggle("sync-error", syncStatus === "error" || syncStatus === "conflict");
 }
