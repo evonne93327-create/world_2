@@ -430,6 +430,33 @@ function getNodeBorderPoint(node, side, slotInfo) {
   return { x: px, y: py, t: t, side: side };
 }
 
+/* ---------- 依側邊欄目錄樹的顯示順序，取得每個文件的排序索引 ----------
+   用來決定「連結同一對節點的多條線」該往哪個方向撐開：這個方向不該
+   取決於使用者剛好先畫了哪一條線（忽左忽右、不穩定），而是取一個
+   跟連線方向、節點拖曳位置都無關的穩定依據——側邊欄目錄樹的顯示順序。
+   邏輯跟 renderFolderLevel() 的遞迴順序保持一致（子資料夾优先於
+   該資料夾自己的直屬文件，最後才是世界觀根層的未分類文件）。
+------------------------------------------------------------- */
+function computeDocTreeOrderIndex(worldId) {
+  const order = {};
+  let counter = 0;
+
+  function walk(parentId) {
+    const folders = appData.folders.filter(f => f.worldId === worldId && f.parentId === parentId);
+    folders.forEach(function(folder) {
+      walk(folder.id);
+      const docsInFolder = appData.docs.filter(d => d.worldId === worldId && d.folderId === folder.id);
+      docsInFolder.forEach(function(doc) { order[doc.id] = counter++; });
+    });
+  }
+  walk(null);
+
+  const rootDocs = appData.docs.filter(d => d.worldId === worldId && !d.folderId);
+  rootDocs.forEach(function(doc) { order[doc.id] = counter++; });
+
+  return order;
+}
+
 /* ---------- 渲染連線 ---------- */
 
 function renderCanvasLines() {
@@ -538,40 +565,61 @@ function renderCanvasLines() {
     pairGroups[key].push(edge);
   });
 
+  /* ---------- 同一對節點多條邊：彎曲幅度（一律同號）與標籤沿線錯開量（正負皆有）----------
+     舊版是左右鏡射（offset 正負對半分），兩條線會往相反方向彎成對稱的
+     「眼睛」形狀。改成同一對節點的所有邊一律往同一側彎，只有彎曲幅度
+     由內而外遞增（像同心弧一樣疊起來），不再是鏡射的兩瓣。
+     標籤沿曲線長度的錯開量（labelSpread）則維持正負皆有，讓標籤還是
+     能沿著線的長度方向前後錯開，不會因為都往同一側彎就擠在一起。
+  ------------------------------------------------------------- */
   const edgeOffsetMap = {};
+  const edgeLabelSpreadMap = {};
   const edgeGroupTotalMap = {};
   Object.keys(pairGroups).forEach(function(key) {
     const group = pairGroups[key];
     const total = group.length;
     group.forEach(function(edge, idx) {
-      let offset;
-      if (total === 1) offset = 0;
-      else offset = (idx - (total - 1) / 2) / ((total - 1) / 2); // -1 .. 1
+      let offset, labelSpread;
+      if (total === 1) {
+        offset = 0;
+        labelSpread = 0;
+      } else {
+        offset = (idx + 1) / total; // (0,1]，一律正值，由內而外遞增
+        labelSpread = (idx - (total - 1) / 2) / ((total - 1) / 2); // -1..1
+      }
       edgeOffsetMap[edge.id] = offset;
+      edgeLabelSpreadMap[edge.id] = labelSpread;
       edgeGroupTotalMap[edge.id] = total;
     });
   });
 
-  /* ---------- 同一對節點多條邊的彎曲方向：用「兩節點中心連線」的垂直方向 ----------
-     舊版彎曲方向只鎖定水平或垂直其中一軸（依 source 那一端挑到的邊而定），
-     兩節點斜向擺放、又剛好挑到「長邊接短邊」這種不對稱組合時，
-     彎曲量在另一軸完全沒有分量，兩條線幾乎只剩左右微微錯開、
-     高度幾乎一樣，看起來還是黏在一起。
-     這裡改成：每一對節點只算「一個」共用的垂直方向（用兩節點中心連線
-     決定，不受個別邊的方向或哪一端挑到哪一側影響），同一對節點的
-     所有邊都沿著同一個方向、依 offset 的正負分別往兩側彎，
-     斜向時也能真正展開成扇形，且因為方向對整組邊都一樣，不會互相穿越。
+  /* ---------- 同一對節點多條邊的彎曲方向：一律由「目錄樹上方者」指向「下方者」----------
+     這個方向必須固定、可預期，不能取決於使用者剛好先畫了哪一條線、
+     或線段實際儲存的 source/target 是誰——否則同一對節點的線，可能因為
+     建立順序不同而忽左忽右。這裡固定用側邊欄目錄樹的顯示順序決定
+     「基準方向」：目錄樹排序較前面的那個節點視為起點，較後面的視為
+     終點，取兩者中心連線的垂直方向，同一對節點的所有邊都共用這個
+     方向、只依 offset 決定彎曲幅度，全部彎向同一側。
   ------------------------------------------------------------- */
+  const docTreeOrderIndex = computeDocTreeOrderIndex(activeWorldId);
+  function nodeTreeOrder(node) {
+    const idx = docTreeOrderIndex[node.docId];
+    return (idx === undefined) ? Infinity : idx;
+  }
+
   const pairPerpMap = {};
   Object.keys(pairGroups).forEach(function(key) {
     const ids = key.split("|");
-    const nodeA = canvas.nodes.find(n => n.id === ids[0]);
-    const nodeB = canvas.nodes.find(n => n.id === ids[1]);
-    if (!nodeA || !nodeB) return;
-    const rectA = getNodeRect(nodeA), rectB = getNodeRect(nodeB);
-    const cA = { x: (rectA.left + rectA.right) / 2, y: (rectA.top + rectA.bottom) / 2 };
-    const cB = { x: (rectB.left + rectB.right) / 2, y: (rectB.top + rectB.bottom) / 2 };
-    const pdx = cB.x - cA.x, pdy = cB.y - cA.y;
+    const nodeX = canvas.nodes.find(n => n.id === ids[0]);
+    const nodeY = canvas.nodes.find(n => n.id === ids[1]);
+    if (!nodeX || !nodeY) return;
+    const xIsUpper = nodeTreeOrder(nodeX) <= nodeTreeOrder(nodeY);
+    const upperNode = xIsUpper ? nodeX : nodeY;
+    const lowerNode = xIsUpper ? nodeY : nodeX;
+    const rectU = getNodeRect(upperNode), rectL = getNodeRect(lowerNode);
+    const cU = { x: (rectU.left + rectU.right) / 2, y: (rectU.top + rectU.bottom) / 2 };
+    const cL = { x: (rectL.left + rectL.right) / 2, y: (rectL.top + rectL.bottom) / 2 };
+    const pdx = cL.x - cU.x, pdy = cL.y - cU.y;
     const plen = Math.hypot(pdx, pdy) || 1;
     pairPerpMap[key] = { x: -pdy / plen, y: pdx / plen };
   });
@@ -607,8 +655,8 @@ function renderCanvasLines() {
 
     /* ----- 弧度：用 offset 強制給定 ----- */
     // 同一對節點只有一條線時維持直線。
-    // 多條線時（offset = -1 / 0 / +1），彎曲幅度統一落在 maxBend 的 0.3～0.7 倍範圍，
-    // 中間那條（offset=0）取最小值 0.3，最外側（offset=±1）取最大值 0.7。
+    // 多條線時（offset 落在 (0,1]），彎曲幅度統一落在 maxBend 的 0～0.7 倍範圍、
+    // 由內而外遞增，全部往同一側彎（見 pairPerpMap），疊成同心弧而非鏡射兩瓣。
     const maxBend = Math.min(dist * 0.28, 90);
     const total = edgeGroupTotalMap[edge.id] || 1;
     const offset = edgeOffsetMap[edge.id] || 0;
@@ -618,13 +666,12 @@ function renderCanvasLines() {
     if (total > 1) {
       const BEND_MIN_RATIO = 0;
       const BEND_MAX_RATIO = 0.7;
-      const ratio = BEND_MIN_RATIO + (BEND_MAX_RATIO - BEND_MIN_RATIO) * Math.abs(offset);
-      const sign = offset === 0 ? 1 : Math.sign(offset);
-      bendMag = sign * ratio * maxBend;
+      const ratio = BEND_MIN_RATIO + (BEND_MAX_RATIO - BEND_MIN_RATIO) * offset;
+      bendMag = ratio * maxBend;
 
-      // 彎曲方向用這一對節點共用的垂直方向（見上方 pairPerpMap），
-      // 同一對節點的所有邊固定沿同一個方向展開，斜向連線也能真正
-      // 撐出扇形，而不會只在單一軸上微幅錯開。
+      // 彎曲方向用這一對節點共用的垂直方向（見上方 pairPerpMap，
+      // 由目錄樹順序決定基準方向），同一對節點的所有邊固定沿同一個
+      // 方向展開，斜向連線也能真正撐出扇形，而不會只在單一軸上微幅錯開。
       const pairKey = [edge.source, edge.target].sort().join("|");
       const perp = pairPerpMap[pairKey] || { x: 0, y: 1 };
       spreadX = perp.x;
@@ -671,8 +718,10 @@ function renderCanvasLines() {
     linesLayer.appendChild(path);
 
     /* ----- 標籤：先算出曲線上的候選落點，稍後統一防重疊再畫 ----- */
-    // 依 offset 把 t 錯開：-1 → 0.35、0 → 0.5、+1 → 0.65
-    const tt = 0.5 + offset * 0.15;
+    // 依 labelSpread 把 t 沿曲線長度錯開：-1 → 0.35、0 → 0.5、+1 → 0.65
+    // （跟彎曲方向 offset 分開算，才不會因為彎曲一律同向就讓標籤擠在一起）
+    const labelSpread = edgeLabelSpreadMap[edge.id] || 0;
+    const tt = 0.5 + labelSpread * 0.15;
     const mt = 1 - tt;
     const bezX = mt*mt*mt*x1 + 3*mt*mt*tt*cx1 + 3*mt*tt*tt*cx2 + tt*tt*tt*x2;
     const bezY = mt*mt*mt*y1 + 3*mt*mt*tt*cy1 + 3*mt*tt*tt*cy2 + tt*tt*tt*y2;
