@@ -380,21 +380,25 @@ function anchorForSide(rect, side, otherRect) {
   return { x: clampNum(ocx, rect.left, rect.right), y: rect.top }; // 'top'
 }
 
-// 列出 A、B 各自的候選邊，取所有組合中距離最短的一組
-function pickClosestSidePair(rectA, rectB) {
+// 列出 A、B 各自候選邊的所有組合，依實際距離由近到遠排序。
+// 斜向擺放時兩端各有兩個候選邊（一個長邊、一個短邊），組合起來共四種：
+// 長→長、長→短、短→長、短→短。只取最近的一組會讓同一對節點的多條線
+// 全擠在同一個邊框上（常常正好是最短的那個短邊）；保留整份清單，
+// 就能把多條線分配到不同組合上，讓它們從不同邊框出發而自然錯開。
+function listSidePairsByDistance(rectA, rectB) {
   const sidesA = candidateSidesForDirection(rectA, rectB);
   const sidesB = candidateSidesForDirection(rectB, rectA);
 
-  let best = null;
+  const combos = [];
   sidesA.forEach(function(sa) {
     sidesB.forEach(function(sb) {
       const pa = anchorForSide(rectA, sa, rectB);
       const pb = anchorForSide(rectB, sb, rectA);
-      const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
-      if (!best || d < best.d) best = { d: d, sideA: sa, sideB: sb };
+      combos.push({ d: Math.hypot(pa.x - pb.x, pa.y - pb.y), sideA: sa, sideB: sb });
     });
   });
-  return best;
+  combos.sort(function(a, b) { return a.d - b.d; });
+  return combos;
 }
 
 /* ---------- 節點邊框交點（沿該邊 30%~70% 分散）---------- */
@@ -504,10 +508,46 @@ function renderCanvasLines() {
   const labelsLayer = document.createElementNS(NS, "g");
   edgesLayer.appendChild(labelsLayer);
 
-  /* ---------- 決定側邊（兩端各自可能不同軸，允許長邊接短邊）---------- */
-  function determineSidePair(nodeA, nodeB) {
-    return pickClosestSidePair(getNodeRect(nodeA), getNodeRect(nodeB));
-  }
+  /* ---------- 把「連結同一對節點」的邊先分組 ----------
+     同一對節點之間的多條邊，需要一起決定要用哪些邊框組合、彎多少，
+     所以分組必須在決定側邊之前就先做好。
+  ------------------------------------------------------------- */
+  const pairGroups = {};
+  canvas.edges.forEach(function(edge) {
+    const key = [edge.source, edge.target].sort().join("|");
+    if (!pairGroups[key]) pairGroups[key] = [];
+    pairGroups[key].push(edge);
+  });
+
+  /* ---------- 決定側邊：同一對節點的多條邊輪流使用不同的邊框組合 ----------
+     兩節點斜向擺放時，兩端各有一個長邊（上/下）和一個短邊（左/右）可用，
+     組合起來有長→長、長→短、短→長、短→短四種。如果所有邊都取「距離最短」
+     的那一種（常常是短邊→短邊），多條線就會全擠在同一個只有幾十像素高的
+     短邊上，變成緊緊一束。這裡改成把同一對節點的邊依序分配到不同組合上，
+     線就會從不同邊框出發，自然錯開。
+     非斜向（正上下或正左右）時只會有一種組合，行為跟原本一樣。
+  ------------------------------------------------------------- */
+  const edgeSideCombo = {};
+  Object.keys(pairGroups).forEach(function(key) {
+    const ids = key.split("|");
+    const nodeA = canvas.nodes.find(n => n.id === ids[0]);
+    const nodeB = canvas.nodes.find(n => n.id === ids[1]);
+    if (!nodeA || !nodeB) return;
+
+    const combos = listSidePairsByDistance(getNodeRect(nodeA), getNodeRect(nodeB));
+    pairGroups[key].forEach(function(edge, idx) {
+      const combo = combos[idx % combos.length];
+      // combo.sideA 屬於 nodeA、sideB 屬於 nodeB，依這條邊自己的方向對應回 source/target
+      const srcIsA = edge.source === nodeA.id;
+      edgeSideCombo[edge.id] = {
+        sourceSide: srcIsA ? combo.sideA : combo.sideB,
+        targetSide: srcIsA ? combo.sideB : combo.sideA,
+        // 與線的儲存方向無關的識別字串（永遠照 key 裡 nodeA、nodeB 的順序寫），
+        // 這樣 A→B 與 B→A 只要用的是同一組邊框，就會被認成同一組。
+        comboKey: combo.sideA + ">" + combo.sideB
+      };
+    });
+  });
 
   /* ---------- 決定每側連線的排列順序 ----------
      同一節點同一側若有多條線，port 順序不能只依邊的建立先後，
@@ -530,9 +570,10 @@ function renderCanvasLines() {
     const tgtNode = canvas.nodes.find(n => n.id === edge.target);
     if (!srcNode || !tgtNode) return;
 
-    const sidePair = determineSidePair(srcNode, tgtNode);
-    const srcSide = sidePair.sideA;
-    const tgtSide = sidePair.sideB;
+    const combo = edgeSideCombo[edge.id];
+    if (!combo) return;
+    const srcSide = combo.sourceSide;
+    const tgtSide = combo.targetSide;
 
     edgeSideInfo[edge.id] = { sourceSide: srcSide, targetSide: tgtSide };
 
@@ -557,23 +598,27 @@ function renderCanvasLines() {
     });
   });
 
-  /* ---------- 同一對節點多條邊的偏移值（給弧度用）---------- */
-  const pairGroups = {};
-  canvas.edges.forEach(function(edge) {
-    const key = [edge.source, edge.target].sort().join("|");
-    if (!pairGroups[key]) pairGroups[key] = [];
-    pairGroups[key].push(edge);
-  });
-
-  /* ---------- 同一對節點多條邊的偏移值：以兩節點中心連線為對稱軸左右分開 ----------
-     offset 落在 -1..+1，正負各往對稱軸的一側彎、幅度相同，所以同一對
-     節點的多條線會沿著兩節點中心連線對稱展開。
+  /* ---------- 彎曲偏移值：只在「共用同一組邊框」的邊之間分開 ----------
+     offset 落在 -1..+1，正負各往對稱軸的一側彎、幅度相同，讓這些邊沿著
+     兩節點中心連線對稱展開。
+     分組的依據是「節點對 + 邊框組合」而不是只看節點對：已經被分配到不同
+     邊框組合的邊，起點終點本來就分開了，再額外把它們往兩側推反而會把它們
+     推向彼此、在中段交叉。只有真的共用同一組邊框、會完全重疊的邊才需要彎。
      這個值同時也決定標籤沿曲線長度的錯開量（見下方 tt 的計算）。
   ------------------------------------------------------------- */
   const edgeOffsetMap = {};
   const edgeGroupTotalMap = {};
-  Object.keys(pairGroups).forEach(function(key) {
-    const group = pairGroups[key];
+  const bendGroups = {};
+  canvas.edges.forEach(function(edge) {
+    const combo = edgeSideCombo[edge.id];
+    if (!combo) return;
+    const key = [edge.source, edge.target].sort().join("|") + "|" + combo.comboKey;
+    if (!bendGroups[key]) bendGroups[key] = [];
+    bendGroups[key].push(edge);
+  });
+
+  Object.keys(bendGroups).forEach(function(key) {
+    const group = bendGroups[key];
     const total = group.length;
     group.forEach(function(edge, idx) {
       let offset;
