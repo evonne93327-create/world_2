@@ -407,22 +407,34 @@ function findExitT(c, rect, fromStart) {
   return outside;
 }
 
-/* 產生一條邊的曲線控制點：
-   從 rectA 中心畫到 rectB 中心，沿中心連線的法線彎 bend，再裁掉兩端節點內部。 */
-function buildEdgeCurve(rectA, rectB, bend) {
+/* 每條線離開節點中心的方向，相對中心連線最多轉這個角度（約 32 度）。
+   用「出發角度」而不是「中段彎曲量」當控制參數是關鍵：彎曲量必須有上限，
+   否則長線會鼓得太誇張；可是一旦設了上限，節點拉遠時控制桿變長、出發方向
+   就趨近平行，兩條線在邊框上的交點會擠成同一點。固定角度的話，交點間距
+   只跟節點大小有關，不管節點離多遠都一樣分得開。 */
+const MAX_DEPART_ANGLE = 0.56;
+const MAX_HANDLE_LEN = 260;
+
+/* 產生一條邊的曲線控制點：從 rectA 中心畫到 rectB 中心，兩端各往同一側轉開
+   spread（-1..+1）對應的角度，再裁掉兩端節點內部那一段。
+   兩端轉的角度一正一負、大小相同，所以曲線對稱於兩節點中心的連線。 */
+function buildEdgeCurve(rectA, rectB, spread) {
   const cA = nodeCenter(rectA);
   const cB = nodeCenter(rectB);
   const dx = cB.x - cA.x, dy = cB.y - cA.y;
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len, uy = dy / len;
-  const perpX = -uy, perpY = ux;
 
-  // 控制點各往法線方向推 bend*4/3，曲線中點（t=0.5）的偏移量剛好等於 bend
-  const h = bend * 4 / 3;
+  const theta = spread * MAX_DEPART_ANGLE;
+  const cos = Math.cos(theta), sin = Math.sin(theta);
+  const k = Math.min(len / 3, MAX_HANDLE_LEN);
+
   const full = [
     cA,
-    { x: cA.x + ux * len / 3 + perpX * h, y: cA.y + uy * len / 3 + perpY * h },
-    { x: cB.x - ux * len / 3 + perpX * h, y: cB.y - uy * len / 3 + perpY * h },
+    // 起點：方向 = 中心連線轉 +theta
+    { x: cA.x + (ux * cos - uy * sin) * k, y: cA.y + (ux * sin + uy * cos) * k },
+    // 終點：方向 = 中心連線轉 -theta（反向延伸回來）
+    { x: cB.x - (ux * cos + uy * sin) * k, y: cB.y - (uy * cos - ux * sin) * k },
     cB
   ];
 
@@ -575,17 +587,12 @@ function renderCanvasLines() {
 
     /* ----- 弧度 -----
        同一對節點只有一條線時 offset = 0，就是中心到中心的直線。
-       多條線時 offset 落在 -1..+1，正負各往中心連線的一側彎、幅度相同，
-       對稱展開成扇形。出發點是曲線跟邊框的交點，彎得越多交點越外側，
-       所以出發順序必定跟彎曲順序一致，不會互相穿越。 */
-    const cFrom = nodeCenter(rectFrom);
-    const cTo = nodeCenter(rectTo);
-    const centerDist = Math.hypot(cTo.x - cFrom.x, cTo.y - cFrom.y) || 1;
-    const maxBend = Math.min(centerDist * 0.28, 90);
+       多條線時 offset 落在 -1..+1，決定這條線離開中心的角度往哪一側轉、
+       轉多少，兩側角度相同所以對稱展開成扇形。出發點是曲線跟邊框的交點，
+       轉得越開交點越外側，出發順序必定跟彎曲順序一致，不會互相穿越。 */
     const offset = edgeOffsetMap[edge.id] || 0;
-    const bend = offset * 0.7 * maxBend;
 
-    let curve = buildEdgeCurve(rectFrom, rectTo, bend);
+    let curve = buildEdgeCurve(rectFrom, rectTo, offset);
     if (!curve) return;
 
     // 標籤落點取在「基準方向」的曲線上，跟這條邊存的方向無關，
