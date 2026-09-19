@@ -25,13 +25,72 @@ window.addEventListener("DOMContentLoaded", function() {
 
 /* 註冊 service worker，讓 app 可以安裝到主畫面並離線使用。
    只在 https 或 localhost 底下有效；用 file:// 直接開會靜默略過。 */
+
+// 開著不動也要能發現新版，不然裝成 app 的人可能好幾天都停在舊版
+const SW_UPDATE_CHECK_MS = 30 * 60 * 1000;
+
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   if (location.protocol !== "https:" && location.hostname !== "localhost" &&
       location.hostname !== "127.0.0.1") return;
 
-  navigator.serviceWorker.register("sw.js").catch(function(e) {
+  // 要在 register() 之前就抓，而且要抓在最前面。
+  // sw.js 有 skipWaiting() + clients.claim()，新的 worker 一裝好就立刻接管，
+  // 晚一步去看 controller 就分不出「第一次安裝」和「更新」了。
+  let hadController = !!navigator.serviceWorker.controller;
+
+  // 新 worker 接管的那一刻。第一次安裝與更新都會觸發，靠上面那個旗標區分。
+  // 用這個而不是只靠 updatefound：register() 回傳時，第一次安裝的
+  // updatefound 可能已經發生過了，監聽器掛上去也接不到。
+  navigator.serviceWorker.addEventListener("controllerchange", function() {
+    if (!hadController) { hadController = true; return; }
+    showUpdateToast();
+  });
+
+  navigator.serviceWorker.register("sw.js").then(function(reg) {
+    // 備援路徑：萬一哪天 sw.js 拿掉了 skipWaiting，新 worker 會停在 waiting
+    // 不接管，controllerchange 就不會來，這時要靠 updatefound 才發現得到。
+    reg.addEventListener("updatefound", function() {
+      const incoming = reg.installing;
+      if (!incoming || !hadController) return;
+      incoming.addEventListener("statechange", function() {
+        if (incoming.state === "installed" || incoming.state === "activated") {
+          showUpdateToast();
+        }
+      });
+    });
+
+    // 每次開起來先問一次伺服器有沒有新版
+    reg.update().catch(function() {});
+    setInterval(function() { reg.update().catch(function() {}); }, SW_UPDATE_CHECK_MS);
+  }).catch(function(e) {
     // 註冊失敗只代表沒有離線能力，app 本身照常運作，不需要打擾使用者
     console.warn("Service worker 註冊失敗：", e);
   });
+}
+
+/* 偵測到新版時提示，但不自動重載。
+
+   靜默重載很誘人（反正資料都在 localStorage），但正在打字的人被硬生生
+   重整會很惱火，而且捲動位置、展開的資料夾、白板的平移縮放都會跑掉。
+   什麼時候換版讓使用者自己決定。 */
+
+let updateToastShown = false;
+
+function showUpdateToast() {
+  if (updateToastShown) return;     // 一次就好，不要每次檢查都跳
+  const el = document.getElementById("updateToast");
+  if (!el) return;
+  updateToastShown = true;
+  el.classList.add("active");
+}
+
+function dismissUpdateToast() {
+  const el = document.getElementById("updateToast");
+  if (el) el.classList.remove("active");
+}
+
+function reloadForUpdate() {
+  dismissUpdateToast();
+  location.reload();
 }
