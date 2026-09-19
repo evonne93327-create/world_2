@@ -692,6 +692,10 @@ main.content-workspace {
 .canvas-svg g, .canvas-svg path, .canvas-svg text { 
   pointer-events: all; 
 }
+.canvas-svg foreignObject {
+  overflow: visible;
+  pointer-events: none;
+}
 .relation-line { 
   stroke: var(--jade); 
   stroke-width: 2.5; 
@@ -713,30 +717,19 @@ main.content-workspace {
   -webkit-user-select: none;
 }
 
-/* 節點圖層：在線條上方 */
-#canvasNodesContainer {
-  position: absolute;
-  inset: 0;
-  transform-origin: 0 0;
-  will-change: transform;
-  pointer-events: none;
-  z-index: 2;
-}
-#canvasNodesContainer .canvas-node {
-  pointer-events: auto;
-}
-
+/* 節點：現在是 <foreignObject> 內的 HTML，直接跟著 SVG viewBox 做
+   向量縮放，放大不會糊（取代舊版用 CSS transform: scale() 的做法）*/
 .canvas-node {
-  position: absolute;
-  width: 200px;
+  box-sizing: border-box;
+  width: 100%;
   background: var(--bg-card);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
   padding: var(--sp-10);
   cursor: grab;
-  z-index: 2;
   user-select: none;
+  pointer-events: auto;
 }
 .canvas-node.connecting {
   border-color: var(--accent) !important;
