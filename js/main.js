@@ -54,6 +54,7 @@ function toggleSidebarMenu() {
  sidebar.classList.toggle("collapsed");
  }
  scheduleAutoGrowAfterLayoutShift();
+ scheduleCanvasViewBoxAfterLayoutShift();
 }
 
 function openSidebarMenu() {
@@ -71,17 +72,45 @@ function openSidebarMenu() {
  sidebar.classList.remove("collapsed");
  }
  scheduleAutoGrowAfterLayoutShift();
+ scheduleCanvasViewBoxAfterLayoutShift();
 }
 
 function closeSidebarMobile() {
  document.getElementById("appSidebar").classList.remove("drawer-open");
  document.getElementById("sidebarOverlay").classList.remove("active");
+ scheduleCanvasViewBoxAfterLayoutShift();
 }
 
 function scheduleAutoGrowAfterLayoutShift() {
  setTimeout(function() {
  autoGrowTextarea(document.getElementById("docContentInput"));
  }, 260);
+}
+
+// 側邊欄展開／收起時，白板容器的寬度也會跟著變（CSS transition 0.25s），
+// 但 SVG 的 viewBox／寬高只有在 resize 或縮放平移時才會重算，
+// 導致收合目錄的過程中連線的位置跟比例跟畫面對不上、動畫結束當下才「跳」回正確位置。
+// 這裡改成整個動畫期間（0.25s + 一點緩衝）用 requestAnimationFrame 逐格校正，
+// 讓連線全程跟著側邊欄一起滑動，不會等動畫結束才突然對齊，也不怕單次 setTimeout 抓不準時間點。
+let canvasViewBoxRafId = null;
+function scheduleCanvasViewBoxAfterLayoutShift() {
+ if (typeof activeView !== 'undefined' && activeView !== 'canvas') return;
+ if (typeof applySvgViewBox !== 'function') return;
+
+ if (canvasViewBoxRafId) cancelAnimationFrame(canvasViewBoxRafId);
+
+ const duration = 300; // CSS transition 0.25s + 緩衝
+ const start = performance.now();
+
+ function tick(now) {
+ applySvgViewBox();
+ if (now - start < duration) {
+ canvasViewBoxRafId = requestAnimationFrame(tick);
+ } else {
+ canvasViewBoxRafId = null;
+ }
+ }
+ canvasViewBoxRafId = requestAnimationFrame(tick);
 }
 
 function handleBreadcrumbDblClick(e) {
