@@ -59,6 +59,8 @@ function saveData() {
   localStorage.setItem("novel_multi_world_data_v5", JSON.stringify(appData));
   // 存檔時一併記錄當前的 UI 狀態
   localStorage.setItem("novel_ui_state", JSON.stringify({ activeWorldId, activeDocId, activeFolderId }));
+  // 通知雲端同步（sync.js 載入順序在後，沒設定同步時這裡就是 no-op）
+  if (typeof onDataSaved === "function") onDataSaved();
 }
 
 // 3. 確保重新整理或關閉分頁前，一定會記住最後的瀏覽位置
