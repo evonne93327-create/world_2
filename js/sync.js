@@ -136,6 +136,10 @@ async function initSync() {
 
 // storage.js 的 saveData() 會呼叫這裡
 function onDataSaved() {
+  // 有新的修改就解除「稍後再說」，否則按過一次之後這個 session 都不會再提醒。
+  // 放在 syncIsActive() 判斷之前：沒設定雲端同步的人一樣需要被提醒備份。
+  idleBackupSnoozed = false;
+
   if (!syncIsActive()) return;
   setLocalDirty(true);
   if (syncPushTimer) clearTimeout(syncPushTimer);
@@ -374,4 +378,112 @@ function renderSyncIndicator() {
     (account ? "（" + account + "）" : "（未登入）") +
     (syncStatusDetail ? " — " + syncStatusDetail : "");
   btn.classList.toggle("sync-error", syncStatus === "error" || syncStatus === "conflict");
+}
+
+/* ==========================================================
+   閒置備份提醒
+
+   視窗連續一段時間沒有任何動作時，提醒使用者把資料備份出去。
+
+   刻意加了三道條件，不是無條件每三分鐘跳一次：
+   - 分頁在背景時不跳。人根本沒在看，跳出來只會在他回來那一刻擋路。
+   - 已經有別的彈窗開著時不跳，不疊在別人上面。
+   - 沒有東西需要備份就不跳。雲端同步開著的時候，存檔後 2.5 秒就會自動
+     上傳，三分鐘後通常早就推完了——這時候跳出來問要不要備份是純粹的噪音。
+     所以只在「真的還有沒備份的修改」時才問。
+
+   按過「稍後再說」之後會停掉，直到下一次有新的修改才會重新計時，
+   否則放著不動就會每三分鐘被打擾一次。
+   ========================================================== */
+
+const IDLE_BACKUP_MS = 3 * 60 * 1000;
+const IDLE_CHECK_INTERVAL_MS = 15 * 1000;
+
+let lastActivityAt = Date.now();
+let idleBackupSnoozed = false;
+let idleBackupTimer = null;
+
+function markUserActivity() {
+  lastActivityAt = Date.now();
+}
+
+// 有沒有東西值得備份
+function hasUnbackedUpChanges() {
+  if (syncIsActive()) return isLocalDirty();
+  // 還沒設定雲端同步：只要資料不是原封不動的預設範例，就是只存在這台瀏覽器裡
+  return !localLooksUntouched();
+}
+
+function shouldShowIdleBackup() {
+  if (idleBackupSnoozed) return false;
+  if (document.hidden) return false;
+  if (document.querySelector(".modal-overlay.active")) return false;
+  if (syncStatus === "syncing" || syncStatus === "conflict") return false;
+  if (!hasUnbackedUpChanges()) return false;
+  return Date.now() - lastActivityAt >= IDLE_BACKUP_MS;
+}
+
+function openIdleBackupModal() {
+  const info = document.getElementById("idleBackupInfo");
+  const actions = document.getElementById("idleBackupActions");
+  if (!info || !actions) return;
+
+  const mins = Math.round(IDLE_BACKUP_MS / 60000);
+  actions.innerHTML = "";
+
+  function addBtn(cls, text, handler) {
+    const b = document.createElement("button");
+    b.className = "btn " + cls;
+    b.textContent = text;
+    b.onclick = handler;
+    actions.appendChild(b);
+  }
+
+  if (syncIsActive()) {
+    info.innerHTML = "已經 " + mins + " 分鐘沒有動作了，這台裝置還有<strong>尚未上傳</strong>的修改。<br>" +
+      "目前的雲端後端：" + escapeHtml(P().label) + "。";
+    addBtn("btn-primary", "☁️ 立即上傳", function() { closeIdleBackupModal(); pushNow(false); });
+  } else {
+    info.innerHTML = "已經 " + mins + " 分鐘沒有動作了。這台裝置<strong>還沒設定雲端同步</strong>，" +
+      "資料只存在這個瀏覽器裡——清掉瀏覽器資料就沒了。";
+    addBtn("btn-primary", "☁️ 設定雲端同步", function() { closeIdleBackupModal(); openSyncModal(); });
+  }
+
+  addBtn("btn-secondary", "💾 存成檔案備份", function() {
+    closeIdleBackupModal();
+    if (typeof exportFullDatabaseJSON === "function") exportFullDatabaseJSON();
+  });
+  addBtn("btn-secondary", "稍後再說", dismissIdleBackup);
+
+  document.getElementById("idleBackupModal").classList.add("active");
+}
+
+function closeIdleBackupModal() {
+  document.getElementById("idleBackupModal").classList.remove("active");
+  markUserActivity();
+}
+
+/* 「稍後再說」：關掉並停止再問，直到下一次有新的修改（onDataSaved 會解除）。
+   沒有這個的話，人離開座位，回來會看到同一個彈窗問過很多次。 */
+function dismissIdleBackup() {
+  idleBackupSnoozed = true;
+  closeIdleBackupModal();
+}
+
+function initIdleBackupReminder() {
+  ["pointerdown", "pointermove", "keydown", "wheel", "touchstart", "focus"].forEach(function(evt) {
+    window.addEventListener(evt, markUserActivity, { passive: true, capture: true });
+  });
+  // 捲動不會冒泡到 window，要用捕獲階段才收得到編輯器裡的捲動
+  window.addEventListener("scroll", markUserActivity, { passive: true, capture: true });
+  document.addEventListener("visibilitychange", function() {
+    if (!document.hidden) markUserActivity();
+  });
+
+  // 用「定期檢查時間戳」而不是「每次動作都重設 setTimeout」：
+  // pointermove 一秒可以觸發幾十次，重設計時器太浪費。
+  if (idleBackupTimer) clearInterval(idleBackupTimer);
+  idleBackupTimer = setInterval(function() {
+    if (shouldShowIdleBackup()) openIdleBackupModal();
+  }, IDLE_CHECK_INTERVAL_MS);
 }

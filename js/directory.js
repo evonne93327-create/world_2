@@ -260,7 +260,7 @@ function createDocRowElement(doc) {
  activeFolderId = null;
  updateWorldBadge();
  loadDocToEditor(doc.id);
- if (activeView !== 'editor') switchView('editor');
+ openDocFromDirectory(doc);
  if (window.innerWidth <= 768) closeSidebarMobile();
  };
 
@@ -480,8 +480,46 @@ function createFolderInCurrentContext() {
  promptCreateFolder(activeFolderId || null, activeWorldId);
 }
 
+/* 從目錄點一篇文檔之後要停在哪個檢視。
+   在白板檢視下點目錄，使用者想看的是白板上的那個節點，不是被踢回編輯器，
+   所以把畫面平移過去並highlight，留在白板。
+   但這篇文檔不一定被投射到白板上——那種情況白板上沒有東西可以看，
+   維持原本的行為切回編輯器，至少看得到內容。 */
+function openDocFromDirectory(doc) {
+ if (activeView === 'canvas' && typeof focusCanvasNode === 'function') {
+  // 切換世界觀時白板畫的還是上一個世界觀的節點，要先重畫才找得到
+  if (typeof renderCanvas === 'function') renderCanvas();
+  if (focusCanvasNode(doc.id)) return;
+ }
+ if (activeView !== 'editor') switchView('editor');
+}
+
+/* 決定「新增文檔」要放在哪一層。優先順序：
+   1. 有明確選取資料夾 → 放進那個資料夾（使用者剛剛點的，最能代表意圖）
+   2. 否則若編輯器正開著一篇文檔 → 跟它放在同一層
+   3. 都沒有 → 放在這個世界觀的最外層
+
+   第 2 條是重點：從目錄點開一篇文檔時會把 activeFolderId 清成 null，
+   所以在沒有這條的情況下，明明開著資料夾深處的文檔，新增出來的卻會
+   掉到最外層。快速跳轉開的文檔反而會設 activeFolderId，兩條路徑行為
+   不一致；把落點統一由這裡決定之後就不會再分岔。 */
+function resolveNewDocFolderId() {
+ if (activeFolderId) return activeFolderId;
+
+ const openDoc = appData.docs.find(d => d.id === activeDocId);
+ // 跨世界觀不沿用：切換世界觀後 activeDocId 可能還指著別的世界觀的文檔
+ if (!openDoc || openDoc.worldId !== activeWorldId) return null;
+ if (!openDoc.folderId) return null;
+
+ // 資料夾可能已經被刪掉（文檔還在但父層沒了），落點要退回最外層
+ const folder = appData.folders.find(f => f.id === openDoc.folderId);
+ if (!folder || folder.worldId !== activeWorldId) return null;
+
+ return folder.id;
+}
+
 function createDocInCurrentContext() {
- createNewDoc(activeFolderId || null, activeWorldId);
+ createNewDoc(resolveNewDocFolderId(), activeWorldId);
 }
 
 function promptCreateFolder(parentId = null, worldId = null) {
