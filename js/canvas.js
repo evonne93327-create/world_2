@@ -251,17 +251,6 @@ function createCanvasNote(wx, wy) {
   return note;
 }
 
-/* 從按鈕新增：長按手勢在手機上本來就脆弱（手指會飄、iOS 還會插手），
-   而且不看提示根本不知道有這個功能。按鈕是確定會動的那條路。 */
-function addCanvasNoteAtViewCenter() {
-  const view = document.getElementById("canvasView");
-  if (!view) return;
-  const rect = view.getBoundingClientRect();
-  if (rect.width === 0 || rect.height === 0) return;
-  const world = screenToWorld(rect.width / 2, rect.height / 2);
-  createCanvasNote(world.x, world.y);
-}
-
 function deleteCanvasNote(noteId) {
   const canvas = getCurrentWorldCanvas();
   canvas.notes = canvas.notes.filter(function(n) { return n.id !== noteId; });
