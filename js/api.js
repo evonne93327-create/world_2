@@ -259,3 +259,122 @@ const syncData = {
     });
   }
 };
+
+/* ==========================================================
+   provider 介面
+
+   sync.js 只透過下面這組方法跟後端講話（pull / push / overwrite
+   / account / isConfigured / signOut / renderSetup），所以衝突偵測、
+   debounce、狀態顯示那些流程不必知道自己接的是誰，換後端也不用動。
+   ========================================================== */
+
+const supabaseProvider = {
+  id: "supabase",
+  label: "Supabase",
+  blurb: "資料存在 Supabase 資料庫。設定簡單，衝突保護最完整。",
+
+  isConfigured: isSyncConfigured,
+
+  account: function() {
+    const u = syncAuth.currentUser();
+    return u ? (u.email || "已登入") : null;
+  },
+
+  signOut: function() { syncAuth.signOut(); },
+
+  pull: async function() {
+    const row = await syncData.pull();
+    return row ? { data: row.data, version: row.version, at: row.updated_at } : null;
+  },
+
+  push: async function(data, expectedVersion) {
+    const r = await syncData.push(data, expectedVersion);
+    if (r.conflict) return { conflict: true };
+    return { conflict: false, version: r.row.version, at: r.row.updated_at };
+  },
+
+  overwrite: async function(data) {
+    const r = await syncData.overwrite(data);
+    return { conflict: false, version: r.row.version, at: r.row.updated_at };
+  },
+
+  /* 尚未設定或尚未登入時，面板要顯示的內容 */
+  renderSetup: function() {
+    const cfg = loadSyncConfig();
+    if (!cfg.url || !cfg.anonKey) {
+      return '<p style="font-size:12px; color:var(--text-secondary); line-height:1.7;">' +
+        '填入你的 Supabase 專案資訊。只需要 <b>anon public</b> 那把金鑰，' +
+        '它設計上就可以公開；<b>service_role</b> 那把絕對不要貼在這裡。<br>' +
+        '這些資訊只會存在這台裝置的瀏覽器裡。</p>' +
+        '<label style="font-size:12px; font-weight:600;">Project URL</label>' +
+        '<input type="text" id="syncUrlInput" class="form-input" placeholder="https://xxxxx.supabase.co" value="' + escapeHtml(cfg.url) + '">' +
+        '<label style="font-size:12px; font-weight:600; margin-top:8px; display:block;">anon public key</label>' +
+        '<input type="password" id="syncKeyInput" class="form-input" placeholder="eyJhbGciOi..." value="' + escapeHtml(cfg.anonKey) + '">' +
+        '<div id="syncModalMsg" style="font-size:12px; color:var(--danger); margin-top:8px;"></div>' +
+        '<button class="btn btn-primary" style="margin-top:10px;" onclick="submitSyncConfig()">儲存連線資訊</button>';
+    }
+    return '<p style="font-size:12px; color:var(--text-secondary); line-height:1.7;">' +
+      '用信箱建立帳號或登入。資料綁在這個帳號底下，' +
+      '在別台裝置登入同一個帳號就能取得同一份資料。</p>' +
+      '<label style="font-size:12px; font-weight:600;">信箱</label>' +
+      '<input type="email" id="syncEmailInput" class="form-input" placeholder="you@example.com">' +
+      '<label style="font-size:12px; font-weight:600; margin-top:8px; display:block;">密碼</label>' +
+      '<input type="password" id="syncPasswordInput" class="form-input" placeholder="至少 6 個字元">' +
+      '<div id="syncModalMsg" style="font-size:12px; margin-top:8px;"></div>' +
+      '<div style="display:flex; gap:8px; margin-top:10px;">' +
+      '<button class="btn btn-primary" style="flex:1;" onclick="submitSyncSignIn()">登入</button>' +
+      '<button class="btn btn-secondary" style="flex:1;" onclick="submitSyncSignUp()">建立帳號</button>' +
+      '</div>' +
+      '<button class="btn btn-secondary" style="margin-top:10px; font-size:11px;" onclick="clearSyncConfig()">更改連線資訊</button>';
+  }
+};
+
+/* ---------- Supabase 專屬的面板操作 ---------- */
+
+function submitSyncConfig() {
+  const url = document.getElementById("syncUrlInput").value.trim();
+  const key = document.getElementById("syncKeyInput").value.trim();
+  if (!url || !key) { setSyncModalMsg("兩個欄位都要填。", true); return; }
+  if (!/^https:\/\/.+/.test(url)) { setSyncModalMsg("Project URL 應該長得像 https://xxxxx.supabase.co", true); return; }
+  saveSyncConfig(url, key);
+  renderSyncModal();
+}
+
+function clearSyncConfig() {
+  localStorage.removeItem(SYNC_CONFIG_KEY);
+  syncAuth.signOut();
+  setSyncStatus("off");
+  renderSyncModal();
+}
+
+async function submitSyncSignIn() {
+  const email = document.getElementById("syncEmailInput").value.trim();
+  const password = document.getElementById("syncPasswordInput").value;
+  if (!email || !password) { setSyncModalMsg("請填入信箱與密碼。", true); return; }
+  setSyncModalMsg("登入中…");
+  try {
+    await syncAuth.signIn(email, password);
+    renderSyncModal();
+    await initSync();
+  } catch (e) {
+    setSyncModalMsg(e.message || "登入失敗", true);
+  }
+}
+
+async function submitSyncSignUp() {
+  const email = document.getElementById("syncEmailInput").value.trim();
+  const password = document.getElementById("syncPasswordInput").value;
+  if (!email || !password) { setSyncModalMsg("請填入信箱與密碼。", true); return; }
+  setSyncModalMsg("建立中…");
+  try {
+    const result = await syncAuth.signUp(email, password);
+    if (!result.signedIn) {
+      setSyncModalMsg("帳號已建立，請先到信箱收驗證信，完成後再回來登入。");
+      return;
+    }
+    renderSyncModal();
+    await initSync();
+  } catch (e) {
+    setSyncModalMsg(e.message || "建立帳號失敗", true);
+  }
+}
