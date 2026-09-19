@@ -46,7 +46,7 @@
         <button class="icon-sm-btn" id="trashViewBtn" title="檢視垃圾桶（復原已刪除的項目）" onclick="openTrashModal()">♻️</button>
         <button class="icon-sm-btn" id="trashToggleBtn" title="批量刪除模式" onclick="toggleBatchDeleteMode()">🗑️</button>
         <button class="icon-sm-btn" title="新增資料夾（若已選取資料夾，將新增於其底下）" onclick="createFolderInCurrentContext()">📁</button>
-        <button class="icon-sm-btn" title="新增文檔（若已選取資料夾，將新增於其底下）" onclick="createDocInCurrentContext()">📄</button>
+        <button class="icon-sm-btn" title="新增文檔（與目前開啟的文檔同一層；若有選取資料夾則新增於其底下）" onclick="createDocInCurrentContext()">📄</button>
         <button class="icon-sm-btn mobile-close" id="closeSidebarBtn" onclick="closeSidebarMobile()">✕</button>
       </div>
     </div>
@@ -102,7 +102,7 @@
         <button class="nav-action-btn secondary" id="btnD_Export" onclick="openBatchExportModal()" title="批量匯出">
           <span>📤</span><span class="btn-text">匯出</span>
         </button>
-        <button class="nav-action-btn primary" id="btnE_NewDoc" onclick="createDocInCurrentContext()" title="新增文檔（若已選取資料夾，將新增於其底下）">
+        <button class="nav-action-btn primary" id="btnE_NewDoc" onclick="createDocInCurrentContext()" title="新增文檔（與目前開啟的文檔同一層；若有選取資料夾則新增於其底下）">
           <span>＋</span><span class="btn-text">新文檔</span>
         </button>
       </div>
