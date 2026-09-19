@@ -903,6 +903,17 @@ main.content-workspace {
   overflow-y: auto;
 }
 .modal-title { font-size: var(--fs-16); font-weight: 700; font-family: var(--font-display); }
+
+/* 彈窗標題列：標題靠左、關閉叉叉靠右。
+   用一般的 flex 子元素而不是絕對定位，因為 .modal-card 會 overflow-y: auto，
+   絕對定位的叉叉會跟著內容一起捲走。 */
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-10);
+}
+.modal-head .modal-title { flex: 1; min-width: 0; }
 .form-input {
   width: 100%;
   padding: var(--sp-8) var(--sp-10);

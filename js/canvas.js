@@ -189,6 +189,9 @@ function applySvgViewBox() {
   if (!svg) return;
   const view = document.getElementById("canvasView");
   const rect = view.getBoundingClientRect();
+  // 白板沒顯示時（切到文檔檢視）量到的是 0×0，寫進去會得到一個退化的
+  // viewBox，之後切回白板前都是壞的。寧可保留上一次的值。
+  if (rect.width === 0 || rect.height === 0) return;
   const w = rect.width / canvasTransform.scale;
   const h = rect.height / canvasTransform.scale;
   const x = -canvasTransform.x / canvasTransform.scale;
@@ -1014,7 +1017,21 @@ function setupCanvasEvents() {
   svg.style.touchAction = "none";
   view.style.touchAction = "none";
 
-  window.addEventListener("resize", applySvgViewBox);
+  // 白板容器的大小會因為很多原因改變，而且多半不是瞬間完成的：
+  // 視窗縮放、側邊欄 0.25s 的寬度過場、跨過 768px 斷點時整個版面重排。
+  // 只聽 window 的 resize 事件會出事——事件只觸發一次，量到的是版面
+  // 還在動的中途尺寸，之後就沒人再算了。而 .canvas-svg 的 CSS 是
+  // width/height 100%，元素實際大小永遠跟著容器跑，viewBox 卻停在舊值，
+  // 配上 preserveAspectRatio="none" 就會把整個白板橫向拉長。
+  //
+  // 改成觀察容器本身：不管誰、因為什麼原因改變了它的大小，每一次變化
+  // 都會重算，過場中途的每一格也算得到。
+  if (typeof ResizeObserver === "function") {
+    // 只改 svg 子元素的屬性，不會回頭影響容器大小，不會造成觀察迴圈
+    new ResizeObserver(applySvgViewBox).observe(view);
+  } else {
+    window.addEventListener("resize", applySvgViewBox);
+  }
 }
 
 function setupTouchPanZoom(view, svg) {
