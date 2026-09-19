@@ -869,6 +869,11 @@ main.content-workspace {
 }
 .btn-primary { background: var(--accent); color: white; }
 .btn-secondary { background: var(--bg-card); border-color: var(--border); color: var(--text-primary); }
+
+/* 同步面板裡的按鈕多半被拉成整列寬或等分寬，.btn 預設靠左會讓文字黏在左邊。
+   只限定這兩個 modal，不動 .btn 本身——別處有依賴靠左對齊的按鈕。 */
+#syncModal .btn,
+#syncConflictModal .btn { justify-content: center; }
 .btn-secondary:hover { background: var(--bg-sunken); }
 .btn-danger { background: #fff; border-color: var(--danger-light); color: var(--danger); }
 
