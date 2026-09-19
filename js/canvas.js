@@ -8,7 +8,9 @@ let zoomIndicatorTimer = null;
 
 function getCurrentWorldCanvas() {
   const world = appData.worldviews.find(w => w.id === activeWorldId);
-  if (!world.canvas) world.canvas = { nodes: [], edges: [] };
+  if (!world.canvas) world.canvas = { nodes: [], edges: [], notes: [] };
+  // 便條紙是後來才加的，舊資料沒有這個欄位
+  if (!world.canvas.notes) world.canvas.notes = [];
   return world.canvas;
 }
 
@@ -172,6 +174,7 @@ function renderCanvas() {
     if (fo && fo.setAttribute) fo.setAttribute("height", h);
   });
 
+  renderCanvasNotes();
   applySvgViewBox();
   renderCanvasLines();
 }
@@ -201,6 +204,373 @@ function applySvgViewBox() {
   svg.setAttribute("preserveAspectRatio", "none");
   svg.setAttribute("width", rect.width);
   svg.setAttribute("height", rect.height);
+}
+
+/* ==========================================================
+   便條紙
+
+   長按白板空白處新增。便條紙跟節點一樣是畫在 SVG 裡的 foreignObject，
+   所以會跟著平移縮放一起動，座標存的是白板世界座標而不是畫面座標。
+
+   圖層刻意放在最底下（連線與節點之下）：便條紙是背景註記，蓋在連線上
+   會擋住關係圖本身。
+   ========================================================== */
+
+const NOTE_MIN_W = 120;
+const NOTE_MIN_H = 80;
+const NOTE_DEFAULT_W = 180;
+const NOTE_DEFAULT_H = 120;
+
+function getCanvasNotesLayer(svg) {
+  let layer = document.getElementById("canvasNotesLayer");
+  if (!layer) {
+    layer = document.createElementNS(SVG_NS, "g");
+    layer.setAttribute("id", "canvasNotesLayer");
+  }
+  // 插在最前面＝畫在最底下
+  if (svg.firstChild !== layer) svg.insertBefore(layer, svg.firstChild);
+  return layer;
+}
+
+function createCanvasNote(wx, wy) {
+  const canvas = getCurrentWorldCanvas();
+  const note = {
+    id: "note_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    // 以長按的點為中心放置，手指／滑鼠按在哪就長在哪
+    x: wx - NOTE_DEFAULT_W / 2,
+    y: wy - NOTE_DEFAULT_H / 2,
+    w: NOTE_DEFAULT_W,
+    h: NOTE_DEFAULT_H,
+    text: ""
+  };
+  canvas.notes.push(note);
+  saveData();
+  renderCanvas();
+  // 新的便條紙是空的，直接進入編輯狀態，不用再多按一次
+  startEditCanvasNote(note.id);
+  return note;
+}
+
+function deleteCanvasNote(noteId) {
+  const canvas = getCurrentWorldCanvas();
+  canvas.notes = canvas.notes.filter(function(n) { return n.id !== noteId; });
+  saveData();
+  renderCanvas();
+}
+
+function startEditCanvasNote(noteId) {
+  const el = document.getElementById(noteId);
+  if (!el) return;
+  const body = el.querySelector(".canvas-note-body");
+  if (!body) return;
+  body.setAttribute("contenteditable", "true");
+  el.classList.add("is-editing");
+  body.focus();
+
+  // 游標移到最後，不然點進去會停在開頭
+  const range = document.createRange();
+  range.selectNodeContents(body);
+  range.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+/* 打字期間每個鍵都 saveData() 會把整包資料序列化一次，太浪費，所以節流。
+   離開編輯時再 flush 一次，確保最後幾個字一定落地。 */
+let noteSaveTimer = null;
+
+function scheduleNoteSave() {
+  if (noteSaveTimer) clearTimeout(noteSaveTimer);
+  noteSaveTimer = setTimeout(function() {
+    noteSaveTimer = null;
+    saveData();
+  }, 600);
+}
+
+function flushNoteSave() {
+  if (noteSaveTimer) { clearTimeout(noteSaveTimer); noteSaveTimer = null; }
+  saveData();
+}
+
+/* 按到便條紙以外的地方就結束編輯。
+
+   平常瀏覽器會自己處理（點別處就失焦），但白板的平移處理器在 mousedown
+   時 preventDefault，把預設的焦點轉移擋掉了，所以這裡必須自己收尾，
+   否則便條紙會一直停在編輯狀態、連帶拖不動。 */
+function finishEditingNotes(except) {
+  const editing = document.querySelector(".canvas-note.is-editing");
+  if (!editing) return;
+  if (except && editing.contains(except)) return;
+  const body = editing.querySelector(".canvas-note-body");
+  if (body) body.blur();
+}
+
+function renderCanvasNotes() {
+  const svg = document.getElementById("canvasSvg");
+  if (!svg) return;
+  const canvas = getCurrentWorldCanvas();
+  const layer = getCanvasNotesLayer(svg);
+  layer.innerHTML = "";
+
+  canvas.notes.forEach(function(note) {
+    const fo = document.createElementNS(SVG_NS, "foreignObject");
+    fo.setAttribute("x", note.x);
+    fo.setAttribute("y", note.y);
+    fo.setAttribute("width", note.w);
+    fo.setAttribute("height", note.h);
+
+    const el = document.createElementNS(XHTML_NS, "div");
+    el.className = "canvas-note";
+    el.id = note.id;
+
+    const body = document.createElementNS(XHTML_NS, "div");
+    body.className = "canvas-note-body";
+    body.setAttribute("contenteditable", "false");
+    // 用 textContent 而不是 innerHTML：便條紙內容是純文字，
+    // 不該讓貼進來的東西變成可執行的標記
+    body.textContent = note.text || "";
+    body.setAttribute("data-placeholder", "寫點什麼…");
+
+    const handle = document.createElementNS(XHTML_NS, "div");
+    handle.className = "canvas-note-resize";
+    handle.setAttribute("title", "拖曳調整大小");
+
+    el.appendChild(body);
+    el.appendChild(handle);
+    fo.appendChild(el);
+    layer.appendChild(fo);
+
+    // 邊打邊存，不要只靠 blur。白板空白處的平移處理器在 mousedown 時會
+    // preventDefault，那會擋掉瀏覽器預設的焦點轉移，contenteditable 因此
+    // 可能一直不 blur——只靠 blur 存檔的話，打完字點一下白板就會整段不見。
+    body.addEventListener("input", function() {
+      note.text = body.innerText.replace(/\u00a0/g, " ");
+      scheduleNoteSave();
+    });
+
+    body.addEventListener("blur", function() {
+      body.setAttribute("contenteditable", "false");
+      el.classList.remove("is-editing");
+      const next = body.innerText.replace(/\u00a0/g, " ");
+      if (next !== note.text) note.text = next;
+      flushNoteSave();
+    });
+
+    body.addEventListener("keydown", function(e) {
+      // 編輯中不要讓按鍵傳到白板的快捷鍵（例如 Delete 會刪節點）
+      e.stopPropagation();
+      if (e.key === "Escape") { e.preventDefault(); body.blur(); }
+    });
+
+    el.addEventListener("dblclick", function(e) {
+      e.stopPropagation();
+      startEditCanvasNote(note.id);
+    });
+
+    enableNoteDrag(el, note, fo);
+    enableNoteResize(handle, el, note, fo);
+
+    attachContextMenu(
+      el,
+      function() { return buildCanvasNoteMenuItems(note); },
+      function() { return "🗒️ 便條紙"; }
+    );
+  });
+}
+
+function buildCanvasNoteMenuItems(note) {
+  return [
+    { icon: "✏️", label: "編輯文字", action: function() { startEditCanvasNote(note.id); } },
+    { type: "divider" },
+    { icon: "🗑️", label: "刪除便條紙", danger: true, action: function() {
+        deleteCanvasNote(note.id);
+    }}
+  ];
+}
+
+/* 拖曳搬移。編輯中或抓在調整大小的角落時不啟動，
+   否則想選字或想拉大小的時候便條紙會整張跑掉。 */
+function enableNoteDrag(el, note, fo) {
+  let startX = 0, startY = 0, initX = 0, initY = 0, dragging = false;
+
+  function begin(clientX, clientY) {
+    dragging = true;
+    startX = clientX; startY = clientY;
+    initX = note.x; initY = note.y;
+  }
+  function move(clientX, clientY) {
+    if (!dragging) return;
+    note.x = initX + (clientX - startX) / canvasTransform.scale;
+    note.y = initY + (clientY - startY) / canvasTransform.scale;
+    fo.setAttribute("x", note.x);
+    fo.setAttribute("y", note.y);
+  }
+  function end() {
+    if (!dragging) return;
+    dragging = false;
+    saveData();
+  }
+  function blocked(e) {
+    return el.classList.contains("is-editing") ||
+           (e.target.closest && e.target.closest(".canvas-note-resize"));
+  }
+
+  el.addEventListener("mousedown", function(e) {
+    if (e.button !== 0 || blocked(e)) return;
+    e.stopPropagation();
+    e.preventDefault();
+    begin(e.clientX, e.clientY);
+    function onMove(m) { move(m.clientX, m.clientY); }
+    function onUp() {
+      end();
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  });
+
+  el.addEventListener("touchstart", function(e) {
+    if (e.touches.length !== 1 || blocked(e)) return;
+    e.stopPropagation();
+    begin(e.touches[0].clientX, e.touches[0].clientY);
+    function onMove(m) {
+      if (m.touches.length !== 1) return;
+      m.preventDefault();
+      move(m.touches[0].clientX, m.touches[0].clientY);
+    }
+    function onEnd() {
+      end();
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+      window.removeEventListener("touchcancel", onEnd);
+    }
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onEnd);
+    window.addEventListener("touchcancel", onEnd);
+  }, { passive: true });
+}
+
+/* 右下角拖曳調整大小。位移要除以縮放倍率，否則放大時手拉一格會變很多格。 */
+function enableNoteResize(handle, el, note, fo) {
+  let startX = 0, startY = 0, initW = 0, initH = 0, resizing = false;
+
+  function begin(clientX, clientY) {
+    resizing = true;
+    startX = clientX; startY = clientY;
+    initW = note.w; initH = note.h;
+  }
+  function move(clientX, clientY) {
+    if (!resizing) return;
+    note.w = Math.max(NOTE_MIN_W, initW + (clientX - startX) / canvasTransform.scale);
+    note.h = Math.max(NOTE_MIN_H, initH + (clientY - startY) / canvasTransform.scale);
+    fo.setAttribute("width", note.w);
+    fo.setAttribute("height", note.h);
+  }
+  function end() {
+    if (!resizing) return;
+    resizing = false;
+    saveData();
+  }
+
+  handle.addEventListener("mousedown", function(e) {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    begin(e.clientX, e.clientY);
+    function onMove(m) { move(m.clientX, m.clientY); }
+    function onUp() {
+      end();
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  });
+
+  handle.addEventListener("touchstart", function(e) {
+    if (e.touches.length !== 1) return;
+    e.stopPropagation();
+    begin(e.touches[0].clientX, e.touches[0].clientY);
+    function onMove(m) {
+      if (m.touches.length !== 1) return;
+      m.preventDefault();
+      move(m.touches[0].clientX, m.touches[0].clientY);
+    }
+    function onEnd() {
+      end();
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+      window.removeEventListener("touchcancel", onEnd);
+    }
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onEnd);
+    window.addEventListener("touchcancel", onEnd);
+  }, { passive: true });
+}
+
+/* 長按白板空白處新增便條紙。
+
+   跟「拖空白處平移」共存的方式是靠位移容忍值：手一移動就取消計時，
+   所以想平移的人不會莫名其妙長出便條紙。兩根手指（縮放）也直接取消。 */
+function setupBlankLongPress(view) {
+  let timer = null, sx = 0, sy = 0;
+  const DURATION = 500, TOL = 8;
+
+  function isBlank(target) {
+    if (!target || !target.closest) return false;
+    if (target.closest(".canvas-node")) return false;
+    if (target.closest(".canvas-note")) return false;
+    if (target.closest(".canvas-floating-actions")) return false;
+    if (target.closest(".canvas-hint-floating")) return false;
+    if (target.closest(".canvas-zoom-indicator")) return false;
+    // SVG 裡的連線、節點等等都不算空白
+    if (target.closest("svg") && target.tagName !== "svg") return false;
+    return true;
+  }
+
+  function cancel() {
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
+
+  function start(clientX, clientY, target) {
+    cancel();
+    if (!isBlank(target)) return;
+    sx = clientX; sy = clientY;
+    timer = setTimeout(function() {
+      timer = null;
+      const rect = view.getBoundingClientRect();
+      const world = screenToWorld(sx - rect.left, sy - rect.top);
+      if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) {} }
+      createCanvasNote(world.x, world.y);
+    }, DURATION);
+  }
+
+  function moved(clientX, clientY) {
+    if (!timer) return;
+    if (Math.abs(clientX - sx) > TOL || Math.abs(clientY - sy) > TOL) cancel();
+  }
+
+  view.addEventListener("mousedown", function(e) {
+    finishEditingNotes(e.target);
+    if (e.button !== 0) return;
+    start(e.clientX, e.clientY, e.target);
+  });
+  window.addEventListener("mousemove", function(e) { moved(e.clientX, e.clientY); });
+  window.addEventListener("mouseup", cancel);
+
+  view.addEventListener("touchstart", function(e) {
+    finishEditingNotes(e.target);
+    if (e.touches.length !== 1) { cancel(); return; }
+    start(e.touches[0].clientX, e.touches[0].clientY, e.target);
+  }, { passive: true });
+  view.addEventListener("touchmove", function(e) {
+    if (e.touches.length !== 1) { cancel(); return; }
+    moved(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: true });
+  view.addEventListener("touchend", cancel);
+  view.addEventListener("touchcancel", cancel);
 }
 
 /* ---------- 定位到某個節點 ----------
@@ -1058,6 +1428,7 @@ function setupCanvasEvents() {
   });
 
   setupTouchPanZoom(view, svg);
+  setupBlankLongPress(view);
 
   svg.style.touchAction = "none";
   view.style.touchAction = "none";
