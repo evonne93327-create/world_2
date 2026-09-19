@@ -565,41 +565,34 @@ function renderCanvasLines() {
     pairGroups[key].push(edge);
   });
 
-  /* ---------- 同一對節點多條邊：彎曲幅度（一律同號）與標籤沿線錯開量（正負皆有）----------
-     舊版是左右鏡射（offset 正負對半分），兩條線會往相反方向彎成對稱的
-     「眼睛」形狀。改成同一對節點的所有邊一律往同一側彎，只有彎曲幅度
-     由內而外遞增（像同心弧一樣疊起來），不再是鏡射的兩瓣。
-     標籤沿曲線長度的錯開量（labelSpread）則維持正負皆有，讓標籤還是
-     能沿著線的長度方向前後錯開，不會因為都往同一側彎就擠在一起。
+  /* ---------- 同一對節點多條邊的偏移值：以兩節點中心連線為對稱軸左右分開 ----------
+     offset 落在 -1..+1，正負各往對稱軸的一側彎、幅度相同，所以同一對
+     節點的多條線會沿著兩節點中心連線對稱展開。
+     這個值同時也決定標籤沿曲線長度的錯開量（見下方 tt 的計算）。
   ------------------------------------------------------------- */
   const edgeOffsetMap = {};
-  const edgeLabelSpreadMap = {};
   const edgeGroupTotalMap = {};
   Object.keys(pairGroups).forEach(function(key) {
     const group = pairGroups[key];
     const total = group.length;
     group.forEach(function(edge, idx) {
-      let offset, labelSpread;
-      if (total === 1) {
-        offset = 0;
-        labelSpread = 0;
-      } else {
-        offset = (idx + 1) / total; // (0,1]，一律正值，由內而外遞增
-        labelSpread = (idx - (total - 1) / 2) / ((total - 1) / 2); // -1..1
-      }
+      let offset;
+      if (total === 1) offset = 0;
+      else offset = (idx - (total - 1) / 2) / ((total - 1) / 2); // -1 .. 1
       edgeOffsetMap[edge.id] = offset;
-      edgeLabelSpreadMap[edge.id] = labelSpread;
       edgeGroupTotalMap[edge.id] = total;
     });
   });
 
-  /* ---------- 同一對節點多條邊的彎曲方向：一律由「目錄樹上方者」指向「下方者」----------
-     這個方向必須固定、可預期，不能取決於使用者剛好先畫了哪一條線、
-     或線段實際儲存的 source/target 是誰——否則同一對節點的線，可能因為
-     建立順序不同而忽左忽右。這裡固定用側邊欄目錄樹的顯示順序決定
-     「基準方向」：目錄樹排序較前面的那個節點視為起點，較後面的視為
-     終點，取兩者中心連線的垂直方向，同一對節點的所有邊都共用這個
-     方向、只依 offset 決定彎曲幅度，全部彎向同一側。
+  /* ---------- 同一對節點的共用基準：由「目錄樹上方者」指向「下方者」----------
+     這個基準方向必須固定、可預期，不能取決於使用者剛好先畫了哪一條線、
+     或線段實際儲存的 source/target 是誰。這裡固定用側邊欄目錄樹的顯示
+     順序決定：目錄樹排序較前面的那個節點視為起點，較後面的視為終點。
+     它提供兩件事：
+     （1）pairPerpMap：兩節點中心連線的垂直方向，也就是彎曲的對稱軸法線，
+          同一對節點的所有邊共用，斜向擺放時也能真正左右撐開。
+     （2）pairUpperNodeIdMap：用來把標籤的 t 統一以「目錄樹上方者」為
+          起點量測，反向存的邊才不會跟正向的邊疊在同一個位置。
   ------------------------------------------------------------- */
   const docTreeOrderIndex = computeDocTreeOrderIndex(activeWorldId);
   function nodeTreeOrder(node) {
@@ -657,8 +650,8 @@ function renderCanvasLines() {
 
     /* ----- 弧度：用 offset 強制給定 ----- */
     // 同一對節點只有一條線時維持直線。
-    // 多條線時（offset 落在 (0,1]），彎曲幅度統一落在 maxBend 的 0～0.7 倍範圍、
-    // 由內而外遞增，全部往同一側彎（見 pairPerpMap），疊成同心弧而非鏡射兩瓣。
+    // 多條線時（offset 落在 -1..+1），彎曲幅度最大到 maxBend 的 0.7 倍，
+    // 正負兩側幅度相同，沿兩節點中心連線左右對稱撐開。
     const maxBend = Math.min(dist * 0.28, 90);
     const total = edgeGroupTotalMap[edge.id] || 1;
     const offset = edgeOffsetMap[edge.id] || 0;
@@ -676,12 +669,13 @@ function renderCanvasLines() {
     if (total > 1) {
       const BEND_MIN_RATIO = 0;
       const BEND_MAX_RATIO = 0.7;
-      const ratio = BEND_MIN_RATIO + (BEND_MAX_RATIO - BEND_MIN_RATIO) * offset;
-      bendMag = ratio * maxBend;
+      const ratio = BEND_MIN_RATIO + (BEND_MAX_RATIO - BEND_MIN_RATIO) * Math.abs(offset);
+      const sign = offset === 0 ? 1 : Math.sign(offset);
+      bendMag = sign * ratio * maxBend;
 
-      // 彎曲方向用這一對節點共用的垂直方向（見上方 pairPerpMap，
-      // 由目錄樹順序決定基準方向），同一對節點的所有邊固定沿同一個
-      // 方向展開，斜向連線也能真正撐出扇形，而不會只在單一軸上微幅錯開。
+      // 對稱軸的法線用這一對節點共用的垂直方向（見上方 pairPerpMap），
+      // offset 的正負決定往哪一側彎，兩側幅度相同，所以是沿著兩節點
+      // 中心連線做對稱；斜向擺放時也能真正左右撐開，而不是只在單一軸上微幅錯開。
       const perp = pairPerpMap[pairKey] || { x: 0, y: 1 };
       spreadX = perp.x;
       spreadY = perp.y;
@@ -727,13 +721,11 @@ function renderCanvasLines() {
     linesLayer.appendChild(path);
 
     /* ----- 標籤：先算出曲線上的候選落點，稍後統一防重疊再畫 ----- */
-    // 依 labelSpread 把 t 沿曲線長度錯開：-1 → 0.35、0 → 0.5、+1 → 0.65
-    // （跟彎曲方向 offset 分開算，才不會因為彎曲一律同向就讓標籤擠在一起）
+    // 依 offset 把 t 沿曲線長度錯開：-1 → 0.35、0 → 0.5、+1 → 0.65。
     // 若這條邊的 source 不是目錄樹順序較前面的那個節點（即反向存的邊），
     // 把錯開量反過來，讓 t 統一以「目錄樹上方者」為起點量測，兩條反向邊
     // 才不會因為各自從自己的 source 起算，落在同一個物理位置。
-    const labelSpread = edgeLabelSpreadMap[edge.id] || 0;
-    const effectiveLabelSpread = matchesCanonicalDir ? labelSpread : -labelSpread;
+    const effectiveLabelSpread = matchesCanonicalDir ? offset : -offset;
     const tt = 0.5 + effectiveLabelSpread * 0.15;
     const mt = 1 - tt;
     const bezX = mt*mt*mt*x1 + 3*mt*mt*tt*cx1 + 3*mt*tt*tt*cx2 + tt*tt*tt*x2;
