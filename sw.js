@@ -10,7 +10,7 @@
    本機 localStorage，網路只負責抓靜態檔。換來的是「更新一定拿得到」。
    ========================================================== */
 
-const VERSION = 'v5';
+const VERSION = 'v7';
 const CACHE = 'worldbuilder-' + VERSION;
 
 // 離線時要能完整開起來所需的檔案
@@ -33,6 +33,9 @@ const SHELL = [
   './js/gdrive.js',
   './js/sync.js',
   './js/app.js',
+  './icons/favicon-16.png',
+  './icons/favicon-32.png',
+  './icons/favicon-48.png',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png'
