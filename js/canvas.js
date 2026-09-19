@@ -274,6 +274,90 @@ function startEditCanvasNote(noteId) {
   const sel = window.getSelection();
   sel.removeAllRanges();
   sel.addRange(range);
+
+  watchCaretVisibility();
+}
+
+/* ---------- 讓游標不要被鍵盤蓋住 ----------
+
+   手機打開虛擬鍵盤時，viewport meta 設的是 interactive-widget=resizes-content，
+   所以版面（100dvh）會跟著縮短，白板容器也跟著變矮。便條紙的座標是世界座標
+   不會動，結果就是正在打字的那一行可能落在鍵盤底下，看不到自己在打什麼。
+
+   解法是把白板往上平移，讓游標落回看得見的範圍。動的是 canvasTransform，
+   不是便條紙本身的座標——使用者的資料不該因為鍵盤跳出來就被改掉。
+   ------------------------------------------------------------- */
+
+const CARET_MARGIN = 24;   // 游標離可視邊界至少留這麼多，貼著邊很難讀
+let caretWatchBound = false;
+let caretRafId = null;
+
+function caretClientRect(container) {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  if (!container.contains(range.startContainer)) return null;
+
+  const r = range.getBoundingClientRect();
+  // 空行的 collapsed range 可能回傳全 0。不塞臨時節點去量——那會改動
+  // 內容並觸發 input，把零寬字元存進使用者的便條紙裡。退而用整張便條紙，
+  // 便條紙本來就不大，夠用了。
+  if (r && (r.width > 0 || r.height > 0)) return r;
+  return null;
+}
+
+function keepCaretAboveKeyboard() {
+  const el = document.querySelector(".canvas-note.is-editing");
+  if (!el) return;
+  const view = document.getElementById("canvasView");
+  if (!view) return;
+
+  const viewRect = view.getBoundingClientRect();
+  if (viewRect.width === 0 || viewRect.height === 0) return;
+
+  const body = el.querySelector(".canvas-note-body");
+  const target = (body && caretClientRect(body)) || el.getBoundingClientRect();
+
+  // 可視區域：白板容器與 visual viewport 的交集。
+  // 有些瀏覽器不縮版面而是蓋上去，那時候只有 visualViewport 反映得出鍵盤。
+  const vv = window.visualViewport;
+  const vvTop = vv ? vv.offsetTop : 0;
+  const vvBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+
+  const limitTop = Math.max(viewRect.top, vvTop) + CARET_MARGIN;
+  const limitBottom = Math.min(viewRect.bottom, vvBottom) - CARET_MARGIN;
+  if (limitBottom <= limitTop) return;   // 空間比邊界還小，硬移沒有意義
+
+  let dy = 0;
+  if (target.bottom > limitBottom) dy = limitBottom - target.bottom;
+  else if (target.top < limitTop) dy = limitTop - target.top;
+
+  if (Math.abs(dy) < 1) return;
+  canvasTransform.y += dy;
+  applySvgViewBox();
+}
+
+function scheduleCaretCheck() {
+  if (caretRafId) return;              // 打字與 selectionchange 會連發，一格算一次就好
+  caretRafId = requestAnimationFrame(function() {
+    caretRafId = null;
+    keepCaretAboveKeyboard();
+  });
+}
+
+function watchCaretVisibility() {
+  // 鍵盤是非同步跳出來的，進入編輯的當下量不到，要等 viewport 真的變了
+  scheduleCaretCheck();
+  if (caretWatchBound) return;
+  caretWatchBound = true;
+
+  document.addEventListener("selectionchange", scheduleCaretCheck);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", scheduleCaretCheck);
+    window.visualViewport.addEventListener("scroll", scheduleCaretCheck);
+  } else {
+    window.addEventListener("resize", scheduleCaretCheck);
+  }
 }
 
 /* 打字期間每個鍵都 saveData() 會把整包資料序列化一次，太浪費，所以節流。
@@ -1446,9 +1530,17 @@ function setupCanvasEvents() {
   // 都會重算，過場中途的每一格也算得到。
   if (typeof ResizeObserver === "function") {
     // 只改 svg 子元素的屬性，不會回頭影響容器大小，不會造成觀察迴圈
-    new ResizeObserver(applySvgViewBox).observe(view);
+    new ResizeObserver(function() {
+      applySvgViewBox();
+      // 容器變矮多半就是鍵盤跳出來了。這裡是最可靠的訊號：不管版面縮到
+      // 哪一格都會通知，不像 visualViewport 的單次事件可能量到中途尺寸。
+      scheduleCaretCheck();
+    }).observe(view);
   } else {
-    window.addEventListener("resize", applySvgViewBox);
+    window.addEventListener("resize", function() {
+      applySvgViewBox();
+      scheduleCaretCheck();
+    });
   }
 }
 
