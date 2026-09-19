@@ -12,6 +12,8 @@ function toggleDocActionsPanel() {
 }
 
 function openDocActionsPanel() {
+ // 兩個浮動面板在手機版是並排的底部按鈕，同時開著會疊在一起
+ closeQuickJumpPanel();
  document.getElementById("docActionsPanel").classList.add("active");
 }
 
@@ -29,6 +31,7 @@ function toggleQuickJumpPanel() {
 }
 
 function openQuickJumpPanel() {
+ closeDocActionsPanel();
  const doc = appData.docs.find(d => d.id === activeDocId);
  document.getElementById("quickJumpDocTitle").textContent = (doc && doc.title) ? doc.title : "未命名文檔";
  document.getElementById("quickJumpWordCount").textContent = doc ? (doc.wordCount || 0) : 0;

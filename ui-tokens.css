@@ -122,4 +122,14 @@
   --icon-40: 40px;  /* world-rail-btn／nav-btn-icon／undoredo/quickjump-fab（手機版標準尺寸） */
   --icon-44: 44px;  /* world-rail-btn／nav-btn-icon／undoredo/quickjump-fab（桌面標準尺寸） */
 
+  /* 手機版底部浮動按鈕與其彈出面板的共用基準。
+     快速跳轉與文件小工具兩邊都從這裡算，各自寫死數字就會慢慢對不齊。 */
+  --fab-bottom: calc(56px + var(--safe-b) + 16px);  /* 底部導覽列 + 安全區 + 邊距 */
+  --fab-panel-gap: 10px;                            /* 按鈕與其面板之間的距離 */
+
+  /* 快速跳轉遮罩要蓋過目錄欄（z-index 80），但要留在彈窗（100）底下；
+     浮動按鈕本身則要浮在遮罩之上才點得到。 */
+  --z-quickjump-overlay: 90;
+  --z-quickjump-panel: 91;
+  --z-floating-controls: 92;
 }
