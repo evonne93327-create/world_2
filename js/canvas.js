@@ -552,6 +552,30 @@ function renderCanvasLines() {
     });
   });
 
+  /* ---------- 同一對節點多條邊的彎曲方向：用「兩節點中心連線」的垂直方向 ----------
+     舊版彎曲方向只鎖定水平或垂直其中一軸（依 source 那一端挑到的邊而定），
+     兩節點斜向擺放、又剛好挑到「長邊接短邊」這種不對稱組合時，
+     彎曲量在另一軸完全沒有分量，兩條線幾乎只剩左右微微錯開、
+     高度幾乎一樣，看起來還是黏在一起。
+     這裡改成：每一對節點只算「一個」共用的垂直方向（用兩節點中心連線
+     決定，不受個別邊的方向或哪一端挑到哪一側影響），同一對節點的
+     所有邊都沿著同一個方向、依 offset 的正負分別往兩側彎，
+     斜向時也能真正展開成扇形，且因為方向對整組邊都一樣，不會互相穿越。
+  ------------------------------------------------------------- */
+  const pairPerpMap = {};
+  Object.keys(pairGroups).forEach(function(key) {
+    const ids = key.split("|");
+    const nodeA = canvas.nodes.find(n => n.id === ids[0]);
+    const nodeB = canvas.nodes.find(n => n.id === ids[1]);
+    if (!nodeA || !nodeB) return;
+    const rectA = getNodeRect(nodeA), rectB = getNodeRect(nodeB);
+    const cA = { x: (rectA.left + rectA.right) / 2, y: (rectA.top + rectA.bottom) / 2 };
+    const cB = { x: (rectB.left + rectB.right) / 2, y: (rectB.top + rectB.bottom) / 2 };
+    const pdx = cB.x - cA.x, pdy = cB.y - cA.y;
+    const plen = Math.hypot(pdx, pdy) || 1;
+    pairPerpMap[key] = { x: -pdy / plen, y: pdx / plen };
+  });
+
   /* ---------- 畫 ---------- */
   const labelJobs = []; // 先收集所有標籤候選位置，畫完全部連線後再統一防重疊
   canvas.edges.forEach(function(edge) {
@@ -598,17 +622,13 @@ function renderCanvasLines() {
       const sign = offset === 0 ? 1 : Math.sign(offset);
       bendMag = sign * ratio * maxBend;
 
-      // 彎曲方向要跟「這條線在節點邊框上排列的分散軸」完全同步，
-      // 而不是用兩點連線的垂直方向。斜向連線時這兩個方向會不一樣，
-      // 只要彎曲方向跟分散順序對不上，線就會在中途互相穿越。
-      // 上/下側：邊框上是左右排開 → 分散軸是水平（x）
-      // 左/右側：邊框上是上下排開 → 分散軸是垂直（y）
-      const srcSide = (edgeSideInfo[edge.id] || {}).sourceSide;
-      if (srcSide === 'bottom' || srcSide === 'top') {
-        spreadX = 1;
-      } else {
-        spreadY = 1;
-      }
+      // 彎曲方向用這一對節點共用的垂直方向（見上方 pairPerpMap），
+      // 同一對節點的所有邊固定沿同一個方向展開，斜向連線也能真正
+      // 撐出扇形，而不會只在單一軸上微幅錯開。
+      const pairKey = [edge.source, edge.target].sort().join("|");
+      const perp = pairPerpMap[pairKey] || { x: 0, y: 1 };
+      spreadX = perp.x;
+      spreadY = perp.y;
     }
 
     const ext1 = dist * 0.35;
