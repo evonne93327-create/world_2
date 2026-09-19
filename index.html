@@ -17,6 +17,7 @@
     <button class="world-rail-btn add-btn" title="新增頂層世界觀" onclick="promptCreateWorldview()">＋</button>
     <div class="world-rail-list" id="worldRailContainer"></div>
     <button class="world-rail-btn" title="備份完整資料庫" onclick="exportFullDatabaseJSON()">💾</button>
+    <button class="world-rail-btn" id="syncRailBtn" title="雲端同步" onclick="openSyncModal()">☁️</button>
   </aside>
 
   <!-- 中間欄：頂格目錄工具欄 (完全貼齊最上方) -->
@@ -319,6 +320,31 @@
     </div>
   </div>
 
+  <!-- 雲端同步設定 -->
+  <div class="modal-overlay" id="syncModal">
+    <div class="modal-card" style="width:480px;">
+      <div class="modal-title">☁️ 雲端同步</div>
+      <div id="syncModalBody"></div>
+      <div style="display:flex; justify-content:flex-end; margin-top:12px;">
+        <button class="btn btn-secondary" onclick="closeSyncModal()">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 同步衝突：兩邊都有改動時，讓使用者決定保留哪一份 -->
+  <div class="modal-overlay" id="syncConflictModal">
+    <div class="modal-card" style="width:460px;">
+      <div class="modal-title">❗ 同步衝突</div>
+      <div id="syncConflictInfo" style="font-size:13px; line-height:1.7;"></div>
+      <div style="display:flex; flex-direction:column; gap:8px; margin-top:14px;">
+        <button class="btn btn-secondary" onclick="backupBeforeResolving()">💾 先把這台的資料存成檔案</button>
+        <button class="btn btn-secondary" onclick="resolveConflictUseRemote()">☁️ 用雲端的版本（放棄這台未上傳的修改）</button>
+        <button class="btn btn-danger" onclick="resolveConflictUseLocal()">💻 用這台的版本（覆蓋雲端）</button>
+        <button class="btn btn-secondary" onclick="closeSyncConflictModal()">稍後再決定</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 標籤顏色快捷 Popover -->
   <div class="color-picker-popup" id="colorPickerPopover"></div>
 
@@ -336,6 +362,7 @@
   <script src="js/import-export.js"></script>
   <script src="js/canvas.js"></script>
   <script src="js/api.js"></script>
+  <script src="js/sync.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

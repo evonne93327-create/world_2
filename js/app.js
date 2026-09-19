@@ -14,6 +14,7 @@ window.addEventListener("DOMContentLoaded", function() {
   setupDeleteKeyShortcut();
   setupGlobalKeyboardShortcuts();
   setupHistoryNavigation();
+  initSync();
 
   window.addEventListener("resize", function() {
     autoGrowTextarea(document.getElementById("docContentInput"));
