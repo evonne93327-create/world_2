@@ -331,104 +331,119 @@ function getNodeRect(node) {
   return { left: node.x, top: node.y, right: node.x + w, bottom: node.y + h, w: w, h: h };
 }
 
-/* ---------- 依「兩矩形真正最短距離」決定連線要從哪一側出發 ----------
-   跟舊版不同：這裡不再強迫兩端用同一軸（例如一定 bottom<->top 或
-   right<->left），而是各自列出「合理候選邊」，把兩邊所有候選組合都
-   算出實際距離，取距離最短的那組——所以斜向擺放、大小不同的兩個節點，
-   可能會選出「一邊用長邊（top/bottom）、另一邊用短邊（left/right）」
-   這種不對稱組合，真正做到長邊接短邊。
+/* ---------- 連線幾何：中心到中心畫曲線，再裁掉節點內部那一段 ----------
+   關鍵在於「出發點」不是另外挑的，而是曲線跟節點邊框的交點。
+   舊作法是先挑一條邊框、在上面排出發點，再另外決定往哪邊彎；出發點是沿
+   邊框排開的、彎曲卻是沿兩節點中心連線的法線，斜向時這兩個方向不一致，
+   排列順序一旦相反，線就一定會在中段互相穿越——彎曲與出發點永遠在打架。
+   改成先畫完整的中心到中心曲線再裁掉兩端，出發點就由曲線自己決定：
+   彎得越多的線，交點自然落在越外側（甚至自動從長邊換到短邊），
+   順序必定跟彎曲一致，結構上不可能交叉，而且每條線都嚴格對稱於中心連線。
 ------------------------------------------------------------------ */
 function clampNum(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
 
-// 某矩形面向另一個矩形時，「合理」（面朝對方）的候選邊，通常 1~2 個
-function candidateSidesForDirection(rect, otherRect) {
-  const overlapX = rect.left < otherRect.right && rect.right > otherRect.left;
-  const overlapY = rect.top < otherRect.bottom && rect.bottom > otherRect.top;
-  const otherIsRight = otherRect.left >= rect.right;
-  const otherIsLeft = otherRect.right <= rect.left;
-  const otherIsBelow = otherRect.top >= rect.bottom;
-  const otherIsAbove = otherRect.bottom <= rect.top;
-
-  const sides = [];
-  if (!overlapY) {
-    if (otherIsBelow) sides.push('bottom');
-    else if (otherIsAbove) sides.push('top');
-  }
-  if (!overlapX) {
-    if (otherIsRight) sides.push('right');
-    else if (otherIsLeft) sides.push('left');
-  }
-  if (sides.length === 0) {
-    // 兩矩形重疊（罕見情況）：退回中心點比較
-    const cxA = (rect.left + rect.right) / 2, cyA = (rect.top + rect.bottom) / 2;
-    const cxB = (otherRect.left + otherRect.right) / 2, cyB = (otherRect.top + otherRect.bottom) / 2;
-    const dx = cxB - cxA, dy = cyB - cyA;
-    sides.push(Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : (dy >= 0 ? 'bottom' : 'top'));
-  }
-  return sides;
+function nodeCenter(rect) {
+  return { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
 }
 
-// 某邊上、面向對方矩形最近的一點（投影 + clamp，近似最近點）
-function anchorForSide(rect, side, otherRect) {
-  const ocx = (otherRect.left + otherRect.right) / 2;
-  const ocy = (otherRect.top + otherRect.bottom) / 2;
-  if (side === 'right') return { x: rect.right, y: clampNum(ocy, rect.top, rect.bottom) };
-  if (side === 'left') return { x: rect.left, y: clampNum(ocy, rect.top, rect.bottom) };
-  if (side === 'bottom') return { x: clampNum(ocx, rect.left, rect.right), y: rect.bottom };
-  return { x: clampNum(ocx, rect.left, rect.right), y: rect.top }; // 'top'
+// 節點矩形外擴一點點，讓線頭（箭頭）不會貼死在邊框上
+const NODE_EDGE_PAD = 2;
+function pointInRect(p, rect) {
+  return p.x >= rect.left - NODE_EDGE_PAD && p.x <= rect.right + NODE_EDGE_PAD &&
+         p.y >= rect.top - NODE_EDGE_PAD && p.y <= rect.bottom + NODE_EDGE_PAD;
 }
 
-// 列出 A、B 各自的候選邊，取所有組合中距離最短的一組
-function pickClosestSidePair(rectA, rectB) {
-  const sidesA = candidateSidesForDirection(rectA, rectB);
-  const sidesB = candidateSidesForDirection(rectB, rectA);
-
-  let best = null;
-  sidesA.forEach(function(sa) {
-    sidesB.forEach(function(sb) {
-      const pa = anchorForSide(rectA, sa, rectB);
-      const pb = anchorForSide(rectB, sb, rectA);
-      const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
-      if (!best || d < best.d) best = { d: d, sideA: sa, sideB: sb };
-    });
-  });
-  return best;
+function lerpPoint(a, b, t) {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
-/* ---------- 節點邊框交點（沿該邊 30%~70% 分散）---------- */
-function getNodeBorderPoint(node, side, slotInfo) {
-  const rect = getNodeRect(node);
-  const w = rect.w, h = rect.h;
+function cubicPointAt(c, t) {
+  const mt = 1 - t;
+  return {
+    x: mt*mt*mt*c[0].x + 3*mt*mt*t*c[1].x + 3*mt*t*t*c[2].x + t*t*t*c[3].x,
+    y: mt*mt*mt*c[0].y + 3*mt*mt*t*c[1].y + 3*mt*t*t*c[2].y + t*t*t*c[3].y
+  };
+}
 
-  const cx = node.x + w / 2;
-  const cy = node.y + h / 2;
+// De Casteljau：把三次貝茲曲線在 t 處切開，回傳左右兩段的控制點
+function splitCubic(c, t) {
+  const a = lerpPoint(c[0], c[1], t);
+  const b = lerpPoint(c[1], c[2], t);
+  const d = lerpPoint(c[2], c[3], t);
+  const e = lerpPoint(a, b, t);
+  const f = lerpPoint(b, d, t);
+  const g = lerpPoint(e, f, t);
+  return { left: [c[0], a, e, g], right: [g, f, d, c[3]] };
+}
 
-  // 分散範圍 0.3 ~ 0.7（依你指定）
-  let t = 0.5;
-  if (slotInfo && slotInfo.total > 1) {
-    const lo = 0.3, hi = 0.7;
-    const step = (hi - lo) / (slotInfo.total - 1);
-    t = lo + step * slotInfo.index;
+// 取出 [t0, t1] 這一段子曲線的控制點
+function subCubic(c, t0, t1) {
+  if (t0 > 0) c = splitCubic(c, t0).right;
+  if (t1 < 1) {
+    const s = t0 < 1 ? (t1 - t0) / (1 - t0) : 0;
+    c = splitCubic(c, clampNum(s, 0, 1)).left;
   }
-
-  const halfW = w / 2 + 2;
-  const halfH = h / 2 + 2;
-
-  let px, py;
-  if (side === 'right') {
-    px = cx + halfW; py = cy - halfH + t * (2 * halfH);
-  } else if (side === 'left') {
-    px = cx - halfW; py = cy - halfH + t * (2 * halfH);
-  } else if (side === 'bottom') {
-    px = cx - halfW + t * (2 * halfW); py = cy + halfH;
-  } else {
-    px = cx - halfW + t * (2 * halfW); py = cy - halfH;
-  }
-
-  return { x: px, y: py, t: t, side: side };
+  return c;
 }
+
+// 找曲線離開 rect 的那個 t（from = 0 從頭找、from = 1 從尾找），二分逼近
+function findExitT(c, rect, fromStart) {
+  const STEPS = 48;
+  let inside = fromStart ? 0 : 1;
+  let outside = null;
+  for (let i = 1; i <= STEPS; i++) {
+    const t = fromStart ? i / STEPS : 1 - i / STEPS;
+    if (!pointInRect(cubicPointAt(c, t), rect)) { outside = t; break; }
+    inside = t;
+  }
+  if (outside === null) return fromStart ? 0 : 1; // 整條都在框內（節點重疊等狀況）
+  for (let i = 0; i < 14; i++) {
+    const mid = (inside + outside) / 2;
+    if (pointInRect(cubicPointAt(c, mid), rect)) inside = mid;
+    else outside = mid;
+  }
+  return outside;
+}
+
+/* 每條線離開節點中心的方向，相對中心連線最多轉這個角度（約 32 度）。
+   用「出發角度」而不是「中段彎曲量」當控制參數是關鍵：彎曲量必須有上限，
+   否則長線會鼓得太誇張；可是一旦設了上限，節點拉遠時控制桿變長、出發方向
+   就趨近平行，兩條線在邊框上的交點會擠成同一點。固定角度的話，交點間距
+   只跟節點大小有關，不管節點離多遠都一樣分得開。 */
+const MAX_DEPART_ANGLE = 0.56;
+const MAX_HANDLE_LEN = 260;
+
+/* 產生一條邊的曲線控制點：從 rectA 中心畫到 rectB 中心，兩端各往同一側轉開
+   spread（-1..+1）對應的角度，再裁掉兩端節點內部那一段。
+   兩端轉的角度一正一負、大小相同，所以曲線對稱於兩節點中心的連線。 */
+function buildEdgeCurve(rectA, rectB, spread) {
+  const cA = nodeCenter(rectA);
+  const cB = nodeCenter(rectB);
+  const dx = cB.x - cA.x, dy = cB.y - cA.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;
+
+  const theta = spread * MAX_DEPART_ANGLE;
+  const cos = Math.cos(theta), sin = Math.sin(theta);
+  const k = Math.min(len / 3, MAX_HANDLE_LEN);
+
+  const full = [
+    cA,
+    // 起點：方向 = 中心連線轉 +theta
+    { x: cA.x + (ux * cos - uy * sin) * k, y: cA.y + (ux * sin + uy * cos) * k },
+    // 終點：方向 = 中心連線轉 -theta（反向延伸回來）
+    { x: cB.x - (ux * cos + uy * sin) * k, y: cB.y - (uy * cos - ux * sin) * k },
+    cB
+  ];
+
+  const t0 = findExitT(full, rectA, true);
+  const t1 = findExitT(full, rectB, false);
+  if (!(t1 > t0)) return null; // 兩節點重疊到沒有可畫的區段
+  return subCubic(full, t0, t1);
+}
+
 
 /* ---------- 依側邊欄目錄樹的顯示順序，取得每個文件的排序索引 ----------
    用來決定「連結同一對節點的多條線」該往哪個方向撐開：這個方向不該
@@ -504,60 +519,13 @@ function renderCanvasLines() {
   const labelsLayer = document.createElementNS(NS, "g");
   edgesLayer.appendChild(labelsLayer);
 
-  /* ---------- 決定側邊（兩端各自可能不同軸，允許長邊接短邊）---------- */
-  function determineSidePair(nodeA, nodeB) {
-    return pickClosestSidePair(getNodeRect(nodeA), getNodeRect(nodeB));
-  }
-
-  /* ---------- 決定每側連線的排列順序 ----------
-     同一節點同一側若有多條線，port 順序不能只依邊的建立先後，
-     否則一旦線的「目標」在空間上的左右／上下順序跟建立順序對不上，
-     線一出節點邊框就會先天互相交叉。
-     這裡改成：每條邊在某節點某側的位置，依照「對面那個節點中心」
-     沿該側分散軸（上/下側看 x、左/右側看 y）的座標排序，
-     port 順序自然貼合對面節點的實際空間分佈，才能避免無謂的交叉。
+  /* ---------- 同一對節點多條邊的偏移值：以兩節點中心連線為對稱軸左右分開 ----------
+     offset 落在 -1..+1，正負各往對稱軸的一側彎、幅度相同，所以同一對
+     節點的多條線會沿著兩節點中心連線對稱展開成扇形。
+     出發點不需要另外分配——曲線彎多少，跟節點邊框的交點就落在哪裡，
+     順序必定跟彎曲一致（見 buildEdgeCurve）。
+     這個值同時也決定標籤沿曲線長度的錯開量（見下方 tt 的計算）。
   ------------------------------------------------------------- */
-  const edgeSideInfo = {};
-  const sideGroups = {}; // key: nodeId + "|" + side -> [{ edgeId, endpoint, otherX, otherY }]
-  function pushToSideGroup(nodeId, side, edgeId, endpoint, otherCenter) {
-    const key = nodeId + "|" + side;
-    if (!sideGroups[key]) sideGroups[key] = [];
-    sideGroups[key].push({ edgeId: edgeId, endpoint: endpoint, otherX: otherCenter.x, otherY: otherCenter.y });
-  }
-
-  canvas.edges.forEach(function(edge) {
-    const srcNode = canvas.nodes.find(n => n.id === edge.source);
-    const tgtNode = canvas.nodes.find(n => n.id === edge.target);
-    if (!srcNode || !tgtNode) return;
-
-    const sidePair = determineSidePair(srcNode, tgtNode);
-    const srcSide = sidePair.sideA;
-    const tgtSide = sidePair.sideB;
-
-    edgeSideInfo[edge.id] = { sourceSide: srcSide, targetSide: tgtSide };
-
-    const srcRect = getNodeRect(srcNode);
-    const tgtRect = getNodeRect(tgtNode);
-    const srcCenter = { x: (srcRect.left + srcRect.right) / 2, y: (srcRect.top + srcRect.bottom) / 2 };
-    const tgtCenter = { x: (tgtRect.left + tgtRect.right) / 2, y: (tgtRect.top + tgtRect.bottom) / 2 };
-
-    pushToSideGroup(srcNode.id, srcSide, edge.id, 'source', tgtCenter);
-    pushToSideGroup(tgtNode.id, tgtSide, edge.id, 'target', srcCenter);
-  });
-
-  const edgeSlotInfo = {};
-  Object.keys(sideGroups).forEach(function(key) {
-    const group = sideGroups[key];
-    const side = key.slice(key.lastIndexOf("|") + 1);
-    const axisKey = (side === 'bottom' || side === 'top') ? 'otherX' : 'otherY';
-    group.sort(function(a, b) { return a[axisKey] - b[axisKey]; });
-    group.forEach(function(item, idx) {
-      if (!edgeSlotInfo[item.edgeId]) edgeSlotInfo[item.edgeId] = {};
-      edgeSlotInfo[item.edgeId][item.endpoint + "Slot"] = { index: idx, total: group.length, side: side };
-    });
-  });
-
-  /* ---------- 同一對節點多條邊的偏移值（給弧度用）---------- */
   const pairGroups = {};
   canvas.edges.forEach(function(edge) {
     const key = [edge.source, edge.target].sort().join("|");
@@ -565,13 +533,7 @@ function renderCanvasLines() {
     pairGroups[key].push(edge);
   });
 
-  /* ---------- 同一對節點多條邊的偏移值：以兩節點中心連線為對稱軸左右分開 ----------
-     offset 落在 -1..+1，正負各往對稱軸的一側彎、幅度相同，所以同一對
-     節點的多條線會沿著兩節點中心連線對稱展開。
-     這個值同時也決定標籤沿曲線長度的錯開量（見下方 tt 的計算）。
-  ------------------------------------------------------------- */
   const edgeOffsetMap = {};
-  const edgeGroupTotalMap = {};
   Object.keys(pairGroups).forEach(function(key) {
     const group = pairGroups[key];
     const total = group.length;
@@ -580,19 +542,14 @@ function renderCanvasLines() {
       if (total === 1) offset = 0;
       else offset = (idx - (total - 1) / 2) / ((total - 1) / 2); // -1 .. 1
       edgeOffsetMap[edge.id] = offset;
-      edgeGroupTotalMap[edge.id] = total;
     });
   });
 
-  /* ---------- 同一對節點的共用基準：由「目錄樹上方者」指向「下方者」----------
-     這個基準方向必須固定、可預期，不能取決於使用者剛好先畫了哪一條線、
-     或線段實際儲存的 source/target 是誰。這裡固定用側邊欄目錄樹的顯示
-     順序決定：目錄樹排序較前面的那個節點視為起點，較後面的視為終點。
-     它提供兩件事：
-     （1）pairPerpMap：兩節點中心連線的垂直方向，也就是彎曲的對稱軸法線，
-          同一對節點的所有邊共用，斜向擺放時也能真正左右撐開。
-     （2）pairUpperNodeIdMap：用來把標籤的 t 統一以「目錄樹上方者」為
-          起點量測，反向存的邊才不會跟正向的邊疊在同一個位置。
+  /* ---------- 每一對節點的基準方向：由「目錄樹上方者」指向「下方者」----------
+     曲線要算得穩定、可預期，就不能取決於使用者剛好先畫了哪一條線、或線段
+     實際儲存的 source/target 是誰。這裡固定用側邊欄目錄樹的顯示順序決定：
+     目錄樹排序較前面的那個節點當起點，較後面的當終點。同一對節點的所有邊
+     都以這個方向算曲線與標籤位置，最後才依各自的方向反轉控制點畫箭頭。
   ------------------------------------------------------------- */
   const docTreeOrderIndex = computeDocTreeOrderIndex(activeWorldId);
   function nodeTreeOrder(node) {
@@ -600,23 +557,13 @@ function renderCanvasLines() {
     return (idx === undefined) ? Infinity : idx;
   }
 
-  const pairPerpMap = {};
-  const pairUpperNodeIdMap = {}; // 記錄每一對節點裡，目錄樹順序較前面的那個節點 id
+  const pairUpperNodeIdMap = {}; // 每一對節點裡，目錄樹順序較前面的那個節點 id
   Object.keys(pairGroups).forEach(function(key) {
     const ids = key.split("|");
     const nodeX = canvas.nodes.find(n => n.id === ids[0]);
     const nodeY = canvas.nodes.find(n => n.id === ids[1]);
     if (!nodeX || !nodeY) return;
-    const xIsUpper = nodeTreeOrder(nodeX) <= nodeTreeOrder(nodeY);
-    const upperNode = xIsUpper ? nodeX : nodeY;
-    const lowerNode = xIsUpper ? nodeY : nodeX;
-    pairUpperNodeIdMap[key] = upperNode.id;
-    const rectU = getNodeRect(upperNode), rectL = getNodeRect(lowerNode);
-    const cU = { x: (rectU.left + rectU.right) / 2, y: (rectU.top + rectU.bottom) / 2 };
-    const cL = { x: (rectL.left + rectL.right) / 2, y: (rectL.top + rectL.bottom) / 2 };
-    const pdx = cL.x - cU.x, pdy = cL.y - cU.y;
-    const plen = Math.hypot(pdx, pdy) || 1;
-    pairPerpMap[key] = { x: -pdy / plen, y: pdx / plen };
+    pairUpperNodeIdMap[key] = nodeTreeOrder(nodeX) <= nodeTreeOrder(nodeY) ? nodeX.id : nodeY.id;
   });
 
   /* ---------- 畫 ---------- */
@@ -626,71 +573,39 @@ function renderCanvasLines() {
     const tgtNode = canvas.nodes.find(n => n.id === edge.target);
     if (!srcNode || !tgtNode) return;
 
-    const srcEl = document.getElementById(srcNode.id);
-    const tgtEl = document.getElementById(tgtNode.id);
-    const srcW = srcEl ? srcEl.offsetWidth : CANVAS_NODE_W;
-    const srcH = srcEl ? srcEl.offsetHeight : 80;
-    const tgtW = tgtEl ? tgtEl.offsetWidth : CANVAS_NODE_W;
-    const tgtH = tgtEl ? tgtEl.offsetHeight : 80;
-
-    const srcCenter = { x: srcNode.x + srcW / 2, y: srcNode.y + srcH / 2 };
-    const tgtCenter = { x: tgtNode.x + tgtW / 2, y: tgtNode.y + tgtH / 2 };
-
-    const slot = edgeSlotInfo[edge.id] || {};
-    const sides = edgeSideInfo[edge.id] || {};
-    const p1 = getNodeBorderPoint(srcNode, sides.sourceSide, slot.sourceSlot);
-    const p2 = getNodeBorderPoint(tgtNode, sides.targetSide, slot.targetSlot);
-
-    const x1 = p1.x, y1 = p1.y;
-    const x2 = p2.x, y2 = p2.y;
-
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const dist = Math.hypot(dx, dy) || 1;
-
-    /* ----- 弧度：用 offset 強制給定 ----- */
-    // 同一對節點只有一條線時維持直線。
-    // 多條線時（offset 落在 -1..+1），彎曲幅度最大到 maxBend 的 0.7 倍，
-    // 正負兩側幅度相同，沿兩節點中心連線左右對稱撐開。
-    const maxBend = Math.min(dist * 0.28, 90);
-    const total = edgeGroupTotalMap[edge.id] || 1;
-    const offset = edgeOffsetMap[edge.id] || 0;
-
-    // 同一對節點的所有邊共用同一把 key，判斷「這條邊自己的 source」
-    // 跟目錄樹順序較前面的那個節點是不是同一個——如果不是（也就是這條邊
-    // 實際上是反向存的，例如 B→A），底下算標籤 t 的時候要把方向反過來，
-    // 否則兩條反向的邊會各自從自己的 source 起算 t，物理位置反而重疊。
+    // 一律以「目錄樹上方者 → 下方者」為基準方向算曲線，跟這條邊實際存的
+    // source/target 是誰無關；A→B 與 B→A 因此共用同一條對稱基準，
+    // 只在最後依需要反轉控制點，讓箭頭指向正確的一端。
     const pairKey = [edge.source, edge.target].sort().join("|");
     const canonicalUpperId = pairUpperNodeIdMap[pairKey];
     const matchesCanonicalDir = !canonicalUpperId || edge.source === canonicalUpperId;
 
-    let bendMag = 0;
-    let spreadX = 0, spreadY = 0;
-    if (total > 1) {
-      const BEND_MIN_RATIO = 0;
-      const BEND_MAX_RATIO = 0.7;
-      const ratio = BEND_MIN_RATIO + (BEND_MAX_RATIO - BEND_MIN_RATIO) * Math.abs(offset);
-      const sign = offset === 0 ? 1 : Math.sign(offset);
-      bendMag = sign * ratio * maxBend;
+    const srcRect = getNodeRect(srcNode);
+    const tgtRect = getNodeRect(tgtNode);
+    const rectFrom = matchesCanonicalDir ? srcRect : tgtRect;
+    const rectTo = matchesCanonicalDir ? tgtRect : srcRect;
 
-      // 對稱軸的法線用這一對節點共用的垂直方向（見上方 pairPerpMap），
-      // offset 的正負決定往哪一側彎，兩側幅度相同，所以是沿著兩節點
-      // 中心連線做對稱；斜向擺放時也能真正左右撐開，而不是只在單一軸上微幅錯開。
-      const perp = pairPerpMap[pairKey] || { x: 0, y: 1 };
-      spreadX = perp.x;
-      spreadY = perp.y;
-    }
+    /* ----- 弧度 -----
+       同一對節點只有一條線時 offset = 0，就是中心到中心的直線。
+       多條線時 offset 落在 -1..+1，決定這條線離開中心的角度往哪一側轉、
+       轉多少，兩側角度相同所以對稱展開成扇形。出發點是曲線跟邊框的交點，
+       轉得越開交點越外側，出發順序必定跟彎曲順序一致，不會互相穿越。 */
+    const offset = edgeOffsetMap[edge.id] || 0;
 
-    const ext1 = dist * 0.35;
-    const ext2 = dist * 0.35;
+    let curve = buildEdgeCurve(rectFrom, rectTo, offset);
+    if (!curve) return;
 
-    const cx1 = x1 + (dx / dist) * ext1 + spreadX * bendMag;
-    const cy1 = y1 + (dy / dist) * ext1 + spreadY * bendMag;
+    // 標籤落點取在「基準方向」的曲線上，跟這條邊存的方向無關，
+    // 所以一來一回的兩條邊會落在不同位置，不會因為各自從自己的 source
+    // 起算 t 而互相抵銷、疊在同一個高度。
+    const labelPoint = cubicPointAt(curve, 0.5 + offset * 0.15);
 
-    const cx2 = x2 - (dx / dist) * ext2 + spreadX * bendMag;
-    const cy2 = y2 - (dy / dist) * ext2 + spreadY * bendMag;
+    if (!matchesCanonicalDir) curve = [curve[3], curve[2], curve[1], curve[0]];
 
-    const d = "M " + x1 + " " + y1 + " C " + cx1 + " " + cy1 + ", " + cx2 + " " + cy2 + ", " + x2 + " " + y2;
+    const d = "M " + curve[0].x + " " + curve[0].y +
+              " C " + curve[1].x + " " + curve[1].y +
+              ", " + curve[2].x + " " + curve[2].y +
+              ", " + curve[3].x + " " + curve[3].y;
 
     const col = getEdgeColor(edge);
 
@@ -720,18 +635,13 @@ function renderCanvasLines() {
 
     linesLayer.appendChild(path);
 
-    /* ----- 標籤：先算出曲線上的候選落點，稍後統一防重疊再畫 ----- */
-    // 依 offset 把 t 沿曲線長度錯開：-1 → 0.35、0 → 0.5、+1 → 0.65。
-    // 若這條邊的 source 不是目錄樹順序較前面的那個節點（即反向存的邊），
-    // 把錯開量反過來，讓 t 統一以「目錄樹上方者」為起點量測，兩條反向邊
-    // 才不會因為各自從自己的 source 起算，落在同一個物理位置。
-    const effectiveLabelSpread = matchesCanonicalDir ? offset : -offset;
-    const tt = 0.5 + effectiveLabelSpread * 0.15;
-    const mt = 1 - tt;
-    const bezX = mt*mt*mt*x1 + 3*mt*mt*tt*cx1 + 3*mt*tt*tt*cx2 + tt*tt*tt*x2;
-    const bezY = mt*mt*mt*y1 + 3*mt*mt*tt*cy1 + 3*mt*tt*tt*cy2 + tt*tt*tt*y2;
-
-    labelJobs.push({ edge: edge, col: col, x: bezX, y: bezY, cx: bezX, cy: bezY });
+    // 標籤落點在上面已經算好（labelPoint），這裡只是登記，
+    // 等所有線都畫完再統一做防重疊的推擠。
+    labelJobs.push({
+      edge: edge, col: col,
+      x: labelPoint.x, y: labelPoint.y,
+      cx: labelPoint.x, cy: labelPoint.y
+    });
   });
 
   /* ----- 標籤防重疊：量測每個標籤實際尺寸，再用簡單的推擠鬆弛法互相讓開 -----
