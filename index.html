@@ -46,7 +46,7 @@
         <button class="icon-sm-btn" id="trashViewBtn" title="檢視垃圾桶（復原已刪除的項目）" onclick="openTrashModal()">♻️</button>
         <button class="icon-sm-btn" id="trashToggleBtn" title="批量刪除模式" onclick="toggleBatchDeleteMode()">🗑️</button>
         <button class="icon-sm-btn" title="新增資料夾（若已選取資料夾，將新增於其底下）" onclick="createFolderInCurrentContext()">📁</button>
-        <button class="icon-sm-btn" title="新增文檔（若已選取資料夾，將新增於其底下）" onclick="createDocInCurrentContext()">📄</button>
+        <button class="icon-sm-btn" title="新增文檔（與目前開啟的文檔同一層；若有選取資料夾則新增於其底下）" onclick="createDocInCurrentContext()">📄</button>
         <button class="icon-sm-btn mobile-close" id="closeSidebarBtn" onclick="closeSidebarMobile()">✕</button>
       </div>
     </div>
@@ -102,7 +102,7 @@
         <button class="nav-action-btn secondary" id="btnD_Export" onclick="openBatchExportModal()" title="批量匯出">
           <span>📤</span><span class="btn-text">匯出</span>
         </button>
-        <button class="nav-action-btn primary" id="btnE_NewDoc" onclick="createDocInCurrentContext()" title="新增文檔（若已選取資料夾，將新增於其底下）">
+        <button class="nav-action-btn primary" id="btnE_NewDoc" onclick="createDocInCurrentContext()" title="新增文檔（與目前開啟的文檔同一層；若有選取資料夾則新增於其底下）">
           <span>＋</span><span class="btn-text">新文檔</span>
         </button>
       </div>
@@ -205,7 +205,10 @@
   <!-- 彈窗：批量匯出 -->
   <div class="modal-overlay" id="batchExportModal">
     <div class="modal-card">
-      <div class="modal-title">📤 批量匯出文檔 / 資料夾</div>
+      <div class="modal-head">
+        <div class="modal-title">📤 批量匯出文檔 / 資料夾</div>
+        <button class="icon-sm-btn" title="取消" onclick="closeBatchExportModal()">✕</button>
+      </div>
       <p style="font-size:12px; color:var(--text-secondary);">勾選你要匯出的資料夾或個別文檔：</p>
       <div style="display:flex; gap:8px; margin-bottom:6px;">
         <button class="btn btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="toggleExportAll(true)">全選</button>
@@ -221,10 +224,7 @@
             <option value="txt">純文字 TXT 檔案</option>
           </select>
         </label>
-        <div style="display:flex; gap:8px;">
-          <button class="btn btn-secondary" onclick="closeBatchExportModal()">取消</button>
-          <button class="btn btn-primary" onclick="confirmBatchExport()">開始匯出</button>
-        </div>
+        <button class="btn btn-primary" onclick="confirmBatchExport()">開始匯出</button>
       </div>
     </div>
   </div>
@@ -332,7 +332,7 @@
       <p style="font-size:12px; color:var(--text-secondary);">已刪除的資料夾與文檔會暫存在這裡，可以復原或永久刪除：</p>
       <div class="trash-list" id="trashList"></div>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px;">
-        <button class="btn btn-danger" style="font-size:11px; padding:4px 8px;" onclick="emptyTrash()">清空垃圾桶</button>
+        <button class="btn btn-danger" onclick="emptyTrash()">清空垃圾桶</button>
         <button class="btn btn-secondary" onclick="closeTrashModal()">關閉</button>
       </div>
     </div>
@@ -341,11 +341,23 @@
   <!-- 雲端同步設定 -->
   <div class="modal-overlay" id="syncModal">
     <div class="modal-card" style="width:480px;">
-      <div class="modal-title">☁️ 雲端同步</div>
-      <div id="syncModalBody"></div>
-      <div style="display:flex; justify-content:flex-end; margin-top:12px;">
-        <button class="btn btn-secondary" onclick="closeSyncModal()">關閉</button>
+      <div class="modal-head">
+        <div class="modal-title">☁️ 雲端同步</div>
+        <button class="icon-sm-btn" title="關閉" onclick="closeSyncModal()">✕</button>
       </div>
+      <div id="syncModalBody"></div>
+    </div>
+  </div>
+
+  <!-- 閒置提醒：一段時間沒動作且本機有還沒備份的修改時跳出來 -->
+  <div class="modal-overlay" id="idleBackupModal">
+    <div class="modal-card" style="width:460px;">
+      <div class="modal-head">
+        <div class="modal-title">💤 要備份一下嗎？</div>
+        <button class="icon-sm-btn" title="稍後再說" onclick="dismissIdleBackup()">✕</button>
+      </div>
+      <div id="idleBackupInfo" style="font-size:13px; line-height:1.7;"></div>
+      <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;" id="idleBackupActions"></div>
     </div>
   </div>
 

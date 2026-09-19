@@ -735,6 +735,17 @@ main.content-workspace {
   border-color: var(--accent) !important;
   box-shadow: 0 0 0 2px var(--accent-light) !important;
 }
+/* 從目錄跳過來時短暫標示，讓使用者知道畫面停在哪個節點上 */
+.canvas-node.is-focused {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-light) !important;
+  animation: canvasNodePulse 1.6s ease-out;
+}
+@keyframes canvasNodePulse {
+  0%   { box-shadow: 0 0 0 0 var(--accent-light); }
+  30%  { box-shadow: 0 0 0 10px transparent; }
+  100% { box-shadow: 0 0 0 3px var(--accent-light); }
+}
 
 /* ----------------------------------------------------------
    浮動提示（hint）— 桌面在左下角、手機在上方
@@ -903,6 +914,17 @@ main.content-workspace {
   overflow-y: auto;
 }
 .modal-title { font-size: var(--fs-16); font-weight: 700; font-family: var(--font-display); }
+
+/* 彈窗標題列：標題靠左、關閉叉叉靠右。
+   用一般的 flex 子元素而不是絕對定位，因為 .modal-card 會 overflow-y: auto，
+   絕對定位的叉叉會跟著內容一起捲走。 */
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-10);
+}
+.modal-head .modal-title { flex: 1; min-width: 0; }
 .form-input {
   width: 100%;
   padding: var(--sp-8) var(--sp-10);
@@ -1277,7 +1299,7 @@ main.content-workspace {
     max-width: 320px;
     transform: translateX(-100%);
     box-shadow: 4px 0 24px rgba(42,36,32,0.2);
-    z-index: 80;
+    z-index: var(--z-sidebar-drawer);
     transition: transform 0.24s ease;
   }
   aside.sidebar-directory.drawer-open {
@@ -1289,7 +1311,9 @@ main.content-workspace {
     position: fixed;
     inset: 0;
     background: rgba(42,36,32,0.45);
-    z-index: 79;
+    /* 遮罩也要在浮動按鈕之上。抽屜寬 85vw（上限 320px），右下角那顆
+       浮動按鈕不一定被抽屜本身蓋到，得靠這層遮罩才會一起暗下去。 */
+    z-index: var(--z-sidebar-overlay);
     display: none;
   }
   .sidebar-overlay.active { display: block; }
