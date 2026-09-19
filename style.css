@@ -677,6 +677,12 @@ main.content-workspace {
   background-size: 24px 24px;
   overflow: hidden;
   touch-action: none;
+  /* iOS 長按沒有這幾行會啟動系統的文字選取／放大鏡，那會送出 touchcancel，
+     把「長按空白處新增便條紙」整個打斷。白板本身沒有要讓人選取的文字，
+     便條紙進入編輯狀態時會自己把選取權要回去。 */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* SVG 線條圖層：在節點下方 */
@@ -768,7 +774,11 @@ main.content-workspace {
   outline: none;
   user-select: none;          /* 非編輯狀態要能整張拖曳，不要選到字 */
 }
-.canvas-note.is-editing .canvas-note-body { user-select: text; }
+.canvas-note.is-editing .canvas-note-body {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
 
 /* 空白便條紙給個提示字，否則看起來像壞掉的空框 */
 .canvas-note-body:empty::before {
