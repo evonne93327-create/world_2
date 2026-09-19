@@ -516,7 +516,9 @@ function enableNoteResize(handle, el, note, fo) {
    所以想平移的人不會莫名其妙長出便條紙。兩根手指（縮放）也直接取消。 */
 function setupBlankLongPress(view) {
   let timer = null, sx = 0, sy = 0;
-  const DURATION = 500, TOL = 8;
+  // 容忍值給手指用，不是給滑鼠用。真手指按住 500ms 很容易飄十幾 px，
+  // 原本設 8px 在手機上幾乎按不出來。滑鼠本來就不太會晃，放寬不影響。
+  const DURATION = 500, TOL = 16;
 
   function isBlank(target) {
     if (!target || !target.closest) return false;
