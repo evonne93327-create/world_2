@@ -85,22 +85,46 @@ function addCurrentDocToCanvas() {
   switchView('canvas');
 }
 
-/* ---------- 渲染節點 ---------- */
+/* ---------- 渲染節點 ----------
+   節點現在是畫在 <canvasSvg> 裡的 <foreignObject>（內含一般 HTML），
+   跟連線共用同一個 viewBox 做縮放，所以放大時是瀏覽器真的重新排版、
+   重新描字，而不是把一張畫好的貼圖拉伸，因此不會糊。
+   ------------------------------------------------------------- */
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const XHTML_NS = "http://www.w3.org/1999/xhtml";
+
+function getCanvasNodesLayer(svg) {
+  let layer = document.getElementById("canvasNodesLayer");
+  if (!layer) {
+    layer = document.createElementNS(SVG_NS, "g");
+    layer.setAttribute("id", "canvasNodesLayer");
+  }
+  // 一定要放在 canvasEdgesLayer 之後，節點才會畫在連線上方
+  svg.appendChild(layer);
+  return layer;
+}
 
 function renderCanvas() {
-  const container = document.getElementById("canvasNodesContainer");
-  container.innerHTML = "";
+  const svg = document.getElementById("canvasSvg");
+  if (!svg) return;
   const canvas = getCurrentWorldCanvas();
+  const nodesLayer = getCanvasNodesLayer(svg);
+  nodesLayer.innerHTML = "";
 
   canvas.nodes.forEach(function(node) {
     const doc = appData.docs.find(d => d.id === node.docId);
     if (!doc) return;
 
-    const el = document.createElement("div");
+    const fo = document.createElementNS(SVG_NS, "foreignObject");
+    fo.setAttribute("x", node.x);
+    fo.setAttribute("y", node.y);
+    fo.setAttribute("width", CANVAS_NODE_W);
+    fo.setAttribute("height", node._lastH || 80);
+
+    const el = document.createElementNS(XHTML_NS, "div");
     el.className = "canvas-node";
     el.id = node.id;
-    el.style.left = node.x + "px";
-    el.style.top = node.y + "px";
 
     if (connectingSourceNodeId === node.id) el.classList.add("connecting");
 
@@ -133,21 +157,28 @@ function renderCanvas() {
     );
 
     enableDualDrag(el, node);
-    container.appendChild(el);
+    fo.appendChild(el);
+    nodesLayer.appendChild(fo);
   });
 
-  applyCanvasTransform(true);
+  // 量測每個節點實際內容高度，修正 foreignObject 的 height，
+  // 避免內容被裁切，也讓 getNodeRect() 拿到正確高度。
+  canvas.nodes.forEach(function(node) {
+    const el = document.getElementById(node.id);
+    if (!el) return;
+    const fo = el.parentNode;
+    const h = el.offsetHeight || 80;
+    node._lastH = h;
+    if (fo && fo.setAttribute) fo.setAttribute("height", h);
+  });
+
+  applySvgViewBox();
   renderCanvasLines();
 }
 
-/* ---------- 節點定位 ---------- */
+/* ---------- 縮放指示（節點/連線都已在 SVG 裡，viewBox 自動處理縮放）---------- */
 
 function applyCanvasTransform(silent) {
-  const container = document.getElementById("canvasNodesContainer");
-  if (!container) return;
-  container.style.transformOrigin = "0 0";
-  container.style.transform =
-    "translate(" + canvasTransform.x + "px," + canvasTransform.y + "px) scale(" + canvasTransform.scale + ")";
   if (!silent) showZoomIndicator();
 }
 
@@ -187,8 +218,11 @@ function enableDualDrag(element, nodeData) {
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) pointerMoved = true;
     nodeData.x = initialLeft + dx / canvasTransform.scale;
     nodeData.y = initialTop + dy / canvasTransform.scale;
-    element.style.left = nodeData.x + "px";
-    element.style.top = nodeData.y + "px";
+    const fo = element.parentNode;
+    if (fo && fo.setAttribute) {
+      fo.setAttribute("x", nodeData.x);
+      fo.setAttribute("y", nodeData.y);
+    }
     renderCanvasLines();
   }
   function endDrag() {
@@ -297,41 +331,70 @@ function getNodeRect(node) {
   return { left: node.x, top: node.y, right: node.x + w, bottom: node.y + h, w: w, h: h };
 }
 
-/* ---------- 依「兩矩形最靠近的那兩條邊」決定連線要從哪一側出發 ----------
-   規則：
-   - 若兩矩形在 Y 軸上有重疊（左右排列），直接用左右兩側。
-   - 若兩矩形在 X 軸上有重疊（上下排列），直接用上下兩側。
-   - 若兩者都沒有重疊（斜向排列，如長邊接短邊的情形），
-     比較「水平間隙」與「垂直間隙」何者較大，較大的那一軸才是真正把兩個
-     矩形拉開的方向，因此用該軸對應的兩側（這樣線才會走最短路徑，
-     並允許長邊接到短邊的情況）。
+/* ---------- 依「兩矩形真正最短距離」決定連線要從哪一側出發 ----------
+   跟舊版不同：這裡不再強迫兩端用同一軸（例如一定 bottom<->top 或
+   right<->left），而是各自列出「合理候選邊」，把兩邊所有候選組合都
+   算出實際距離，取距離最短的那組——所以斜向擺放、大小不同的兩個節點，
+   可能會選出「一邊用長邊（top/bottom）、另一邊用短邊（left/right）」
+   這種不對稱組合，真正做到長邊接短邊。
 ------------------------------------------------------------------ */
-function pickClosestSide(rectA, rectB) {
-  const overlapX = rectA.left < rectB.right && rectA.right > rectB.left;
-  const overlapY = rectA.top < rectB.bottom && rectA.bottom > rectB.top;
+function clampNum(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
 
-  if (overlapY && !overlapX) {
-    return rectB.left >= rectA.right ? 'right' : 'left';
-  }
-  if (overlapX && !overlapY) {
-    return rectB.top >= rectA.bottom ? 'bottom' : 'top';
-  }
-  if (!overlapX && !overlapY) {
-    const dxGap = rectB.left >= rectA.right ? (rectB.left - rectA.right) : (rectA.left - rectB.right);
-    const dyGap = rectB.top >= rectA.bottom ? (rectB.top - rectA.bottom) : (rectA.top - rectB.bottom);
-    if (dxGap > dyGap) {
-      return rectB.left >= rectA.right ? 'right' : 'left';
-    }
-    return rectB.top >= rectA.bottom ? 'bottom' : 'top';
-  }
+// 某矩形面向另一個矩形時，「合理」（面朝對方）的候選邊，通常 1~2 個
+function candidateSidesForDirection(rect, otherRect) {
+  const overlapX = rect.left < otherRect.right && rect.right > otherRect.left;
+  const overlapY = rect.top < otherRect.bottom && rect.bottom > otherRect.top;
+  const otherIsRight = otherRect.left >= rect.right;
+  const otherIsLeft = otherRect.right <= rect.left;
+  const otherIsBelow = otherRect.top >= rect.bottom;
+  const otherIsAbove = otherRect.bottom <= rect.top;
 
-  // 兩矩形重疊（罕見情況）：退回中心點比較
-  const cxA = (rectA.left + rectA.right) / 2, cyA = (rectA.top + rectA.bottom) / 2;
-  const cxB = (rectB.left + rectB.right) / 2, cyB = (rectB.top + rectB.bottom) / 2;
-  const dx = cxB - cxA, dy = cyB - cyA;
-  if (dx === 0 && dy === 0) return 'right';
-  if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? 'right' : 'left';
-  return dy > 0 ? 'bottom' : 'top';
+  const sides = [];
+  if (!overlapY) {
+    if (otherIsBelow) sides.push('bottom');
+    else if (otherIsAbove) sides.push('top');
+  }
+  if (!overlapX) {
+    if (otherIsRight) sides.push('right');
+    else if (otherIsLeft) sides.push('left');
+  }
+  if (sides.length === 0) {
+    // 兩矩形重疊（罕見情況）：退回中心點比較
+    const cxA = (rect.left + rect.right) / 2, cyA = (rect.top + rect.bottom) / 2;
+    const cxB = (otherRect.left + otherRect.right) / 2, cyB = (otherRect.top + otherRect.bottom) / 2;
+    const dx = cxB - cxA, dy = cyB - cyA;
+    sides.push(Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : (dy >= 0 ? 'bottom' : 'top'));
+  }
+  return sides;
+}
+
+// 某邊上、面向對方矩形最近的一點（投影 + clamp，近似最近點）
+function anchorForSide(rect, side, otherRect) {
+  const ocx = (otherRect.left + otherRect.right) / 2;
+  const ocy = (otherRect.top + otherRect.bottom) / 2;
+  if (side === 'right') return { x: rect.right, y: clampNum(ocy, rect.top, rect.bottom) };
+  if (side === 'left') return { x: rect.left, y: clampNum(ocy, rect.top, rect.bottom) };
+  if (side === 'bottom') return { x: clampNum(ocx, rect.left, rect.right), y: rect.bottom };
+  return { x: clampNum(ocx, rect.left, rect.right), y: rect.top }; // 'top'
+}
+
+// 列出 A、B 各自的候選邊，取所有組合中距離最短的一組
+function pickClosestSidePair(rectA, rectB) {
+  const sidesA = candidateSidesForDirection(rectA, rectB);
+  const sidesB = candidateSidesForDirection(rectB, rectA);
+
+  let best = null;
+  sidesA.forEach(function(sa) {
+    sidesB.forEach(function(sb) {
+      const pa = anchorForSide(rectA, sa, rectB);
+      const pb = anchorForSide(rectB, sb, rectA);
+      const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
+      if (!best || d < best.d) best = { d: d, sideA: sa, sideB: sb };
+    });
+  });
+  return best;
 }
 
 /* ---------- 節點邊框交點（沿該邊 30%~70% 分散）---------- */
@@ -371,9 +434,22 @@ function getNodeBorderPoint(node, side, slotInfo) {
 
 function renderCanvasLines() {
   const svg = document.getElementById("canvasSvg");
-  svg.innerHTML = "";
+  if (!svg) return;
   const canvas = getCurrentWorldCanvas();
-  const NS = "http://www.w3.org/2000/svg";
+  const NS = SVG_NS;
+
+  // 連線只清空、重畫「連線圖層」，不動到 svg 裡的節點 foreignObject，
+  // 否則拖曳節點時每次都會把整個白板重建一次。
+  let edgesLayer = document.getElementById("canvasEdgesLayer");
+  if (!edgesLayer) {
+    edgesLayer = document.createElementNS(NS, "g");
+    edgesLayer.setAttribute("id", "canvasEdgesLayer");
+  } else {
+    edgesLayer.innerHTML = "";
+  }
+  // 確保連線圖層一定排在節點圖層「之前」，節點才會畫在連線上方
+  const nodesLayer = document.getElementById("canvasNodesLayer");
+  svg.insertBefore(edgesLayer, nodesLayer || null);
 
   // 箭頭 marker
   const defs = document.createElementNS(NS, "defs");
@@ -393,17 +469,17 @@ function renderCanvasLines() {
     marker.appendChild(p);
     defs.appendChild(marker);
   });
-  svg.appendChild(defs);
+  edgesLayer.appendChild(defs);
 
   const linesLayer = document.createElementNS(NS, "g");
-  svg.appendChild(linesLayer);
+  edgesLayer.appendChild(linesLayer);
 
   const labelsLayer = document.createElementNS(NS, "g");
-  svg.appendChild(labelsLayer);
+  edgesLayer.appendChild(labelsLayer);
 
-  /* ---------- 決定側邊（採用兩矩形最靠近的邊，允許長邊接短邊）---------- */
-  function determineSide(node, otherNode) {
-    return pickClosestSide(getNodeRect(node), getNodeRect(otherNode));
+  /* ---------- 決定側邊（兩端各自可能不同軸，允許長邊接短邊）---------- */
+  function determineSidePair(nodeA, nodeB) {
+    return pickClosestSidePair(getNodeRect(nodeA), getNodeRect(nodeB));
   }
 
   /* ---------- 統計每節點每側條數 ---------- */
@@ -420,18 +496,9 @@ function renderCanvasLines() {
     const tgtNode = canvas.nodes.find(n => n.id === edge.target);
     if (!srcNode || !tgtNode) return;
 
-    const srcEl = document.getElementById(srcNode.id);
-    const tgtEl = document.getElementById(tgtNode.id);
-    const srcW = srcEl ? srcEl.offsetWidth : CANVAS_NODE_W;
-    const srcH = srcEl ? srcEl.offsetHeight : 80;
-    const tgtW = tgtEl ? tgtEl.offsetWidth : CANVAS_NODE_W;
-    const tgtH = tgtEl ? tgtEl.offsetHeight : 80;
-
-    const srcCenter = { x: srcNode.x + srcW / 2, y: srcNode.y + srcH / 2 };
-    const tgtCenter = { x: tgtNode.x + tgtW / 2, y: tgtNode.y + tgtH / 2 };
-
-    const srcSide = determineSide(srcNode, tgtNode);
-    const tgtSide = determineSide(tgtNode, srcNode);
+    const sidePair = determineSidePair(srcNode, tgtNode);
+    const srcSide = sidePair.sideA;
+    const tgtSide = sidePair.sideB;
 
     edgeSideInfo[edge.id] = { sourceSide: srcSide, targetSide: tgtSide };
 
