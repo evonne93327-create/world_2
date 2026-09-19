@@ -518,11 +518,14 @@ function renderCanvasLines() {
      port 順序自然貼合對面節點的實際空間分佈，才能避免無謂的交叉。
   ------------------------------------------------------------- */
   const edgeSideInfo = {};
-  const sideGroups = {}; // key: nodeId + "|" + side -> [{ edgeId, endpoint, otherX, otherY }]
-  function pushToSideGroup(nodeId, side, edgeId, endpoint, otherCenter) {
+  const sideGroups = {}; // key: nodeId + "|" + side -> [{ edgeId, endpoint, otherNodeId, otherX, otherY }]
+  function pushToSideGroup(nodeId, side, edgeId, endpoint, otherNode, otherCenter) {
     const key = nodeId + "|" + side;
     if (!sideGroups[key]) sideGroups[key] = [];
-    sideGroups[key].push({ edgeId: edgeId, endpoint: endpoint, otherX: otherCenter.x, otherY: otherCenter.y });
+    sideGroups[key].push({
+      edgeId: edgeId, endpoint: endpoint, otherNodeId: otherNode.id,
+      otherX: otherCenter.x, otherY: otherCenter.y
+    });
   }
 
   canvas.edges.forEach(function(edge) {
@@ -541,8 +544,8 @@ function renderCanvasLines() {
     const srcCenter = { x: (srcRect.left + srcRect.right) / 2, y: (srcRect.top + srcRect.bottom) / 2 };
     const tgtCenter = { x: (tgtRect.left + tgtRect.right) / 2, y: (tgtRect.top + tgtRect.bottom) / 2 };
 
-    pushToSideGroup(srcNode.id, srcSide, edge.id, 'source', tgtCenter);
-    pushToSideGroup(tgtNode.id, tgtSide, edge.id, 'target', srcCenter);
+    pushToSideGroup(srcNode.id, srcSide, edge.id, 'source', tgtNode, tgtCenter);
+    pushToSideGroup(tgtNode.id, tgtSide, edge.id, 'target', srcNode, srcCenter);
   });
 
   const edgeSlotInfo = {};
@@ -551,9 +554,26 @@ function renderCanvasLines() {
     const side = key.slice(key.lastIndexOf("|") + 1);
     const axisKey = (side === 'bottom' || side === 'top') ? 'otherX' : 'otherY';
     group.sort(function(a, b) { return a[axisKey] - b[axisKey]; });
-    group.forEach(function(item, idx) {
+
+    // 連到「同一個對象節點」的多條線共用同一個出口點，改由弧度分開就好。
+    // 若硬要把它們沿邊框也排開，出口點的排列順序（沿邊框的軸）跟弧度的
+    // 展開順序（沿兩節點中心連線的法線）在斜向擺放時會是兩個不同方向，
+    // 兩邊順序一旦相反，線就一定會在中段互相穿越。
+    // 排序後同一個對象節點的項目必定相鄰（它們的 otherX/otherY 完全相同）。
+    let slotIndex = -1;
+    let prevOtherNodeId = null;
+    group.forEach(function(item) {
+      if (item.otherNodeId !== prevOtherNodeId) {
+        slotIndex++;
+        prevOtherNodeId = item.otherNodeId;
+      }
+      item.slotIndex = slotIndex;
+    });
+    const slotTotal = slotIndex + 1;
+
+    group.forEach(function(item) {
       if (!edgeSlotInfo[item.edgeId]) edgeSlotInfo[item.edgeId] = {};
-      edgeSlotInfo[item.edgeId][item.endpoint + "Slot"] = { index: idx, total: group.length, side: side };
+      edgeSlotInfo[item.edgeId][item.endpoint + "Slot"] = { index: item.slotIndex, total: slotTotal, side: side };
     });
   });
 
