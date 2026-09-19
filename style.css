@@ -869,6 +869,11 @@ main.content-workspace {
 }
 .btn-primary { background: var(--accent); color: white; }
 .btn-secondary { background: var(--bg-card); border-color: var(--border); color: var(--text-primary); }
+
+/* 同步面板裡的按鈕多半被拉成整列寬或等分寬，.btn 預設靠左會讓文字黏在左邊。
+   只限定這兩個 modal，不動 .btn 本身——別處有依賴靠左對齊的按鈕。 */
+#syncModal .btn,
+#syncConflictModal .btn { justify-content: center; }
 .btn-secondary:hover { background: var(--bg-sunken); }
 .btn-danger { background: #fff; border-color: var(--danger-light); color: var(--danger); }
 
@@ -1387,7 +1392,7 @@ main.content-workspace {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  z-index: 75;
+  z-index: var(--z-floating-controls);
   transition: transform 0.2s ease;
 }
 .quickjump-fab:hover { transform: scale(1.08); }
@@ -1400,7 +1405,7 @@ main.content-workspace {
   width: fit-content;
   display: flex;
   gap: var(--sp-10);
-  z-index: 75;
+  z-index: var(--z-floating-controls);
   pointer-events: none;
 }
 .undoredo-fab-btn {
@@ -1429,7 +1434,7 @@ main.content-workspace {
   position: fixed;
   inset: 0;
   background: rgba(42,36,32,0.35);
-  z-index: 69;
+  z-index: var(--z-quickjump-overlay);
   display: none;
 }
 .quickjump-overlay.active { display: block; }
@@ -1444,7 +1449,7 @@ main.content-workspace {
   background: var(--bg-card);
   border-left: 1px solid var(--border);
   box-shadow: -4px 0 24px rgba(42,36,32,0.18);
-  z-index: 70;
+  z-index: var(--z-quickjump-panel);
   transform: translateX(100%);
   transition: transform 0.24s ease;
   display: flex;
@@ -1498,15 +1503,18 @@ main.content-workspace {
 .quickjump-empty { padding: var(--sp-24) var(--sp-12); text-align: center; color: var(--text-muted); font-size: var(--fs-12); line-height: 1.7; }
 
 @media (max-width: 768px) {
-  .quickjump-fab { bottom: calc(56px + var(--safe-b) + 16px); right: 16px; width: var(--icon-40); height: var(--icon-40); font-size: var(--fs-18); }
-  .undoredo-sticky-bar { bottom: calc(56px + var(--safe-b) + 16px); right: calc(16px + var(--icon-40) + var(--sp-12)); }
+  .quickjump-fab { bottom: var(--fab-bottom); right: 16px; width: var(--icon-40); height: var(--icon-40); font-size: var(--fs-18); }
+  .undoredo-sticky-bar { bottom: var(--fab-bottom); right: calc(16px + var(--icon-40) + var(--sp-12)); }
   .undoredo-fab-btn { width: var(--icon-40); height: var(--icon-40); font-size: var(--fs-16); }
 
   .docactions-wrap {
     position: fixed;
     left: 16px;
-    bottom: calc(56px + var(--safe-b) + 16px);
-    z-index: 75;
+    bottom: var(--fab-bottom);
+    z-index: var(--z-floating-controls);
+    /* 用 flex 消掉行內排版在按鈕下方留的行高空隙。
+       否則包裝層會比按鈕高 2px，連帶讓按鈕與面板都比快速跳轉那側高 2px。 */
+    display: flex;
   }
   .meta-fab-btn {
     width: var(--icon-40);
@@ -1520,7 +1528,7 @@ main.content-workspace {
   .meta-fab-btn .lbl { display: none; }
   .docactions-panel {
     top: auto;
-    bottom: calc(100% + var(--sp-8));
+    bottom: calc(100% + var(--fab-panel-gap));
     left: 0;
     right: auto;
     transform-origin: bottom left;
@@ -1533,7 +1541,7 @@ main.content-workspace {
     top: auto;
     left: auto;
     right: 16px;
-    bottom: calc(56px + var(--safe-b) + 16px + 44px + 10px);
+    bottom: calc(var(--fab-bottom) + var(--icon-40) + var(--fab-panel-gap));
     width: calc(100vw - 32px);
     max-width: 320px;
     max-height: 58vh;
