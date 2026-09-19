@@ -1697,3 +1697,42 @@ main.content-workspace {
   user-select: none;
   -webkit-user-select: none;
 }
+
+/* ----------------------------------------------------------
+   有新版本的提示
+
+   放在上方置中：白板的浮動按鈕、提示文字、縮放指示都擠在下半部，
+   底部又有手機的底欄與安全區，上面是唯一不會跟人打架的位置。
+   ---------------------------------------------------------- */
+.update-toast {
+  position: fixed;
+  top: var(--toast-top);
+  left: 50%;
+  transform: translateX(-50%) translateY(-16px);
+  display: none;
+  align-items: center;
+  gap: var(--sp-10);
+  max-width: calc(100vw - 32px);
+  padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-14);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-update-toast);
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.update-toast.active {
+  display: flex;
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.update-toast-text {
+  font-size: var(--fs-12);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.update-toast-btn {
+  padding: var(--sp-5) var(--sp-12);
+  white-space: nowrap;
+}
