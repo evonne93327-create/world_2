@@ -1299,7 +1299,7 @@ main.content-workspace {
     max-width: 320px;
     transform: translateX(-100%);
     box-shadow: 4px 0 24px rgba(42,36,32,0.2);
-    z-index: 80;
+    z-index: var(--z-sidebar-drawer);
     transition: transform 0.24s ease;
   }
   aside.sidebar-directory.drawer-open {
@@ -1311,7 +1311,9 @@ main.content-workspace {
     position: fixed;
     inset: 0;
     background: rgba(42,36,32,0.45);
-    z-index: 79;
+    /* 遮罩也要在浮動按鈕之上。抽屜寬 85vw（上限 320px），右下角那顆
+       浮動按鈕不一定被抽屜本身蓋到，得靠這層遮罩才會一起暗下去。 */
+    z-index: var(--z-sidebar-overlay);
     display: none;
   }
   .sidebar-overlay.active { display: block; }
