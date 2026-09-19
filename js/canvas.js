@@ -430,6 +430,33 @@ function getNodeBorderPoint(node, side, slotInfo) {
   return { x: px, y: py, t: t, side: side };
 }
 
+/* ---------- 依側邊欄目錄樹的顯示順序，取得每個文件的排序索引 ----------
+   用來決定「連結同一對節點的多條線」該往哪個方向撐開：這個方向不該
+   取決於使用者剛好先畫了哪一條線（忽左忽右、不穩定），而是取一個
+   跟連線方向、節點拖曳位置都無關的穩定依據——側邊欄目錄樹的顯示順序。
+   邏輯跟 renderFolderLevel() 的遞迴順序保持一致（子資料夾优先於
+   該資料夾自己的直屬文件，最後才是世界觀根層的未分類文件）。
+------------------------------------------------------------- */
+function computeDocTreeOrderIndex(worldId) {
+  const order = {};
+  let counter = 0;
+
+  function walk(parentId) {
+    const folders = appData.folders.filter(f => f.worldId === worldId && f.parentId === parentId);
+    folders.forEach(function(folder) {
+      walk(folder.id);
+      const docsInFolder = appData.docs.filter(d => d.worldId === worldId && d.folderId === folder.id);
+      docsInFolder.forEach(function(doc) { order[doc.id] = counter++; });
+    });
+  }
+  walk(null);
+
+  const rootDocs = appData.docs.filter(d => d.worldId === worldId && !d.folderId);
+  rootDocs.forEach(function(doc) { order[doc.id] = counter++; });
+
+  return order;
+}
+
 /* ---------- 渲染連線 ---------- */
 
 function renderCanvasLines() {
@@ -538,6 +565,11 @@ function renderCanvasLines() {
     pairGroups[key].push(edge);
   });
 
+  /* ---------- 同一對節點多條邊的偏移值：以兩節點中心連線為對稱軸左右分開 ----------
+     offset 落在 -1..+1，正負各往對稱軸的一側彎、幅度相同，所以同一對
+     節點的多條線會沿著兩節點中心連線對稱展開。
+     這個值同時也決定標籤沿曲線長度的錯開量（見下方 tt 的計算）。
+  ------------------------------------------------------------- */
   const edgeOffsetMap = {};
   const edgeGroupTotalMap = {};
   Object.keys(pairGroups).forEach(function(key) {
@@ -550,6 +582,41 @@ function renderCanvasLines() {
       edgeOffsetMap[edge.id] = offset;
       edgeGroupTotalMap[edge.id] = total;
     });
+  });
+
+  /* ---------- 同一對節點的共用基準：由「目錄樹上方者」指向「下方者」----------
+     這個基準方向必須固定、可預期，不能取決於使用者剛好先畫了哪一條線、
+     或線段實際儲存的 source/target 是誰。這裡固定用側邊欄目錄樹的顯示
+     順序決定：目錄樹排序較前面的那個節點視為起點，較後面的視為終點。
+     它提供兩件事：
+     （1）pairPerpMap：兩節點中心連線的垂直方向，也就是彎曲的對稱軸法線，
+          同一對節點的所有邊共用，斜向擺放時也能真正左右撐開。
+     （2）pairUpperNodeIdMap：用來把標籤的 t 統一以「目錄樹上方者」為
+          起點量測，反向存的邊才不會跟正向的邊疊在同一個位置。
+  ------------------------------------------------------------- */
+  const docTreeOrderIndex = computeDocTreeOrderIndex(activeWorldId);
+  function nodeTreeOrder(node) {
+    const idx = docTreeOrderIndex[node.docId];
+    return (idx === undefined) ? Infinity : idx;
+  }
+
+  const pairPerpMap = {};
+  const pairUpperNodeIdMap = {}; // 記錄每一對節點裡，目錄樹順序較前面的那個節點 id
+  Object.keys(pairGroups).forEach(function(key) {
+    const ids = key.split("|");
+    const nodeX = canvas.nodes.find(n => n.id === ids[0]);
+    const nodeY = canvas.nodes.find(n => n.id === ids[1]);
+    if (!nodeX || !nodeY) return;
+    const xIsUpper = nodeTreeOrder(nodeX) <= nodeTreeOrder(nodeY);
+    const upperNode = xIsUpper ? nodeX : nodeY;
+    const lowerNode = xIsUpper ? nodeY : nodeX;
+    pairUpperNodeIdMap[key] = upperNode.id;
+    const rectU = getNodeRect(upperNode), rectL = getNodeRect(lowerNode);
+    const cU = { x: (rectU.left + rectU.right) / 2, y: (rectU.top + rectU.bottom) / 2 };
+    const cL = { x: (rectL.left + rectL.right) / 2, y: (rectL.top + rectL.bottom) / 2 };
+    const pdx = cL.x - cU.x, pdy = cL.y - cU.y;
+    const plen = Math.hypot(pdx, pdy) || 1;
+    pairPerpMap[key] = { x: -pdy / plen, y: pdx / plen };
   });
 
   /* ---------- 畫 ---------- */
@@ -583,11 +650,19 @@ function renderCanvasLines() {
 
     /* ----- 弧度：用 offset 強制給定 ----- */
     // 同一對節點只有一條線時維持直線。
-    // 多條線時（offset = -1 / 0 / +1），彎曲幅度統一落在 maxBend 的 0.3～0.7 倍範圍，
-    // 中間那條（offset=0）取最小值 0.3，最外側（offset=±1）取最大值 0.7。
+    // 多條線時（offset 落在 -1..+1），彎曲幅度最大到 maxBend 的 0.7 倍，
+    // 正負兩側幅度相同，沿兩節點中心連線左右對稱撐開。
     const maxBend = Math.min(dist * 0.28, 90);
     const total = edgeGroupTotalMap[edge.id] || 1;
     const offset = edgeOffsetMap[edge.id] || 0;
+
+    // 同一對節點的所有邊共用同一把 key，判斷「這條邊自己的 source」
+    // 跟目錄樹順序較前面的那個節點是不是同一個——如果不是（也就是這條邊
+    // 實際上是反向存的，例如 B→A），底下算標籤 t 的時候要把方向反過來，
+    // 否則兩條反向的邊會各自從自己的 source 起算 t，物理位置反而重疊。
+    const pairKey = [edge.source, edge.target].sort().join("|");
+    const canonicalUpperId = pairUpperNodeIdMap[pairKey];
+    const matchesCanonicalDir = !canonicalUpperId || edge.source === canonicalUpperId;
 
     let bendMag = 0;
     let spreadX = 0, spreadY = 0;
@@ -598,17 +673,12 @@ function renderCanvasLines() {
       const sign = offset === 0 ? 1 : Math.sign(offset);
       bendMag = sign * ratio * maxBend;
 
-      // 彎曲方向要跟「這條線在節點邊框上排列的分散軸」完全同步，
-      // 而不是用兩點連線的垂直方向。斜向連線時這兩個方向會不一樣，
-      // 只要彎曲方向跟分散順序對不上，線就會在中途互相穿越。
-      // 上/下側：邊框上是左右排開 → 分散軸是水平（x）
-      // 左/右側：邊框上是上下排開 → 分散軸是垂直（y）
-      const srcSide = (edgeSideInfo[edge.id] || {}).sourceSide;
-      if (srcSide === 'bottom' || srcSide === 'top') {
-        spreadX = 1;
-      } else {
-        spreadY = 1;
-      }
+      // 對稱軸的法線用這一對節點共用的垂直方向（見上方 pairPerpMap），
+      // offset 的正負決定往哪一側彎，兩側幅度相同，所以是沿著兩節點
+      // 中心連線做對稱；斜向擺放時也能真正左右撐開，而不是只在單一軸上微幅錯開。
+      const perp = pairPerpMap[pairKey] || { x: 0, y: 1 };
+      spreadX = perp.x;
+      spreadY = perp.y;
     }
 
     const ext1 = dist * 0.35;
@@ -651,8 +721,12 @@ function renderCanvasLines() {
     linesLayer.appendChild(path);
 
     /* ----- 標籤：先算出曲線上的候選落點，稍後統一防重疊再畫 ----- */
-    // 依 offset 把 t 錯開：-1 → 0.35、0 → 0.5、+1 → 0.65
-    const tt = 0.5 + offset * 0.15;
+    // 依 offset 把 t 沿曲線長度錯開：-1 → 0.35、0 → 0.5、+1 → 0.65。
+    // 若這條邊的 source 不是目錄樹順序較前面的那個節點（即反向存的邊），
+    // 把錯開量反過來，讓 t 統一以「目錄樹上方者」為起點量測，兩條反向邊
+    // 才不會因為各自從自己的 source 起算，落在同一個物理位置。
+    const effectiveLabelSpread = matchesCanonicalDir ? offset : -offset;
+    const tt = 0.5 + effectiveLabelSpread * 0.15;
     const mt = 1 - tt;
     const bezX = mt*mt*mt*x1 + 3*mt*mt*tt*cx1 + 3*mt*tt*tt*cx2 + tt*tt*tt*x2;
     const bezY = mt*mt*mt*y1 + 3*mt*mt*tt*cy1 + 3*mt*tt*tt*cy2 + tt*tt*tt*y2;
