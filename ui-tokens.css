@@ -189,14 +189,17 @@
   --bg-sidebar: #26221C;
   --bg-rail: #15120F;
   --bg-card: #26221C;
-  --bg-sunken: #171410;
+  /* 日間的 bg-sunken 比卡片暗，是「凹進去」的意思。深色底下沿用同一個
+     邏輯會讓搜尋框、頂部按鈕這些控制項比周圍更暗，看起來像洞不像按鈕。
+     夜間反過來做成「浮起來」——比卡片亮一階。 */
+  --bg-sunken: #383128;
   --border: #3B342B;
   --border-soft: #2E2821;
   --border-focus: #8FA4BC;
 
   --text-primary: #D6CFC5;
   --text-secondary: #BCB0A0;
-  --text-muted: #9E9384;   /* 原本 #897F70 對卡片只有 4.02，讀不動 */
+  --text-muted: #A89C8B;   /* 要在提亮後的 bg-sunken 上也讀得動 */
 
   /* 原本的磚紅 #AC3B2A 在深色底上會沉下去，提亮並降一點彩度 */
   --accent: #C4634F;

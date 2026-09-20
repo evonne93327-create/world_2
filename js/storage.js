@@ -49,6 +49,22 @@ function computeManualTagsFor(content, tags) {
   });
 })();
 
+/* 連線的「玫紅」拿掉了（改成跟標籤同一組七色：灰紅橙黃綠藍紫）。
+   直接不管的話，原本用玫紅的線會掉回灰色，使用者本來想表達的區別就沒了。
+   換成色相最接近的紅色，至少那條線還是「紅系」的。只跑一次，換完就存回去。 */
+(function migrateEdgeRoseToRed() {
+  let changed = 0;
+  (appData.worldviews || []).forEach(function(w) {
+    if (!w.canvas || !Array.isArray(w.canvas.edges)) return;
+    w.canvas.edges.forEach(function(e) {
+      if (e.color === "e_rose") { e.color = "e_red"; changed++; }
+    });
+  });
+  if (changed) {
+    try { localStorage.setItem("novel_multi_world_data_v5", JSON.stringify(appData)); } catch (err) {}
+  }
+})();
+
 if (!appData.trash || typeof appData.trash !== "object") {
   appData.trash = { docs: [], folders: [] };
 }

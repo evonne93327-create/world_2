@@ -1,21 +1,25 @@
+/* 排序是「灰 紅 橙 黃 綠 藍 紫」——灰是中性放最前，其餘照色相環。
+   顯示順序一律以這個物件的鍵順序為準，所以要改排序改這裡就好。
+   注意：不要改成去迭代 appData.colorPalette，那是使用者存檔裡的複本，
+   鍵的順序停在他第一次存檔的那一天，改了這裡也不會動。 */
 const DEFAULT_PALETTES = {
   "c_gray":   { name: "一般隨記", bg: "#EFE9DC", text: "#5A4F42" },
-  "c_blue":   { name: "地理與勢力", bg: "#DCE7F0", text: "#28506B" },
-  "c_green":  { name: "定稿與完成", bg: "#DCEAE1", text: "#2C5A44" },
-  "c_purple": { name: "角色人物誌", bg: "#E7DFF0", text: "#553B76" },
-  "c_orange": { name: "待釐清坑洞", bg: "#F3E1CC", text: "#8A4F1F" },
   "c_rose":   { name: "重要核心伏筆", bg: "#F3DAD5", text: "#8C3527" },
-  "c_yellow": { name: "靈感隨筆", bg: "#F2E8C9", text: "#7A5B12" }
+  "c_orange": { name: "待釐清坑洞", bg: "#F3E1CC", text: "#8A4F1F" },
+  "c_yellow": { name: "靈感隨筆", bg: "#F2E8C9", text: "#7A5B12" },
+  "c_green":  { name: "定稿與完成", bg: "#DCEAE1", text: "#2C5A44" },
+  "c_blue":   { name: "地理與勢力", bg: "#DCE7F0", text: "#28506B" },
+  "c_purple": { name: "角色人物誌", bg: "#E7DFF0", text: "#553B76" }
 };
 /* 白板連線專屬色（比標籤色更飽和、辨識度更高） */
 const EDGE_COLORS = {
-  "e_red":    { name: "紅",   stroke: "#D9433B" },
-  "e_blue":   { name: "藍",   stroke: "#2F6FB0" },
-  "e_green":  { name: "綠",   stroke: "#2E8B57" },
-  "e_purple": { name: "紫",   stroke: "#7A4FB0" },
-  "e_orange": { name: "橘",   stroke: "#D97A2B" },
-  "e_rose":   { name: "玫紅", stroke: "#C43E6E" },
-  "e_gray":   { name: "灰",   stroke: "#6E6152" }
+  "e_gray":   { name: "灰", stroke: "#6E6152" },
+  "e_red":    { name: "紅", stroke: "#D9433B" },
+  "e_orange": { name: "橙", stroke: "#D97A2B" },
+  "e_yellow": { name: "黃", stroke: "#C9A227" },
+  "e_green":  { name: "綠", stroke: "#2E8B57" },
+  "e_blue":   { name: "藍", stroke: "#2F6FB0" },
+  "e_purple": { name: "紫", stroke: "#7A4FB0" }
 };
 
 /* 夜間版的同一組分類。深色底配亮字，色相跟日間版對齊，
@@ -25,23 +29,23 @@ const EDGE_COLORS = {
    appData.colorPalette，兩個主題共用同一份。這裡只管顏色。 */
 const DARK_PALETTES = {
   "c_gray":   { bg: "#33302A", text: "#D5CCBC" },
-  "c_blue":   { bg: "#1F2E3C", text: "#9FC4E2" },
-  "c_green":  { bg: "#1E3229", text: "#99D0B3" },
-  "c_purple": { bg: "#2D2539", text: "#C4AFDD" },
-  "c_orange": { bg: "#3A2A1B", text: "#E2B079" },
   "c_rose":   { bg: "#3A2220", text: "#E7A194" },
-  "c_yellow": { bg: "#363019", text: "#DCC98A" }
+  "c_orange": { bg: "#3A2A1B", text: "#E2B079" },
+  "c_yellow": { bg: "#363019", text: "#DCC98A" },
+  "c_green":  { bg: "#1E3229", text: "#99D0B3" },
+  "c_blue":   { bg: "#1F2E3C", text: "#9FC4E2" },
+  "c_purple": { bg: "#2D2539", text: "#C4AFDD" }
 };
 
 /* 連線在夜間也要提亮，原本那組在深色底上會糊成一團 */
 const DARK_EDGE_COLORS = {
+  "e_gray":   { stroke: "#A0937E" },
   "e_red":    { stroke: "#EE6A60" },
-  "e_blue":   { stroke: "#6BA5DC" },
-  "e_green":  { stroke: "#5FBE8A" },
-  "e_purple": { stroke: "#A986DC" },
   "e_orange": { stroke: "#E8A35C" },
-  "e_rose":   { stroke: "#E4749A" },
-  "e_gray":   { stroke: "#A0937E" }
+  "e_yellow": { stroke: "#D9BC5A" },
+  "e_green":  { stroke: "#5FBE8A" },
+  "e_blue":   { stroke: "#6BA5DC" },
+  "e_purple": { stroke: "#A986DC" }
 };
 
 /* 主題目前是不是暗的。唯一的判斷來源是 <html data-theme>，

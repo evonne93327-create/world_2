@@ -150,7 +150,9 @@ function renderHashtagFilterColorChips() {
  };
  wrap.appendChild(allChip);
 
- Object.keys(appData.colorPalette).forEach(function(colorId) {
+ // 用 DEFAULT_PALETTES 的鍵順序，不要用 appData.colorPalette——後者是使用者
+ // 存檔裡的複本，鍵的順序停在他第一次存檔那天，改了排序這裡不會跟著動
+ Object.keys(DEFAULT_PALETTES).forEach(function(colorId) {
  const palette = getPalette(colorId);
  const chip = document.createElement("div");
  chip.className = "hashtag-filter-color-chip" + (hashtagFilterActiveColor === colorId ? " active" : "");
