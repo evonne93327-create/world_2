@@ -363,8 +363,6 @@ async function manualPull() {
 /* ---------- 狀態指示 ---------- */
 
 function renderSyncIndicator() {
-  const btn = document.getElementById("syncRailBtn");
-  if (!btn) return;
   const marks = {
     off: "☁️",
     idle: "☁️",
@@ -372,12 +370,24 @@ function renderSyncIndicator() {
     error: "⚠️",
     conflict: "❗"
   };
-  btn.textContent = marks[syncStatus] || "☁️";
   const account = P().account();
-  btn.title = "雲端同步 · " + P().label +
-    (account ? "（" + account + "）" : "（未登入）") +
-    (syncStatusDetail ? " — " + syncStatusDetail : "");
-  btn.classList.toggle("sync-error", syncStatus === "error" || syncStatus === "conflict");
+  const needsAttention = (syncStatus === "error" || syncStatus === "conflict");
+
+  const icon = document.getElementById("syncRowIcon");
+  if (icon) icon.textContent = marks[syncStatus] || "☁️";
+
+  const status = document.getElementById("syncRowStatus");
+  if (status) {
+    status.textContent = P().label +
+      (account ? "（" + account + "）" : "（未登入）") +
+      (syncStatusDetail ? " — " + syncStatusDetail : "");
+    status.classList.toggle("is-alert", needsAttention);
+  }
+
+  /* 同步的 ☁️ 按鈕收進設定之後，出問題就看不到了。在設定按鈕上點一個
+     紅點，至少還看得出「裡面有東西要處理」。 */
+  const railBtn = document.getElementById("settingsRailBtn");
+  if (railBtn) railBtn.classList.toggle("has-alert", needsAttention);
 }
 
 /* ==========================================================

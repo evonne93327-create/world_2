@@ -55,6 +55,7 @@ function setThemePref(pref) {
   applyTheme(pref);
   repaintThemedContent();
   renderThemeChoice();
+  renderSettingsRows();
 }
 
 /* CSS 變數換完畫面就跟著變了，但有幾處顏色是 JS 直接寫進 style 的：
@@ -74,15 +75,48 @@ function repaintThemedContent() {
   }
 }
 
-/* ---------- 設定視窗 ---------- */
+/* ---------- 設定視窗 ----------
+
+   設定是一張總表，每一列點進去開各自的視窗。原本散在世界觀欄、目錄
+   工具欄、目錄欄底部與頂部導覽列的四個入口都收到這裡來。
+
+   點進子視窗時會先把設定關掉，不讓兩個彈窗疊著——它們的 z-index 一樣，
+   疊起來只是靠 DOM 順序分勝負，很脆。外觀子視窗關掉會回到設定，
+   因為那是唯一一個「改完還想看一眼總表」的。
+   ------------------------------------------------------------- */
 
 function openSettingsModal() {
-  renderThemeChoice();
+  renderSettingsRows();
   document.getElementById("settingsModal").classList.add("active");
 }
 
 function closeSettingsModal() {
   document.getElementById("settingsModal").classList.remove("active");
+}
+
+function settingsGoTo(open) {
+  closeSettingsModal();
+  if (typeof open === "function") open();
+}
+
+function renderSettingsRows() {
+  const v = document.getElementById("appearanceRowValue");
+  if (v) {
+    const pref = getThemePref();
+    v.textContent = pref === "light" ? "日間" : (pref === "dark" ? "夜間" : "跟隨系統");
+  }
+  if (typeof renderSyncIndicator === "function") renderSyncIndicator();
+}
+
+function openAppearanceModal() {
+  closeSettingsModal();
+  renderThemeChoice();
+  document.getElementById("appearanceModal").classList.add("active");
+}
+
+function closeAppearanceModal() {
+  document.getElementById("appearanceModal").classList.remove("active");
+  openSettingsModal();
 }
 
 function renderThemeChoice() {

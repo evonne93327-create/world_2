@@ -51,8 +51,7 @@
   <aside class="world-rail" id="appWorldRail">
     <button class="world-rail-btn add-btn" title="新增頂層世界觀" onclick="promptCreateWorldview()">＋</button>
     <div class="world-rail-list" id="worldRailContainer"></div>
-    <button class="world-rail-btn" title="設定" onclick="openSettingsModal()">⚙️</button>
-    <button class="world-rail-btn" id="syncRailBtn" title="雲端同步" onclick="openSyncModal()">☁️</button>
+    <button class="world-rail-btn" id="settingsRailBtn" title="設定" onclick="openSettingsModal()">⚙️</button>
   </aside>
 
   <!-- 中間欄：頂格目錄工具欄 (完全貼齊最上方) -->
@@ -60,7 +59,6 @@
     <div class="directory-top-bar">
       <span class="directory-title">目錄工具欄</span>
       <div class="dir-btn-group">
-        <button class="icon-sm-btn" id="trashViewBtn" title="檢視垃圾桶（復原已刪除的項目）" onclick="openTrashModal()">♻️</button>
         <button class="icon-sm-btn" id="trashToggleBtn" title="批量刪除模式" onclick="toggleBatchDeleteMode()">🗑️</button>
         <button class="icon-sm-btn" title="新增資料夾（若已選取資料夾，將新增於其底下）" onclick="createFolderInCurrentContext()">📁</button>
         <button class="icon-sm-btn" title="新增文檔（與目前開啟的文檔同一層；若有選取資料夾則新增於其底下）" onclick="createDocInCurrentContext()">📄</button>
@@ -92,7 +90,6 @@
     <!-- 底部設定按鈕 -->
     <div class="directory-footer">
       <button class="btn btn-secondary" style="flex:1; justify-content:center;" onclick="openPaletteModal()">🎨 標籤分類設定</button>
-      <button class="btn btn-secondary" style="padding:6px 10px;" title="匯入文檔（支援 txt / json / html）" onclick="triggerImportFile()">📥 匯入</button>
       <input type="file" id="importFileInput" accept=".txt,.json,.html,.htm" style="display:none;" onchange="handleImportFileSelected(event)">
     </div>
   </aside>
@@ -116,9 +113,6 @@
       </div>
 
       <div class="nav-group-right">
-        <button class="nav-action-btn secondary" id="btnD_Export" onclick="openBatchExportModal()" title="批量匯出">
-          <span>📤</span><span class="btn-text">匯出</span>
-        </button>
         <button class="nav-action-btn primary" id="btnE_NewDoc" onclick="createDocInCurrentContext()" title="新增文檔（與目前開啟的文檔同一層；若有選取資料夾則新增於其底下）">
           <span>＋</span><span class="btn-text">新文檔</span>
         </button>
@@ -298,34 +292,87 @@
   </div>
 
   <!-- 彈窗：Hashtag 篩選（依顏色分類，列出標籤／行數／文章標題，點擊跳轉） -->
-  <!-- 彈窗：設定 -->
+  <!-- 彈窗：設定（總表。每一列點進去開各自的視窗） -->
   <div class="modal-overlay" id="settingsModal">
-    <div class="modal-card" style="width:420px;">
+    <div class="modal-card" style="width:440px;">
       <div class="modal-head">
         <div class="modal-title">⚙️ 設定</div>
         <button class="icon-sm-btn" title="關閉" onclick="closeSettingsModal()">✕</button>
       </div>
 
-      <div class="settings-section">
-        <div class="settings-label">外觀</div>
-        <div class="theme-choice" id="themeChoiceRow">
-          <button type="button" class="theme-opt" data-theme="light" aria-pressed="false"
-                  onclick="setThemePref('light')">☀️ 日間</button>
-          <button type="button" class="theme-opt" data-theme="dark" aria-pressed="false"
-                  onclick="setThemePref('dark')">🌙 夜間</button>
-          <button type="button" class="theme-opt" data-theme="auto" aria-pressed="false"
-                  onclick="setThemePref('auto')">🔄 跟隨系統</button>
-        </div>
-        <div class="settings-hint" id="themeAutoHint"></div>
-      </div>
-
-      <div class="settings-section">
-        <div class="settings-label">資料</div>
-        <button class="btn btn-secondary" style="width:100%;" onclick="exportFullDatabaseJSON()">
-          💾 備份完整資料庫
+      <div class="settings-list">
+        <button type="button" class="settings-row" onclick="openAppearanceModal()">
+          <span class="settings-row-icon">🌓</span>
+          <span class="settings-row-text">
+            <span class="settings-row-title">外觀</span>
+            <span class="settings-row-desc">日間、夜間或跟隨系統</span>
+          </span>
+          <span class="settings-row-value" id="appearanceRowValue"></span>
+          <span class="settings-row-go">›</span>
         </button>
-        <div class="settings-hint">把所有世界觀、文檔與白板存成一個 JSON 檔下載下來。</div>
+
+        <button type="button" class="settings-row" onclick="settingsGoTo(openSyncModal)">
+          <span class="settings-row-icon" id="syncRowIcon">☁️</span>
+          <span class="settings-row-text">
+            <span class="settings-row-title">雲端同步</span>
+            <span class="settings-row-desc" id="syncRowStatus">把資料同步到 Supabase 或 Google 雲端硬碟</span>
+          </span>
+          <span class="settings-row-go">›</span>
+        </button>
+
+        <button type="button" class="settings-row" onclick="settingsGoTo(openBatchExportModal)">
+          <span class="settings-row-icon">📤</span>
+          <span class="settings-row-text">
+            <span class="settings-row-title">匯出文檔</span>
+            <span class="settings-row-desc">挑選要匯出的文檔，存成 txt、json 或 html</span>
+          </span>
+          <span class="settings-row-go">›</span>
+        </button>
+
+        <button type="button" class="settings-row" onclick="settingsGoTo(triggerImportFile)">
+          <span class="settings-row-icon">📥</span>
+          <span class="settings-row-text">
+            <span class="settings-row-title">匯入文檔</span>
+            <span class="settings-row-desc">從 txt、json 或 html 檔匯入到目前的世界觀</span>
+          </span>
+        </button>
+
+        <button type="button" class="settings-row" onclick="exportFullDatabaseJSON()">
+          <span class="settings-row-icon">💾</span>
+          <span class="settings-row-text">
+            <span class="settings-row-title">備份完整資料庫</span>
+            <span class="settings-row-desc">所有世界觀、文檔與白板存成一個 JSON 檔下載</span>
+          </span>
+        </button>
+
+        <button type="button" class="settings-row" onclick="settingsGoTo(openTrashModal)">
+          <span class="settings-row-icon">♻️</span>
+          <span class="settings-row-text">
+            <span class="settings-row-title">垃圾桶</span>
+            <span class="settings-row-desc">復原或永久刪除已經丟掉的文檔與資料夾</span>
+          </span>
+          <span class="settings-row-go">›</span>
+        </button>
       </div>
+    </div>
+  </div>
+
+  <!-- 彈窗：外觀（從設定進來，關掉會回到設定） -->
+  <div class="modal-overlay" id="appearanceModal">
+    <div class="modal-card" style="width:400px;">
+      <div class="modal-head">
+        <div class="modal-title">🌓 外觀</div>
+        <button class="icon-sm-btn" title="回到設定" onclick="closeAppearanceModal()">✕</button>
+      </div>
+      <div class="theme-choice" id="themeChoiceRow">
+        <button type="button" class="theme-opt" data-theme="light" aria-pressed="false"
+                onclick="setThemePref('light')">☀️ 日間</button>
+        <button type="button" class="theme-opt" data-theme="dark" aria-pressed="false"
+                onclick="setThemePref('dark')">🌙 夜間</button>
+        <button type="button" class="theme-opt" data-theme="auto" aria-pressed="false"
+                onclick="setThemePref('auto')">🔄 跟隨系統</button>
+      </div>
+      <div class="settings-hint" id="themeAutoHint"></div>
     </div>
   </div>
 

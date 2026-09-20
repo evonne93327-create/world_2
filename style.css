@@ -1871,21 +1871,59 @@ main.content-workspace {
 /* ==========================================================
    設定視窗
    ========================================================== */
-.settings-section {
+/* 總表。每一列是一顆大圓角按鈕，點進去開各自的視窗。 */
+.settings-list {
   display: flex;
   flex-direction: column;
   gap: var(--sp-8);
-  padding: var(--sp-14) 0;
-  border-bottom: 1px solid var(--border-soft);
+  padding-top: var(--sp-4);
 }
-.settings-section:last-child { border-bottom: 0; padding-bottom: 0; }
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  width: 100%;
+  padding: var(--sp-14) var(--sp-16);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.settings-row:hover { background: var(--bg-sunken); border-color: var(--accent-line); }
+.settings-row:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 
-.settings-label {
-  font-size: var(--fs-10);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
+.settings-row-icon { font-size: var(--fs-20); line-height: 1; flex: none; }
+.settings-row-text { display: flex; flex-direction: column; gap: var(--sp-2); flex: 1; min-width: 0; }
+.settings-row-title { font-size: var(--fs-14); font-weight: 600; color: var(--text-primary); }
+.settings-row-desc {
+  font-size: var(--fs-12);
+  color: var(--text-secondary);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.settings-row-desc.is-alert { color: var(--danger); font-weight: 600; }
+.settings-row-value { font-size: var(--fs-12); color: var(--text-muted); flex: none; }
+.settings-row-go { font-size: var(--fs-18); color: var(--text-muted); flex: none; line-height: 1; }
+
+/* 同步出問題時，設定按鈕上點一個紅點——那顆 ☁️ 已經收進來了，
+   不給一點提示就完全看不出裡面有事情要處理。 */
+.world-rail-btn.has-alert { position: relative; }
+.world-rail-btn.has-alert::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--danger);
+  border: 1.5px solid var(--bg-rail);
+}
+
 .settings-hint {
   font-size: var(--fs-12);
   color: var(--text-secondary);
