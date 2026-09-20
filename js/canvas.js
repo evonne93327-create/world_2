@@ -1431,7 +1431,7 @@ function openEdgeEditModal(edgeId) {
   document.getElementById("edgeEditModal").classList.add("active");
   setTimeout(function() {
     const input = document.getElementById("edgeEditLabelInput");
-    if (input && window.innerWidth > 768) { input.focus(); input.select(); }
+    if (input && !isMobileLayout()) { input.focus(); input.select(); }
   }, 50);
 }
 

@@ -13,6 +13,16 @@ function formatTime(d) {
 }
 
 // 2. 核心防禦：跳脫 HTML 字元（就是這個變成 undefined 導致畫面出錯）
+/* 版面是不是手機版。CSS 的 media query 條件必須跟這裡一致，
+   否則會出現「CSS 已經是手機版、JS 還以為是電腦版」的錯亂——
+   例如側邊欄該用抽屜開合，JS 卻去做電腦版的收合。
+
+   高度條件是為了手機橫放（844×390）：寬度超過 768 但高度只有 390，
+   只看寬度會把它當成電腦版。 */
+function isMobileLayout() {
+  return window.innerWidth <= 768 || window.innerHeight <= 500;
+}
+
 function escapeHtml(str) {
  if (!str) return '';
  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -37,7 +47,7 @@ function switchView(view, pushHistory = true) {
 
 // 4. 側邊欄開關控制
 function toggleSidebarMenu() {
- const isMobile = window.innerWidth <= 768;
+ const isMobile = isMobileLayout();
  const sidebar = document.getElementById("appSidebar");
  const overlay = document.getElementById("sidebarOverlay");
 
@@ -58,7 +68,7 @@ function toggleSidebarMenu() {
 }
 
 function openSidebarMenu() {
- const isMobile = window.innerWidth <= 768;
+ const isMobile = isMobileLayout();
  const sidebar = document.getElementById("appSidebar");
  const overlay = document.getElementById("sidebarOverlay");
 
