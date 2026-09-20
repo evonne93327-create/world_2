@@ -817,37 +817,52 @@ main.content-workspace {
    浮動提示（hint）— 桌面在左下角、手機在上方
    常駐顯示，不再隱藏
    ---------------------------------------------------------- */
-/* 頂端橫幅：跟白板區一樣寬，不再是左下角那塊浮貼紙。
-   右側留出空間給收合按鈕，文字才不會跑到按鈕底下。 */
-.canvas-hint-floating {
+/* 頂端提示：維持原本那種浮貼紙（toast）的外觀，只是從左下角搬到頂端，
+   並且拉到跟白板區一樣寬。
+
+   提示窗與「?」按鈕排成同一列：align-items: stretch 讓按鈕長到跟提示窗
+   一樣高，aspect-ratio: 1 再讓它的寬度跟著高度走，所以是一個直徑等於
+   提示窗高度的圓。按鈕放在提示窗外面，不會壓到文字。 */
+.canvas-hint-row {
   position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 20;
+  /* 整列不吃事件，白板才收得到拖曳與長按；按鈕自己再要回來 */
+  pointer-events: none;
+}
+
+.canvas-hint-floating {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--hint-h);
+  display: flex;
+  align-items: center;
   background: rgba(42,36,32,0.72);
   color: #fff;
-  padding: 8px 56px 8px 16px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
   font-size: 11px;
   font-weight: 500;
   line-height: 1.5;
-  z-index: 20;
-  pointer-events: none;
-  transition: opacity 0.25s ease, visibility 0.25s ease, transform 0.25s ease;
+  transition: opacity 0.25s ease, visibility 0.25s ease;
 }
+/* 收起來時用 visibility 而不是 display：版面高度留著，
+   按鈕的大小與位置才不會跟著跳動 */
 .canvas-hint-floating.is-hidden {
   opacity: 0;
   visibility: hidden;
-  transform: translateY(-100%);
 }
 
-/* 收合／展開的「?」按鈕。位置固定在白板右上角，展開或收起都在同一個
-   地方，不會因為橫幅消失就要去別處找它。 */
 .canvas-hint-toggle {
-  position: absolute;
-  top: 8px;
-  right: 12px;
-  width: var(--icon-28);
-  height: var(--icon-28);
+  pointer-events: auto;
+  flex: 0 0 auto;
+  width: var(--hint-h);
+  height: var(--hint-h);
   border-radius: var(--radius-full);
   border: 1px solid var(--border);
   background: var(--bg-card);
@@ -859,22 +874,22 @@ main.content-workspace {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 21;
   box-shadow: var(--shadow-sm);
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 .canvas-hint-toggle:hover {
+  background: var(--bg-sunken);
   color: var(--text-primary);
-  border-color: var(--border-focus);
 }
-/* 橫幅展開時按鈕壓在深色底上，要換成看得見的配色 */
+/* 提示窗展開中：按鈕站在白板底色上（不是深色底），所以用重點色標示，
+   不能用白色，會看不見 */
 .canvas-hint-toggle.is-active {
-  background: rgba(255,255,255,0.16);
-  border-color: rgba(255,255,255,0.35);
-  color: #fff;
+  border-color: var(--accent-line);
+  color: var(--accent);
 }
 .canvas-hint-toggle.is-active:hover {
-  background: rgba(255,255,255,0.28);
-  border-color: rgba(255,255,255,0.6);
+  background: var(--accent-light);
+  border-color: var(--accent);
 }
 
 /* ----------------------------------------------------------
@@ -942,14 +957,21 @@ main.content-workspace {
    - 按鈕尺寸 / 位置完全比照快速跳轉按鈕（.quickjump-fab）
    ---------------------------------------------------------- */
 @media (max-width: 768px) {
+  .canvas-hint-row {
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    gap: 6px;
+    /* 手機的提示文字會折行，提示窗比按鈕高；按鈕放大到好按的尺寸並置中 */
+    --hint-h: 36px;
+  }
   .canvas-hint-floating {
     font-size: 10px;
-    padding: 6px 48px 6px 12px;
+    padding: 5px 10px;
   }
-  .canvas-hint-toggle {
-    top: 6px;
-    right: 8px;
-  }
+  /* 手機的提示文字會折成兩行，提示窗本來就比這個高；按鈕維持正圓並置中，
+     尺寸取好按的大小而不是跟著提示窗長高變成長條 */
+  .canvas-hint-toggle { font-size: var(--fs-12); }
 
   /* 跟 .quickjump-fab 手機版完全相同的定位與尺寸 */
   .canvas-floating-actions {
