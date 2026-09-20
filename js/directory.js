@@ -24,6 +24,7 @@ function clearEditorWorkspace() {
  document.getElementById("docIconBtn").textContent = "📄";
  document.getElementById("docTitleInput").value = "";
  document.getElementById("docContentInput").value = "";
+ if (typeof clearSearchHighlight === "function") clearSearchHighlight();
  autoGrowTextarea(document.getElementById("docContentInput"));
  document.getElementById("statWordCount").textContent = "0";
  document.getElementById("statUpdatedAt").textContent = "--";

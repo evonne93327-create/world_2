@@ -10,6 +10,12 @@ function handleSearchInput(inputEl) {
     clearBtn.style.display = "none";
   }
   renderSidebarTree();
+  // 改了搜尋內容，內文裡標的還是舊的詞——搜尋框寫著一件事、文檔標著
+  // 另一件事，比沒有標示還糟。等使用者點新的結果時會重新標。
+  if (typeof searchHighlightTerm !== "undefined" &&
+      searchHighlightTerm && searchHighlightTerm !== inputEl.value.trim()) {
+    clearSearchHighlight();
+  }
 }
 
 function clearSearchInput() {

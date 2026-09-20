@@ -213,6 +213,8 @@ function applyHistorySnapshot(doc, content) {
   const textarea = document.getElementById("docContentInput");
   textarea.value = content;
   autoGrowTextarea(textarea);
+  // 復原／取消復原是整段換掉內文，標示的位置會完全對不上
+  if (typeof clearSearchHighlight === "function") clearSearchHighlight();
 
   recomputeDocFromContent(doc, content);
   doc.updatedAt = formatTime(new Date());

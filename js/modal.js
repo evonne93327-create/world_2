@@ -425,6 +425,8 @@ function removeHashtagFromDoc(tag) {
  inlineRe.lastIndex = 0;
  doc.content = (doc.content || "").replace(inlineRe, "");
  document.getElementById("docContentInput").value = doc.content;
+ // 內文被改寫了，搜尋標示的位置不再正確
+ if (typeof clearSearchHighlight === "function") clearSearchHighlight();
  }
 
  if (Array.isArray(doc.manualTags)) {
