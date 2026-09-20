@@ -165,6 +165,8 @@ function renderCanvas() {
 
     if (connectingSourceNodeId === node.id) el.classList.add("connecting");
 
+    applyNodeColor(el, node);
+
     const title = (doc.icon || '📄') + " " + (doc.title || "無標題文檔");
     const preview = (doc.content || "").replace(/\n/g, " ");
 
@@ -223,6 +225,113 @@ function renderCanvas() {
 function refreshCanvasIfVisible() {
   if (typeof activeView !== "undefined" && activeView !== "canvas") return;
   renderCanvas();
+}
+
+/* ---------- 節點底色 ----------
+
+   用的是標籤那一套調色盤（appData.colorPalette），同一組顏色、同一組
+   分類名稱，所以白板上的顏色跟文檔裡的標籤講的是同一種語言。
+
+   沒設定 color 的節點完全不碰 style，維持 CSS 裡原本的米白，
+   以後改 .canvas-node 的預設樣式也不會被這裡蓋掉。
+   ------------------------------------------------------------- */
+
+function getNodePalette(node) {
+  if (!node || !node.color) return null;
+  return (appData.colorPalette && appData.colorPalette[node.color]) ||
+         DEFAULT_PALETTES[node.color] || null;
+}
+
+/* 調色盤只存了 bg 與 text 兩色，邊框用 text 淡化出來，
+   免得深色邊框把整張卡片壓得太重。 */
+function paletteBorderColor(hex) {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return "";
+  const n = parseInt(m[1], 16);
+  return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + ",0.32)";
+}
+
+function applyNodeColor(el, node) {
+  const pal = getNodePalette(node);
+  if (!pal) {
+    el.style.background = "";
+    el.style.borderColor = "";
+    el.style.color = "";
+    return;
+  }
+  el.style.background = pal.bg;
+  el.style.borderColor = paletteBorderColor(pal.text);
+  // 標題沒有自己的顏色，會繼承這個；摘要與字數各自帶著 --text-secondary
+  // 與 --text-muted，在七個淺色底上都還讀得清楚，不用另外處理。
+  el.style.color = pal.text;
+}
+
+/* 沿用標籤的選色彈窗：圓點＋分類名稱，點下去直接套用。
+   節點的右鍵選單沒有錨點元素可用（選單自己會先關掉），所以錨在節點上。 */
+function openNodeColorPicker(node) {
+  const popover = document.getElementById("colorPickerPopover");
+  if (!popover) return;
+
+  popover.innerHTML =
+    '<div style="font-size:11px; font-weight:700; color:var(--text-muted); margin-bottom:4px;">節點底色：</div>';
+
+  Object.keys(DEFAULT_PALETTES).forEach(function(key) {
+    const pal = (appData.colorPalette && appData.colorPalette[key]) || DEFAULT_PALETTES[key];
+    const opt = document.createElement("div");
+    opt.className = "picker-option";
+    opt.dataset.colorId = key;
+    opt.innerHTML =
+      '<span style="width:14px; height:14px; border-radius:50%; background:' + pal.bg +
+      '; border:1.5px solid ' + pal.text + '; flex:none;"></span>' +
+      '<span style="color:' + pal.text + '; font-weight:600;">' + escapeHtml(pal.name) + '</span>' +
+      (node.color === key ? '<span style="margin-left:auto; color:' + pal.text + ';">✓</span>' : '');
+    opt.onclick = function() {
+      node.color = key;
+      saveData();
+      renderCanvas();
+      popover.classList.remove("active");
+    };
+    popover.appendChild(opt);
+  });
+
+  const divider = document.createElement("div");
+  divider.className = "picker-option-divider";
+  popover.appendChild(divider);
+
+  const resetOpt = document.createElement("div");
+  resetOpt.className = "picker-option";
+  resetOpt.dataset.colorId = "";
+  resetOpt.innerHTML =
+    '<span style="width:14px; text-align:center; flex:none;">↺</span><span>恢復預設底色</span>' +
+    (node.color ? '' : '<span style="margin-left:auto; color:var(--text-muted);">✓</span>');
+  resetOpt.onclick = function() {
+    delete node.color;
+    saveData();
+    renderCanvas();
+    popover.classList.remove("active");
+  };
+  popover.appendChild(resetOpt);
+
+  showPickerNear(popover, document.getElementById(node.id));
+}
+
+/* 彈窗要夾在畫面裡。節點可能被拖到邊邊，或在手機上佔掉大半個螢幕，
+   直接貼在節點下方常常會掉出去。 */
+function showPickerNear(popover, anchor) {
+  popover.classList.add("active");
+  popover.style.left = "-9999px";
+  popover.style.top = "-9999px";
+
+  const r = anchor ? anchor.getBoundingClientRect() : { left: 40, top: 40, bottom: 40 };
+  requestAnimationFrame(function() {
+    const pr = popover.getBoundingClientRect();
+    let left = r.left;
+    let top = r.bottom + 6;
+    if (left + pr.width > window.innerWidth - 8) left = window.innerWidth - pr.width - 8;
+    if (top + pr.height > window.innerHeight - 8) top = r.top - pr.height - 6;
+    popover.style.left = Math.max(8, left) + "px";
+    popover.style.top = Math.max(8, Math.min(top, window.innerHeight - pr.height - 8)) + "px";
+  });
 }
 
 /* ---------- 縮放指示（節點/連線都已在 SVG 裡，viewBox 自動處理縮放）---------- */
@@ -1485,6 +1594,9 @@ function buildCanvasNodeMenuItems(node, doc) {
     }},
     { icon: "🔗", label: "從此節點連線", action: function() {
         startConnect(node.id);
+    }},
+    { icon: "🎨", label: "節點底色", action: function() {
+        openNodeColorPicker(node);
     }},
     { type: "divider" },
     { icon: "🗑️", label: "從白板移除", danger: true, action: function() {
