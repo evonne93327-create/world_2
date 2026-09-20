@@ -24,6 +24,9 @@
 
   --accent: #AC3B2A;
   --accent-hover: #8C2E20;
+  /* 強調色拿來「寫字」時用這個。填色按鈕可以用飽和一點的色塊，
+     同一個顏色變成細細的筆畫就不夠讀了——夜間差別特別明顯。 */
+  --accent-text: #AC3B2A;
   --accent-light: #F6E2DA;
   --accent-line: #E6BBAC;
 
@@ -191,16 +194,17 @@
   --border-soft: #2E2821;
   --border-focus: #8FA4BC;
 
-  --text-primary: #EFE7DA;
+  --text-primary: #D6CFC5;
   --text-secondary: #BCB0A0;
-  --text-muted: #897F70;
+  --text-muted: #9E9384;   /* 原本 #897F70 對卡片只有 4.02，讀不動 */
 
   /* 原本的磚紅 #AC3B2A 在深色底上會沉下去，提亮並降一點彩度 */
-  --accent: #E07A65;
-  --accent-hover: #EE9077;
+  --accent: #C4634F;
+  --accent-hover: #D9755F;
+  --accent-text: #D2775F;   /* 比按鈕底色亮一階，當文字才夠對比 */
   --accent-light: #3B2520;
   --accent-line: #71392D;
-  --on-accent: #2A1712;
+  --on-accent: #1C0D09;
   --accent-glow: rgba(0,0,0,0.45);
 
   --jade: #7FB9A4;
