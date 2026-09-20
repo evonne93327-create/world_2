@@ -130,14 +130,27 @@ function importFromJSON(text) {
   const data = safeParseJSON(text);
   if (data === null) { alert("匯入失敗：JSON 格式錯誤。"); return; }
 
-  if (data && !Array.isArray(data) && Array.isArray(data.worldviews) && Array.isArray(data.folders) && Array.isArray(data.docs)) {
-    if (!confirm("偵測到這是「完整資料庫備份」檔案，匯入將會覆蓋目前所有資料，確定要繼續嗎？")) return;
-    appData = data;
-    if (!appData.colorPalette) appData.colorPalette = Object.assign({}, DEFAULT_PALETTES);
-    if (!appData.tagSettings) appData.tagSettings = {};
-    if (!appData.trash || typeof appData.trash !== "object") appData.trash = { docs: [], folders: [] };
-    if (!Array.isArray(appData.trash.docs)) appData.trash.docs = [];
-    if (!Array.isArray(appData.trash.folders)) appData.trash.folders = [];
+  if (looksLikeFullDatabase(data)) {
+    const problem = validateFullDatabase(data);
+    if (problem) { alert("匯入失敗：這個檔案的內容不完整或已損毀。\n\n" + problem); return; }
+
+    if (!confirm("偵測到這是「完整資料庫備份」檔案，匯入將會覆蓋目前所有資料。\n\n" +
+                 "為了保險，按下確定之後會先把你現在的資料下載一份備份檔，再進行匯入。\n\n" +
+                 "確定要繼續嗎？")) return;
+
+    /* 覆蓋之前先把現有資料存成檔案。原本是直接 appData = data 就洗掉了，
+       匯到一半發現拿錯檔案就回不去。備份走下載而不是存進 localStorage，
+       是因為這種時候 localStorage 很可能正好是滿的。 */
+    try {
+      // 檔名用 ASCII：實測非 ASCII 的檔名在 Chromium 下會變成沒有副檔名的
+      // "download"，這份是救命用的備份，名字一定要認得出來
+      downloadFile(JSON.stringify(appData, null, 2),
+        "worldbuilder_backup_before_import_" + Date.now() + ".json", "application/json");
+    } catch (e) {
+      if (!confirm("自動備份失敗，繼續匯入會蓋掉現有資料而且無法復原。還是要繼續嗎？")) return;
+    }
+
+    appData = normalizeImportedDatabase(data);
     saveData();
     location.reload();
     return;
@@ -149,6 +162,72 @@ function importFromJSON(text) {
   }
 
   alert("匯入失敗：無法辨識此 JSON 檔案的內容格式。");
+}
+
+function looksLikeFullDatabase(data) {
+  return !!data && !Array.isArray(data) && typeof data === "object" &&
+         Array.isArray(data.worldviews) && Array.isArray(data.folders) && Array.isArray(data.docs);
+}
+
+/* 回傳錯誤說明字串；沒問題就回傳 null。
+
+   原本只確認那三個欄位是陣列就整包換掉 appData，裡面是什麼完全不管。
+   一份缺欄位的檔案匯進來，app 會在之後某個地方才爆掉，而那時原本的資料
+   已經被洗掉了。寧可在這裡擋下來。 */
+function validateFullDatabase(data) {
+  if (!data.worldviews.length) return "檔案裡沒有任何世界觀。";
+
+  for (let i = 0; i < data.worldviews.length; i++) {
+    const w = data.worldviews[i];
+    if (!w || typeof w !== "object" || typeof w.id !== "string" || !w.id) {
+      return "第 " + (i + 1) + " 個世界觀缺少 id。";
+    }
+  }
+  const worldIds = data.worldviews.map(function(w) { return w.id; });
+
+  for (let i = 0; i < data.docs.length; i++) {
+    const d = data.docs[i];
+    if (!d || typeof d !== "object" || typeof d.id !== "string" || !d.id) {
+      return "第 " + (i + 1) + " 篇文檔缺少 id。";
+    }
+    if (worldIds.indexOf(d.worldId) === -1) {
+      return "文檔「" + (d.title || d.id) + "」指向一個不存在的世界觀。";
+    }
+  }
+  for (let i = 0; i < data.folders.length; i++) {
+    const f = data.folders[i];
+    if (!f || typeof f !== "object" || typeof f.id !== "string" || !f.id) {
+      return "第 " + (i + 1) + " 個資料夾缺少 id。";
+    }
+  }
+  return null;
+}
+
+/* 補齊可選欄位，並把每一篇的圖片過一次白名單。
+
+   __proto__ / constructor 這類鍵用 JSON.parse 讀進來只是普通屬性，不會
+   污染原型；但還是只挑認得的欄位重建，不要把整個外來物件當成自己的狀態。 */
+function normalizeImportedDatabase(data) {
+  const clean = {
+    worldviews: data.worldviews,
+    folders: data.folders,
+    docs: data.docs.map(function(d) {
+      return Object.assign({}, d, { images: sanitizeImageList(d.images) });
+    }),
+    colorPalette: (data.colorPalette && typeof data.colorPalette === "object")
+      ? data.colorPalette : Object.assign({}, DEFAULT_PALETTES),
+    tagSettings: (data.tagSettings && typeof data.tagSettings === "object") ? data.tagSettings : {},
+    trash: { docs: [], folders: [] }
+  };
+  if (data.trash && typeof data.trash === "object") {
+    if (Array.isArray(data.trash.docs)) {
+      clean.trash.docs = data.trash.docs.map(function(d) {
+        return Object.assign({}, d, { images: sanitizeImageList(d.images) });
+      });
+    }
+    if (Array.isArray(data.trash.folders)) clean.trash.folders = data.trash.folders;
+  }
+  return clean;
 }
 
 function importFromTXT(text) {
@@ -206,7 +285,7 @@ function importDocsArray(docsArray) {
       content: d.content || "",
       tags: Array.isArray(d.tags) ? d.tags : [],
       manualTags: computeManualTagsFor(d.content, d.tags),
-      images: Array.isArray(d.images) ? d.images : [],
+      images: sanitizeImageList(d.images),   // 來路不明的字串不要進 <img src>
       wordCount: (d.content || "").length,
       updatedAt: formatTime(new Date())
     });

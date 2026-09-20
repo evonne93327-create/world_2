@@ -72,8 +72,23 @@ function getEdgeStroke(colorId) {
 const COMMON_ICONS = ["📁", "🌍", "⚔️", "🛡️", "📜", "🏰", "🧙", "🐉", "🔮", "🔥", "💎", "🏛️", "👑", "🗡️", "🏹", "📖", "✨", "🔖"];
 const MARKDOWN_HEADING_REGEX = /^#\s+(.+)/;
 const CHAPTER_LINE_REGEX = /^(第[0-9一二三四五六七八九十百]+[章回卷節]|Chapter\s+[0-9]+)/i;
-const DOC_HISTORY_LIMIT = 5000;
+/* 復原紀錄的上限。
+
+   原本是 DOC_HISTORY_LIMIT = 5000，那是「步數」——但每一步存的是整篇
+   文章的完整複本，所以記憶體吃的是「步數 × 文章長度」，不是步數。
+   一篇五萬字的章節配 5000 步就是 2.5 億個字元，UTF-16 大約 500MB。
+   單位一開始就抓錯了。
+
+   改成兩道防線：步數擋住單篇文章，字元總量擋住「開了很多篇」的情況
+   （docHistory 是全域的，每開過一篇就多一份）。10M 個字元在 UTF-16
+   下大約 20MB，超過就從最舊的開始丟。 */
+const DOC_HISTORY_MAX_STEPS = 200;
+const DOC_HISTORY_MAX_CHARS = 10 * 1024 * 1024;
 const HISTORY_SNAPSHOT_THROTTLE_MS = 1200;
+
+/* 垃圾桶保留天數。超過就自動清掉，否則刪掉的東西會永遠佔著
+   localStorage 那 5MB——尤其是帶圖片的文檔。 */
+const TRASH_RETENTION_DAYS = 60;
 
 const INITIAL_APP_DATA = {
   colorPalette: Object.assign({}, DEFAULT_PALETTES),

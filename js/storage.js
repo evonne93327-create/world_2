@@ -49,6 +49,42 @@ function computeManualTagsFor(content, tags) {
   });
 })();
 
+/* 垃圾桶超過保留天數就自動清掉。
+
+   不清的話，刪掉的文檔會永遠佔著 localStorage 那 5MB——帶圖片的更兇，
+   一篇就可能幾百 KB。使用者以為刪掉了，空間卻沒還回來。
+
+   舊資料只有 deletedAt（給人看的 "2026-09-20 22:43" 字串），沒有
+   deletedTs。那種就拿 deletedAt 去 parse；連 parse 都失敗的（格式不明）
+   一律保留，寧可留著也不要誤刪別人的東西。 */
+(function purgeExpiredTrash() {
+  if (!appData.trash || typeof appData.trash !== "object") return;
+  const cutoff = Date.now() - TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+  const expired = function(item) {
+    if (!item) return false;
+    if (typeof item.deletedTs === "number") return item.deletedTs < cutoff;
+    if (typeof item.deletedAt === "string") {
+      // "2026-09-20 22:43" → Safari 不吃空白分隔，要換成 T
+      const t = Date.parse(item.deletedAt.replace(" ", "T"));
+      if (!isNaN(t)) return t < cutoff;
+    }
+    return false;   // 看不懂的一律保留
+  };
+
+  let removed = 0;
+  ["docs", "folders"].forEach(function(kind) {
+    if (!Array.isArray(appData.trash[kind])) return;
+    const before = appData.trash[kind].length;
+    appData.trash[kind] = appData.trash[kind].filter(function(item) { return !expired(item); });
+    removed += before - appData.trash[kind].length;
+  });
+
+  if (removed) {
+    try { localStorage.setItem("novel_multi_world_data_v5", JSON.stringify(appData)); } catch (err) {}
+  }
+})();
+
 /* 連線的「玫紅」拿掉了（改成跟標籤同一組七色：灰紅橙黃綠藍紫）。
    直接不管的話，原本用玫紅的線會掉回灰色，使用者本來想表達的區別就沒了。
    換成色相最接近的紅色，至少那條線還是「紅系」的。只跑一次，換完就存回去。 */
@@ -71,12 +107,77 @@ if (!appData.trash || typeof appData.trash !== "object") {
 if (!Array.isArray(appData.trash.docs)) appData.trash.docs = [];
 if (!Array.isArray(appData.trash.folders)) appData.trash.folders = [];
 
+/* localStorage 滿了的時候只提醒一次，不要每敲一個字就跳一次。
+   等到真的存成功了才把旗標放掉——中間都還在危險狀態。 */
+let storageFullNotified = false;
+
 function saveData() {
-  localStorage.setItem("novel_multi_world_data_v5", JSON.stringify(appData));
-  // 存檔時一併記錄當前的 UI 狀態
-  localStorage.setItem("novel_ui_state", JSON.stringify({ activeWorldId, activeDocId, activeFolderId }));
-  // 通知雲端同步（sync.js 載入順序在後，沒設定同步時這裡就是 no-op）
+  let ok = true;
+  try {
+    localStorage.setItem("novel_multi_world_data_v5", JSON.stringify(appData));
+    // 存檔時一併記錄當前的 UI 狀態
+    localStorage.setItem("novel_ui_state", JSON.stringify({ activeWorldId, activeDocId, activeFolderId }));
+    storageFullNotified = false;
+  } catch (err) {
+    /* localStorage 大約只有 5MB，而圖片是整張 base64 存進去的。滿了之後
+       setItem 會丟 QuotaExceededError——原本沒有接，於是：畫面上還是
+       使用者剛打的字、硬碟上卻還是上一次成功存檔的版本，而且完全沒有
+       任何提示。關掉分頁就沒了。
+
+       這裡一定要讓它浮出水面。 */
+    ok = false;
+    console.error("saveData 失敗：", err);
+    notifyStorageFull(err);
+  }
+
+  /* 就算本機存不下，還是要通知雲端同步。
+
+     原本例外會在這一行之前就中斷 saveData，連帶讓 onDataSaved() 不會被
+     呼叫——唯一還救得回資料的那條路剛好也啞了。雲端上傳讀的是記憶體裡
+     的 appData，不經過 localStorage，所以這條路還是通的。 */
   if (typeof onDataSaved === "function") onDataSaved();
+  return ok;
+}
+
+function notifyStorageFull(err) {
+  const isQuota = err && (err.name === "QuotaExceededError" ||
+                          err.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+                          err.code === 22);
+  if (storageFullNotified) return;
+  storageFullNotified = true;
+
+  const modal = document.getElementById("storageFullModal");
+  if (!modal) {
+    // 極端狀況（彈窗還沒載入）至少要吵一下，不能靜悄悄
+    alert(isQuota
+      ? "儲存空間已滿，這次的修改沒有存進這台裝置！請立刻備份。"
+      : "存檔失敗：" + (err && err.message ? err.message : "未知錯誤"));
+    return;
+  }
+
+  const detail = document.getElementById("storageFullDetail");
+  if (detail) {
+    detail.textContent = isQuota
+      ? "這台裝置的瀏覽器儲存空間（約 5MB）已經滿了，通常是文檔裡的圖片佔掉的。"
+      : "存檔時發生錯誤：" + (err && err.message ? err.message : "未知錯誤");
+  }
+  modal.classList.add("active");
+}
+
+function closeStorageFullModal() {
+  document.getElementById("storageFullModal").classList.remove("active");
+}
+
+/* 目前用掉多少 localStorage，給提示視窗顯示用 */
+function localStorageUsage() {
+  let used = 0;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      used += k.length + (localStorage.getItem(k) || "").length;
+    }
+  } catch (e) { return null; }
+  return used;
 }
 
 // 3. 確保重新整理或關閉分頁前，一定會記住最後的瀏覽位置

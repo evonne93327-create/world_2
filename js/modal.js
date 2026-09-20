@@ -634,7 +634,8 @@ function moveDocsToTrash(docsArray) {
  if (!docsArray || !docsArray.length) return;
  const now = formatTime(new Date());
  docsArray.forEach(function(d) {
- appData.trash.docs.push(Object.assign({}, d, { deletedAt: now }));
+ // deletedAt 是給人看的字串，deletedTs 才是拿來算保留期限的
+ appData.trash.docs.push(Object.assign({}, d, { deletedAt: now, deletedTs: Date.now() }));
  delete docHistory[d.id];
  });
 }
@@ -643,7 +644,7 @@ function moveFoldersToTrash(foldersArray) {
  if (!foldersArray || !foldersArray.length) return;
  const now = formatTime(new Date());
  foldersArray.forEach(function(f) {
- appData.trash.folders.push(Object.assign({}, f, { deletedAt: now }));
+ appData.trash.folders.push(Object.assign({}, f, { deletedAt: now, deletedTs: Date.now() }));
  });
 }
 
@@ -732,6 +733,7 @@ function restoreFolderFromTrash(folderId) {
  if (idx === -1) return;
  const [folder] = appData.trash.folders.splice(idx, 1);
  delete folder.deletedAt;
+ delete folder.deletedTs;
 
  if (folder.parentId && !appData.folders.some(f => f.id === folder.parentId)) {
  folder.parentId = null;
@@ -751,6 +753,7 @@ function restoreDocFromTrash(docId) {
  if (idx === -1) return;
  const [doc] = appData.trash.docs.splice(idx, 1);
  delete doc.deletedAt;
+ delete doc.deletedTs;
 
  if (doc.folderId && !appData.folders.some(f => f.id === doc.folderId)) {
  doc.folderId = null;

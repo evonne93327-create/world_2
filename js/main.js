@@ -23,6 +23,27 @@ function isMobileLayout() {
   return window.innerWidth <= 768 || window.innerHeight <= 500;
 }
 
+/* 圖片來源只接受 app 自己產生的 base64 資料 URI。
+
+   這些字串會被放進 <img src>。匯入的 JSON 可以在 images 欄位塞任何東西，
+   而原本沒有任何檢查——一個 x" onerror="..." 就跳出屬性、執行任意程式碼，
+   讀得到 localStorage 裡的全部世界觀資料、Supabase 的 session token 與
+   Google Drive 的 token。
+
+   白名單的字元集刻意不含引號、角括號與空白，所以即使被字串拼接進
+   屬性裡也跳不出來。 */
+const SAFE_IMAGE_SRC = /^data:image\/(png|jpeg|jpg|gif|webp|avif);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+function isSafeImageSrc(src) {
+  return typeof src === "string" && src.length < 12 * 1024 * 1024 && SAFE_IMAGE_SRC.test(src);
+}
+
+/* 匯入進來的圖片陣列一律過這一關，留下看得懂的、丟掉可疑的 */
+function sanitizeImageList(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter(isSafeImageSrc);
+}
+
 function escapeHtml(str) {
  if (!str) return '';
  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

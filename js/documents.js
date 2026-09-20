@@ -200,12 +200,48 @@ function pushHistorySnapshot(docId, content) {
   h.stack.push(content);
   h.index = h.stack.length - 1;
 
-  if (h.stack.length > DOC_HISTORY_LIMIT) {
+  // 單篇的步數上限
+  while (h.stack.length > DOC_HISTORY_MAX_STEPS) {
     h.stack.splice(1, 1);
     h.index--;
   }
+  trimHistoryMemory(docId);
 
   if (docId === activeDocId) updateUndoRedoButtons(docId);
+}
+
+/* 全部文檔的復原紀錄加起來的字元總量上限。
+
+   步數上限只擋得住單篇；docHistory 是全域的，開過的每一篇都留著自己那疊，
+   寫一整天下來開了三十篇就是三十疊。所以另外算總量，超過就從「最舊、而且
+   不是現在正在編輯的那篇」開始丟——正在寫的那篇不能被動，不然使用者會
+   發現自己按不了復原。 */
+function trimHistoryMemory(protectDocId) {
+  const total = function() {
+    let n = 0;
+    Object.keys(docHistory).forEach(function(id) {
+      docHistory[id].stack.forEach(function(t) { n += (t || "").length; });
+    });
+    return n;
+  };
+
+  if (total() <= DOC_HISTORY_MAX_CHARS) return;
+
+  // 先砍別篇：整疊只留目前那一格，復原紀錄沒了但內容還在
+  Object.keys(docHistory).forEach(function(id) {
+    if (id === protectDocId || id === activeDocId) return;
+    if (total() <= DOC_HISTORY_MAX_CHARS) return;
+    const h = docHistory[id];
+    h.stack = [h.stack[h.index]];
+    h.index = 0;
+  });
+
+  // 還是超過，才動正在編輯這篇最舊的那幾步
+  const h = docHistory[protectDocId] || docHistory[activeDocId];
+  while (h && h.stack.length > 1 && total() > DOC_HISTORY_MAX_CHARS) {
+    h.stack.splice(1, 1);
+    if (h.index > 0) h.index--;
+  }
 }
 
 function applyHistorySnapshot(doc, content) {
@@ -311,21 +347,79 @@ function renderTOC(content) {
   });
 }
 
+/* 圖片在存進去之前先縮小。
+
+   原本是 readAsDataURL 直接把原檔塞進 appData。手機拍的 4MB 照片轉成
+   base64 大約 5.3MB——localStorage 總共才 5MB，一張就爆，而且爆掉的時候
+   存檔是靜悄悄失敗的（見 storage.js 的 saveData）。
+
+   縮到長邊 1600px、JPEG 品質 0.82，一般照片會落在 150～300KB，二三十張
+   都還塞得下。1600px 是「白板縮圖與編輯器預覽都夠清楚」與「不要太大」
+   之間的折衷；原檔本來就比較小的話不會放大。 */
+const IMAGE_MAX_EDGE = 1600;
+const IMAGE_JPEG_QUALITY = 0.82;
+const IMAGE_MAX_BYTES = 1.5 * 1024 * 1024;   // 壓完還超過就擋下來
+
 function handleImageUpload(e) {
   const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(evt) {
-    const doc = appData.docs.find(d => d.id === activeDocId);
-    if (doc) {
-      if (!doc.images) doc.images = [];
-      doc.images.push(evt.target.result);
-      saveData();
-      renderDocImages(doc.images);
-    }
-  };
-  reader.readAsDataURL(file);
   e.target.value = "";
+  if (!file) return;
+
+  if (!/^image\//.test(file.type)) {
+    alert("這不是圖片檔。");
+    return;
+  }
+
+  compressImageFile(file).then(function(dataUrl) {
+    if (!isSafeImageSrc(dataUrl)) { alert("圖片處理失敗，請換一張試試。"); return; }
+    if (dataUrl.length > IMAGE_MAX_BYTES) {
+      alert("這張圖片壓縮後仍然有 " + Math.round(dataUrl.length / 1024) + " KB，太大了。\n" +
+            "瀏覽器的儲存空間只有約 5MB，請先用別的工具把它縮小再放進來。");
+      return;
+    }
+    const doc = appData.docs.find(d => d.id === activeDocId);
+    if (!doc) return;
+    if (!doc.images) doc.images = [];
+    doc.images.push(dataUrl);
+    saveData();
+    renderDocImages(doc.images);
+  }).catch(function(err) {
+    console.error(err);
+    alert("讀取圖片時發生錯誤，請換一張試試。");
+  });
+}
+
+function compressImageFile(file) {
+  return new Promise(function(resolve, reject) {
+    const reader = new FileReader();
+    reader.onerror = function() { reject(new Error("讀不到檔案")); };
+    reader.onload = function(evt) {
+      const img = new Image();
+      img.onerror = function() { reject(new Error("這個檔案不是瀏覽器認得的圖片")); };
+      img.onload = function() {
+        const scale = Math.min(1, IMAGE_MAX_EDGE / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        // JPEG 沒有透明度，先鋪白底，否則透明的地方會變成黑塊
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+
+        try {
+          resolve(canvas.toDataURL("image/jpeg", IMAGE_JPEG_QUALITY));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.src = evt.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function renderDocImages(images) {
@@ -334,11 +428,25 @@ function renderDocImages(images) {
   if (!images || images.length === 0) return;
 
   images.forEach(function(imgSrc, index) {
+    // 來路不明的字串不要進 <img src>（見 isSafeImageSrc）。用 DOM 屬性
+    // 設定而不是拼 HTML 字串，就算白名單哪天放寬了也跳不出屬性。
+    if (!isSafeImageSrc(imgSrc)) return;
+
     const box = document.createElement("div");
     box.className = "img-preview-box";
-    box.innerHTML = 
-      '<img src="' + imgSrc + '" alt="圖片">' +
-      '<button class="img-del-btn" title="刪除圖片" onclick="deleteDocImage(' + index + ')">✕</button>';
+
+    const img = document.createElement("img");
+    img.src = imgSrc;
+    img.alt = "圖片";
+
+    const del = document.createElement("button");
+    del.className = "img-del-btn";
+    del.title = "刪除圖片";
+    del.textContent = "✕";
+    del.onclick = function() { deleteDocImage(index); };
+
+    box.appendChild(img);
+    box.appendChild(del);
     strip.appendChild(box);
   });
 }

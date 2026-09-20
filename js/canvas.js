@@ -170,8 +170,9 @@ function renderCanvas() {
     const title = (doc.icon || '📄') + " " + (doc.title || "無標題文檔");
     const preview = (doc.content || "").replace(/\n/g, " ");
 
+    // 同樣只放行通過白名單的資料 URI（見 isSafeImageSrc）
     let imgHtml = "";
-    if (doc.images && doc.images.length > 0) {
+    if (doc.images && doc.images.length > 0 && isSafeImageSrc(doc.images[0])) {
       imgHtml = '<img style="width:100%; height:75px; object-fit:cover; border-radius:4px; margin-bottom:6px;" src="' + doc.images[0] + '">';
     }
 
