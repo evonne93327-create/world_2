@@ -817,25 +817,64 @@ main.content-workspace {
    浮動提示（hint）— 桌面在左下角、手機在上方
    常駐顯示，不再隱藏
    ---------------------------------------------------------- */
+/* 頂端橫幅：跟白板區一樣寬，不再是左下角那塊浮貼紙。
+   右側留出空間給收合按鈕，文字才不會跑到按鈕底下。 */
 .canvas-hint-floating {
   position: absolute;
-  left: 16px;
-  bottom: 16px;
-  max-width: 55%;
+  left: 0;
+  right: 0;
+  top: 0;
   background: rgba(42,36,32,0.72);
   color: #fff;
-  padding: 6px 12px;
-  border-radius: var(--radius-md);
+  padding: 8px 56px 8px 16px;
   font-size: 11px;
   font-weight: 500;
   line-height: 1.5;
   z-index: 20;
   pointer-events: none;
-  transition: opacity 0.4s ease, visibility 0.4s ease;
+  transition: opacity 0.25s ease, visibility 0.25s ease, transform 0.25s ease;
 }
 .canvas-hint-floating.is-hidden {
   opacity: 0;
   visibility: hidden;
+  transform: translateY(-100%);
+}
+
+/* 收合／展開的「?」按鈕。位置固定在白板右上角，展開或收起都在同一個
+   地方，不會因為橫幅消失就要去別處找它。 */
+.canvas-hint-toggle {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  width: var(--icon-28);
+  height: var(--icon-28);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: var(--fs-14);
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 21;
+  box-shadow: var(--shadow-sm);
+}
+.canvas-hint-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+/* 橫幅展開時按鈕壓在深色底上，要換成看得見的配色 */
+.canvas-hint-toggle.is-active {
+  background: rgba(255,255,255,0.16);
+  border-color: rgba(255,255,255,0.35);
+  color: #fff;
+}
+.canvas-hint-toggle.is-active:hover {
+  background: rgba(255,255,255,0.28);
+  border-color: rgba(255,255,255,0.6);
 }
 
 /* ----------------------------------------------------------
@@ -904,14 +943,12 @@ main.content-workspace {
    ---------------------------------------------------------- */
 @media (max-width: 768px) {
   .canvas-hint-floating {
-    left: 12px;
-    right: 12px;
-    top: 12px;
-    bottom: auto;
-    max-width: none;
     font-size: 10px;
-    padding: 5px 10px;
-    text-align: center;
+    padding: 6px 48px 6px 12px;
+  }
+  .canvas-hint-toggle {
+    top: 6px;
+    right: 8px;
   }
 
   /* 跟 .quickjump-fab 手機版完全相同的定位與尺寸 */

@@ -42,14 +42,39 @@ function resetCanvasView() {
   applySvgViewBox();
 }
 
-/* ---------- 提示 ---------- */
+/* ---------- 操作提示橫幅 ----------
+   收合狀態記在 localStorage：使用者關掉它通常是因為已經記住操作了，
+   每次開啟又跳回來只會讓人再關一次。 */
 
-function dismissCanvasHint() {}
+const CANVAS_HINT_KEY = "world_canvas_hint_hidden_v1";
+
+function isCanvasHintHidden() {
+  try {
+    return localStorage.getItem(CANVAS_HINT_KEY) === "1";
+  } catch (e) {
+    // 隱私模式之類讀不到 localStorage 的情況，就當作沒收起來
+    return false;
+  }
+}
 
 function applyCanvasHintVisibility() {
-  const hint = document.querySelector(".canvas-hint-text");
-  if (!hint) return;
-  hint.classList.remove("is-hidden");
+  const hint = document.getElementById("canvasHint");
+  const toggle = document.getElementById("canvasHintToggle");
+  const hidden = isCanvasHintHidden();
+
+  if (hint) hint.classList.toggle("is-hidden", hidden);
+  if (toggle) {
+    toggle.classList.toggle("is-active", !hidden);
+    toggle.setAttribute("aria-expanded", hidden ? "false" : "true");
+    toggle.title = hidden ? "顯示操作提示" : "隱藏操作提示";
+  }
+}
+
+function toggleCanvasHint() {
+  try {
+    localStorage.setItem(CANVAS_HINT_KEY, isCanvasHintHidden() ? "0" : "1");
+  } catch (e) { /* 存不了就只有這次有效，不影響操作 */ }
+  applyCanvasHintVisibility();
 }
 
 /* ---------- 倍數指示 ---------- */
