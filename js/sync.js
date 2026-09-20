@@ -20,11 +20,11 @@ let lastPushedPayload = null; // 內容沒變就不重送
    只放在記憶體的話下次開啟就不知道本機是髒的，
    會把別台裝置的版本當成最新而蓋掉這次的修改。 */
 function isLocalDirty() {
-  return localStorage.getItem(SYNC_DIRTY_KEY) === "1";
+  return safeStorageGet(SYNC_DIRTY_KEY) === "1";
 }
 function setLocalDirty(dirty) {
-  if (dirty) localStorage.setItem(SYNC_DIRTY_KEY, "1");
-  else localStorage.removeItem(SYNC_DIRTY_KEY);
+  if (dirty) safeStorageSet(SYNC_DIRTY_KEY, "1");
+  else safeStorageRemove(SYNC_DIRTY_KEY);
 }
 
 function setSyncStatus(status, detail) {
@@ -42,11 +42,11 @@ function setSyncStatus(status, detail) {
 const SYNC_PROVIDER_KEY = "world_sync_provider_v1";
 
 function loadProviderId() {
-  return localStorage.getItem(SYNC_PROVIDER_KEY) || "supabase";
+  return safeStorageGet(SYNC_PROVIDER_KEY) || "supabase";
 }
 
 function saveProviderId(id) {
-  localStorage.setItem(SYNC_PROVIDER_KEY, id);
+  safeStorageSet(SYNC_PROVIDER_KEY, id);
 }
 
 /* 同步流程一律透過這個物件跟後端講話，不直接碰 Supabase 或 Google 的東西 */
@@ -62,12 +62,69 @@ function syncIsActive() {
 /* ---------- 啟動時的對帳 ---------- */
 
 // 本機資料是否還是完全沒動過的預設範例
+/* 這台裝置是不是還停在出廠狀態（只有那幾篇範例文檔、一個字都沒改）。
+
+   原本是把整包 appData 轉成文字跟 INITIAL_APP_DATA 比對——但載入時
+   migrateDocTags() 已經先幫每篇補上 manualTags，而 INITIAL_APP_DATA 裡
+   沒有這個 key，所以兩串文字永遠不可能相同，這個函式永遠回傳 false。
+   之後再加任何欄位也會重蹈覆轍。
+
+   改成只看「認得出來的身分」：篇數一樣、id 一樣、標題與內文都沒被動過。
+   往資料結構加欄位不會影響這個判斷。
+
+   （這個函式有兩個用途：判斷要不要跳同步衝突，以及判斷有沒有還沒備份的
+   修改。壞掉的時候後者會讓全新安裝、一個字都沒寫就跳出備份提醒。） */
 function localLooksUntouched() {
   try {
-    return JSON.stringify(appData) === JSON.stringify(INITIAL_APP_DATA);
+    const initial = INITIAL_APP_DATA.docs || [];
+    const now = appData.docs || [];
+    if (now.length !== initial.length) return false;
+
+    for (let i = 0; i < initial.length; i++) {
+      const a = initial[i];
+      const b = now.find(function(d) { return d.id === a.id; });
+      if (!b) return false;
+      if ((b.title || "") !== (a.title || "")) return false;
+      if ((b.content || "") !== (a.content || "")) return false;
+    }
+
+    // 資料夾與世界觀的數量也要沒變，否則「只是還沒寫字，但已經建好架構了」
+    // 會被誤判成沒動過
+    if ((appData.folders || []).length !== (INITIAL_APP_DATA.folders || []).length) return false;
+    if ((appData.worldviews || []).length !== (INITIAL_APP_DATA.worldviews || []).length) return false;
+
+    /* 白板也要比。注意出廠預設本來就附了一個範例白板（兩個節點一條線），
+       所以不能寫成「白板上有東西就算動過」——那樣又會永遠回傳 false，
+       跟原本拿整包 JSON 比對是同一類錯誤。跟出廠那份的數量比才對。 */
+    const countOf = function(w) {
+      const c = (w && w.canvas) || {};
+      return (c.nodes || []).length + ":" + (c.edges || []).length + ":" + (c.notes || []).length;
+    };
+    for (let i = 0; i < (INITIAL_APP_DATA.worldviews || []).length; i++) {
+      const iw = INITIAL_APP_DATA.worldviews[i];
+      const nw = (appData.worldviews || []).find(function(w) { return w.id === iw.id; });
+      if (!nw) return false;
+      if (countOf(nw) !== countOf(iw)) return false;
+    }
+
+    return true;
   } catch (e) {
     return false;
   }
+}
+
+/* 採用雲端會不會讓內容變少。
+
+   只看篇數不夠——改標題不會變篇數，但整篇被刪掉就會。這裡刻意寬鬆：
+   只要雲端的文檔或世界觀比本機少，就算「可能會毀掉東西」，寧可多問一次。
+   使用者在別台裝置真的刪了文檔時也會問，那是對的：刪除本來就該確認一次。 */
+function remoteWouldLoseContent(remote) {
+  const rd = (remote && remote.data) || {};
+  const remoteDocs = Array.isArray(rd.docs) ? rd.docs.length : 0;
+  const remoteWorlds = Array.isArray(rd.worldviews) ? rd.worldviews.length : 0;
+  const localDocs = (appData.docs || []).length;
+  const localWorlds = (appData.worldviews || []).length;
+  return remoteDocs < localDocs || remoteWorlds < localWorlds;
 }
 
 function adoptRemote(row) {
@@ -77,7 +134,7 @@ function adoptRemote(row) {
   lastPushedPayload = JSON.stringify(appData);
 
   // 直接寫回 localStorage，不要走 saveData()，否則會又標成髒的、又排一次推送
-  localStorage.setItem("novel_multi_world_data_v5", JSON.stringify(appData));
+  safeStorageSet("novel_multi_world_data_v5", JSON.stringify(appData));
 
   // 套用雲端資料後，目前選取的文件可能已經不存在了
   if (activeDocId && !appData.docs.find(d => d.id === activeDocId)) {
@@ -97,6 +154,16 @@ function adoptRemote(row) {
 
 async function initSync() {
   renderSyncIndicator();
+
+  /* Google 雲端硬碟的權杖不存本機，每次重開都是空的。先靜默試著要回來，
+     不然 syncIsActive() 一定是 false，同步會在使用者毫不知情的狀況下關掉。
+     Supabase 的 session 有存在 localStorage，不需要這一步。 */
+  if (loadProviderId() === "gdrive" && typeof restoreGdriveSessionQuietly === "function") {
+    setSyncStatus("syncing", "正在恢復 Google 授權…");
+    await restoreGdriveSessionQuietly();
+    renderSyncIndicator();
+  }
+
   if (!syncIsActive()) { setSyncStatus("off"); return; }
 
   setSyncStatus("syncing", "正在對帳…");
@@ -104,8 +171,16 @@ async function initSync() {
     const remote = await P().pull();
     const state = loadSyncState();
 
-    // 雲端還沒有資料：把本機推上去當作第一版
+    /* 雲端還沒有資料：把本機推上去當作第一版。
+
+       但如果本機還是出廠範例（剛裝好就登入），推上去等於用範例資料佔住
+       雲端的第一版——之後其他裝置對帳時會看到一份「有效但內容是範例」的
+       雲端資料。不推，等使用者真的寫了東西再說。 */
     if (!remote) {
+      if (localLooksUntouched()) {
+        setSyncStatus("idle", "雲端還沒有資料，開始寫之後會自動上傳");
+        return;
+      }
       await pushNow(true);
       return;
     }
@@ -117,15 +192,30 @@ async function initSync() {
       return;
     }
 
-    // 雲端的版本跟本機記錄的不一樣，代表別的地方寫過。
-    // 本機沒有未推送的變更，或本機根本還是預設範例 → 直接採用雲端。
-    if (!isLocalDirty() || localLooksUntouched()) {
+    /* 雲端的版本跟本機記錄的不一樣，代表別的地方寫過。
+
+       但「版本不一樣」不等於「雲端比較新」。schema 裡資料列被重建時
+       version 會歸 1（supabase/schema.sql 的 trigger：insert 時 version := 1），
+       所以「本機記錄 57、雲端是 1」也算不一樣——那其實是雲端被重設了。
+
+       原本的判斷是「沒有待上傳的修改 → 直接採用雲端」。實測過：本機 200 篇、
+       雲端 2 篇，會直接覆蓋成 2 篇，寫進 localStorage，不問也不提示。
+       「沒有待上傳的修改」只代表沒東西要推，不代表本機的資料不值錢。
+
+       改成：只有在確定不會毀掉東西的時候才安靜採用，其餘一律跳出來問。 */
+    if (localLooksUntouched()) {
       adoptRemote(remote);
       setSyncStatus("idle", "已從雲端更新");
       return;
     }
 
-    // 兩邊都有變更 → 停下來問，不猜
+    if (!isLocalDirty() && !remoteWouldLoseContent(remote)) {
+      adoptRemote(remote);
+      setSyncStatus("idle", "已從雲端更新");
+      return;
+    }
+
+    // 兩邊都有變更，或採用雲端會少掉東西 → 停下來問，不猜
     openSyncConflictModal(remote);
   } catch (e) {
     setSyncStatus("error", e.message || "同步失敗");

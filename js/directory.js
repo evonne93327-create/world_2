@@ -87,8 +87,33 @@ function folderHasChildren(folderId) {
  appData.docs.some(d => d.folderId === folderId);
 }
 
+/* 搜尋時，這個資料夾（含它底下所有層）裡有沒有命中的文檔。
+
+   原本搜尋只過濾文檔、資料夾一律照畫，所以搜「騎士」會看到一整棵完整的
+   樹，兩筆結果散在裡面要自己用眼睛找。現在整個子樹都沒命中就不畫。
+
+   遞迴時把走過的資料夾記下來，資料損毀造成 parentId 繞成圈時才不會無限遞迴。 */
+function folderSubtreeHasMatch(worldId, folderId, search, seen) {
+ seen = seen || {};
+ if (seen[folderId]) return false;
+ seen[folderId] = true;
+
+ const hit = appData.docs.some(function(d) {
+ return d.worldId === worldId && d.folderId === folderId && docMatchesSearch(d, search);
+ });
+ if (hit) return true;
+
+ return appData.folders.some(function(f) {
+ return f.worldId === worldId && f.parentId === folderId &&
+ folderSubtreeHasMatch(worldId, f.id, search, seen);
+ });
+}
+
 function renderFolderLevel(worldId, parentId, parentElement, search) {
- const folders = appData.folders.filter(f => f.worldId === worldId && f.parentId === parentId);
+ let folders = appData.folders.filter(f => f.worldId === worldId && f.parentId === parentId);
+ if (search) {
+ folders = folders.filter(function(f) { return folderSubtreeHasMatch(worldId, f.id, search); });
+ }
 
  folders.forEach(function(folder) {
  const folderDiv = document.createElement("div");
@@ -242,6 +267,7 @@ function isDescendantOf(parentCheckId, targetFolderId) {
 function createDocRowElement(doc) {
  const row = document.createElement("div");
  row.className = "node-row-outer";
+ row.dataset.docId = doc.id;      // 讓 updateDocRowInPlace() 找得到這一列
  let rowStateClass = (doc.id === activeDocId ? " active" : "");
  if (isBatchDeleteMode && batchSelectedDocs.has(doc.id)) {
  rowStateClass += " batch-checked";
@@ -290,6 +316,30 @@ function createDocRowElement(doc) {
 
  attachContextMenu(row, function() { return buildDocMenuItems(doc); }, function() { return (doc.icon || '📄') + ' ' + (doc.title || '無標題文檔'); });
  return row;
+}
+
+/* 只更新側欄裡的某一列，不重畫整棵樹。
+
+   renderSidebarTree() 是 innerHTML = "" 之後整棵重建，實測 1500 篇文檔要
+   16ms。改標題這種「只有一列的文字變了」的情況不需要付這個代價——
+   結構沒變（沒有新增、刪除、搬移、也不是在搜尋），就地改字就好。
+
+   找不到那一列（例如正在搜尋、或它在收起來的資料夾裡）就什麼都不做：
+   那些情況下一次完整重畫自然會正確，不需要在這裡處理。 */
+function updateDocRowInPlace(doc) {
+  if (!doc) return;
+  const container = document.getElementById("worldTreeContainer");
+  if (!container) return;
+  const row = container.querySelector('[data-doc-id="' + CSS.escape(doc.id) + '"]');
+  if (!row) return;
+
+  const nameSpan = row.querySelector(".node-name");
+  if (nameSpan) nameSpan.textContent = doc.title || "無標題文檔";
+  const iconSpan = row.querySelector(".node-icon");
+  if (iconSpan) iconSpan.textContent = doc.icon || "📄";
+
+  const countDiv = row.querySelector(".node-row > div:last-child");
+  if (countDiv) countDiv.textContent = (doc.wordCount || 0) + "字";
 }
 
 function renderBreadcrumb() {

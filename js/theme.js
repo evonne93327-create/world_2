@@ -19,7 +19,7 @@ const THEME_CHOICES = ["auto", "light", "dark"];
 
 function getThemePref() {
   try {
-    const v = localStorage.getItem(THEME_KEY);
+    const v = safeStorageGet(THEME_KEY);
     return THEME_CHOICES.indexOf(v) >= 0 ? v : "auto";
   } catch (e) {
     return "auto";
@@ -51,7 +51,7 @@ function applyTheme(pref) {
 
 function setThemePref(pref) {
   if (THEME_CHOICES.indexOf(pref) < 0) pref = "auto";
-  try { localStorage.setItem(THEME_KEY, pref); } catch (e) {}
+  try { safeStorageSet(THEME_KEY, pref); } catch (e) {}
   applyTheme(pref);
   repaintThemedContent();
   renderThemeChoice();

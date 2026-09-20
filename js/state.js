@@ -69,11 +69,65 @@ function getEdgeStroke(colorId) {
   return (isDarkTheme() ? DARK_EDGE_COLORS[id] : EDGE_COLORS[id]).stroke;
 }
 
+/* localStorage 的安全存取。
+
+   不是只有「空間滿了」一種壞法：瀏覽器設定裡關掉網站資料、企業政策、
+   某些嚴格的隱私模式下，光是讀取 window.localStorage 這個屬性本身就會
+   丟 SecurityError。storage.js 原本第一行就直接讀它，沒有 try/catch——
+   一丟例外整個檔案就在那裡中斷，後面的 let 宣告全部沒執行到。函式因為
+   提升看起來還在，一呼叫就撞上 TDZ（實測：saveData() 丟
+   ReferenceError: Cannot access 'storageFullNotified' before initialization）。
+
+   結果是 app 看起來完全正常、打字切換都能用，但每次存檔都在背景丟例外，
+   什麼都沒存進去，而且不會告訴使用者。跟「空間滿了」同一類的靜默資料
+   遺失，只是觸發條件不同。
+
+   這三個工具讓所有存取都不會把呼叫端炸掉；真正需要知道「存進去了沒」的
+   地方（saveData）自己看回傳值。 */
+function storageAvailable() {
+  try {
+    const k = "__probe__";
+    window.localStorage.setItem(k, "1");
+    window.localStorage.removeItem(k);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function safeStorageGet(key) {
+  try { return window.localStorage.getItem(key); } catch (e) { return null; }
+}
+
+/* 存成功回傳 null，失敗回傳那個 error——呼叫端要據此決定怎麼告訴使用者 */
+function safeStorageSet(key, value) {
+  try { window.localStorage.setItem(key, value); return null; } catch (e) { return e; }
+}
+
+function safeStorageRemove(key) {
+  try { window.localStorage.removeItem(key); } catch (e) { /* 存不了就不用刪 */ }
+}
+
 const COMMON_ICONS = ["📁", "🌍", "⚔️", "🛡️", "📜", "🏰", "🧙", "🐉", "🔮", "🔥", "💎", "🏛️", "👑", "🗡️", "🏹", "📖", "✨", "🔖"];
 const MARKDOWN_HEADING_REGEX = /^#\s+(.+)/;
 const CHAPTER_LINE_REGEX = /^(第[0-9一二三四五六七八九十百]+[章回卷節]|Chapter\s+[0-9]+)/i;
-const DOC_HISTORY_LIMIT = 5000;
+/* 復原紀錄的上限。
+
+   原本是 DOC_HISTORY_LIMIT = 5000，那是「步數」——但每一步存的是整篇
+   文章的完整複本，所以記憶體吃的是「步數 × 文章長度」，不是步數。
+   一篇五萬字的章節配 5000 步就是 2.5 億個字元，UTF-16 大約 500MB。
+   單位一開始就抓錯了。
+
+   改成兩道防線：步數擋住單篇文章，字元總量擋住「開了很多篇」的情況
+   （docHistory 是全域的，每開過一篇就多一份）。10M 個字元在 UTF-16
+   下大約 20MB，超過就從最舊的開始丟。 */
+const DOC_HISTORY_MAX_STEPS = 200;
+const DOC_HISTORY_MAX_CHARS = 10 * 1024 * 1024;
 const HISTORY_SNAPSHOT_THROTTLE_MS = 1200;
+
+/* 垃圾桶保留天數。超過就自動清掉，否則刪掉的東西會永遠佔著
+   localStorage 那 5MB——尤其是帶圖片的文檔。 */
+const TRASH_RETENTION_DAYS = 60;
 
 const INITIAL_APP_DATA = {
   colorPalette: Object.assign({}, DEFAULT_PALETTES),

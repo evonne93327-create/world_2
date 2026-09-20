@@ -19,7 +19,7 @@ const SYNC_STATE_KEY = "world_sync_state_v1";
 
 function loadSyncConfig() {
   try {
-    const raw = localStorage.getItem(SYNC_CONFIG_KEY);
+    const raw = safeStorageGet(SYNC_CONFIG_KEY);
     if (!raw) return { url: "", anonKey: "" };
     const parsed = JSON.parse(raw);
     return { url: parsed.url || "", anonKey: parsed.anonKey || "" };
@@ -31,7 +31,7 @@ function loadSyncConfig() {
 function saveSyncConfig(url, anonKey) {
   // 結尾多打一個斜線是很常見的貼上失誤，這裡直接吸收掉
   const clean = (url || "").trim().replace(/\/+$/, "");
-  localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify({
+  safeStorageSet(SYNC_CONFIG_KEY, JSON.stringify({
     url: clean,
     anonKey: (anonKey || "").trim()
   }));
@@ -39,29 +39,29 @@ function saveSyncConfig(url, anonKey) {
 
 function loadSyncSession() {
   try {
-    return JSON.parse(localStorage.getItem(SYNC_SESSION_KEY)) || null;
+    return JSON.parse(safeStorageGet(SYNC_SESSION_KEY)) || null;
   } catch (e) {
     return null;
   }
 }
 
 function saveSyncSession(session) {
-  if (!session) localStorage.removeItem(SYNC_SESSION_KEY);
-  else localStorage.setItem(SYNC_SESSION_KEY, JSON.stringify(session));
+  if (!session) safeStorageRemove(SYNC_SESSION_KEY);
+  else safeStorageSet(SYNC_SESSION_KEY, JSON.stringify(session));
 }
 
 /* 這台裝置上一次同步到的版本號。推送時拿它跟雲端比對，
    不一致就代表別台裝置在這之間改過，必須先問使用者。 */
 function loadSyncState() {
   try {
-    return JSON.parse(localStorage.getItem(SYNC_STATE_KEY)) || { version: null, at: null };
+    return JSON.parse(safeStorageGet(SYNC_STATE_KEY)) || { version: null, at: null };
   } catch (e) {
     return { version: null, at: null };
   }
 }
 
 function saveSyncState(version, at) {
-  localStorage.setItem(SYNC_STATE_KEY, JSON.stringify({ version: version, at: at }));
+  safeStorageSet(SYNC_STATE_KEY, JSON.stringify({ version: version, at: at }));
 }
 
 function isSyncConfigured() {
@@ -343,7 +343,7 @@ function submitSyncConfig() {
 }
 
 function clearSyncConfig() {
-  localStorage.removeItem(SYNC_CONFIG_KEY);
+  safeStorageRemove(SYNC_CONFIG_KEY);
   syncAuth.signOut();
   setSyncStatus("off");
   renderSyncModal();

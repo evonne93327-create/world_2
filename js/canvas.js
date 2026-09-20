@@ -50,7 +50,7 @@ const CANVAS_HINT_KEY = "world_canvas_hint_hidden_v1";
 
 function isCanvasHintHidden() {
   try {
-    return localStorage.getItem(CANVAS_HINT_KEY) === "1";
+    return safeStorageGet(CANVAS_HINT_KEY) === "1";
   } catch (e) {
     // 隱私模式之類讀不到 localStorage 的情況，就當作沒收起來
     return false;
@@ -72,7 +72,7 @@ function applyCanvasHintVisibility() {
 
 function toggleCanvasHint() {
   try {
-    localStorage.setItem(CANVAS_HINT_KEY, isCanvasHintHidden() ? "0" : "1");
+    safeStorageSet(CANVAS_HINT_KEY, isCanvasHintHidden() ? "0" : "1");
   } catch (e) { /* 存不了就只有這次有效，不影響操作 */ }
   applyCanvasHintVisibility();
 }
@@ -128,6 +128,16 @@ function addCurrentDocToCanvas() {
    重新描字，而不是把一張畫好的貼圖拉伸，因此不會糊。
    ------------------------------------------------------------- */
 
+/* 節點量出來的高度。
+
+   原本是掛在 appData 裡的 node 物件上（node._lastH），那是量測用的暫存值，
+   卻會跟著被序列化進 localStorage、也會被同步上雲、匯出檔案裡也有。
+   改存在一個獨立的 Map，跟資料完全分開。
+
+   不需要清理：節點被刪掉之後那一筆留著也只是幾個位元組，而且 id 不重複，
+   下次用到同一個 id 一定是同一個節點。 */
+const nodeHeightCache = new Map();
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
@@ -157,7 +167,7 @@ function renderCanvas() {
     fo.setAttribute("x", node.x);
     fo.setAttribute("y", node.y);
     fo.setAttribute("width", CANVAS_NODE_W);
-    fo.setAttribute("height", node._lastH || 80);
+    fo.setAttribute("height", nodeHeightCache.get(node.id) || 80);
 
     const el = document.createElementNS(XHTML_NS, "div");
     el.className = "canvas-node";
@@ -168,12 +178,15 @@ function renderCanvas() {
     applyNodeColor(el, node);
 
     const title = (doc.icon || '📄') + " " + (doc.title || "無標題文檔");
-    const preview = (doc.content || "").replace(/\n/g, " ");
+    /* 只取前面一小段。原本是把整篇內文塞進 DOM，只靠 CSS 的
+       max-height:32px 裁掉——節點多又都是長文時，DOM 裡會有大量根本
+       看不到的文字。120 字已經比那兩行塞得下的還多。 */
+    const preview = (doc.content || "").replace(/\n/g, " ").slice(0, 120);
 
-    let imgHtml = "";
-    if (doc.images && doc.images.length > 0) {
-      imgHtml = '<img style="width:100%; height:75px; object-fit:cover; border-radius:4px; margin-bottom:6px;" src="' + doc.images[0] + '">';
-    }
+    // 白名單擋第一層；圖片本身改用 DOM 屬性掛上去，不拼進 HTML 字串（第二層）
+    const thumbSrc = (doc.images && doc.images.length > 0 && isSafeImageSrc(doc.images[0]))
+      ? doc.images[0] : null;
+    const imgHtml = thumbSrc ? '<div class="canvas-node-thumb"></div>' : "";
 
     el.innerHTML =
       '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
@@ -182,6 +195,17 @@ function renderCanvas() {
       imgHtml +
       '<div style="font-size:11px; color:var(--text-secondary); line-height:1.4; max-height:32px; overflow:hidden; margin-bottom:4px;">' + escapeHtml(preview) + '</div>' +
       '<div style="font-size:10px; color:var(--text-muted); text-align:right;">' + (doc.wordCount || 0) + ' 字</div>';
+
+    if (thumbSrc) {
+      const holder = el.querySelector(".canvas-node-thumb");
+      if (holder) {
+        const thumb = document.createElementNS(XHTML_NS, "img");
+        thumb.setAttribute("style",
+          "width:100%; height:75px; object-fit:cover; border-radius:4px; margin-bottom:6px;");
+        thumb.src = thumbSrc;
+        holder.replaceWith(thumb);
+      }
+    }
 
     el.ondblclick = function() {
       if (connectingSourceNodeId) return;
@@ -207,7 +231,7 @@ function renderCanvas() {
     if (!el) return;
     const fo = el.parentNode;
     const h = el.offsetHeight || 80;
-    node._lastH = h;
+    nodeHeightCache.set(node.id, h);
     if (fo && fo.setAttribute) fo.setAttribute("height", h);
   });
 
@@ -406,10 +430,7 @@ function createCanvasNote(wx, wy) {
 }
 
 function deleteCanvasNote(noteId) {
-  const canvas = getCurrentWorldCanvas();
-  canvas.notes = canvas.notes.filter(function(n) { return n.id !== noteId; });
-  saveData();
-  renderCanvas();
+  trashCanvasNote(noteId);   // 收進垃圾桶，不是直接丟掉
 }
 
 function startEditCanvasNote(noteId) {
@@ -1079,7 +1100,14 @@ function buildEdgeCurve(rectA, rectB, spread) {
   const cA = nodeCenter(rectA);
   const cB = nodeCenter(rectB);
   const dx = cB.x - cA.x, dy = cB.y - cA.y;
-  const len = Math.hypot(dx, dy) || 1;
+  const dist = Math.hypot(dx, dy);
+
+  /* 兩個節點被拖到幾乎完全重疊時，中心連線沒有方向可言。原本靠
+     `|| 1` 兜過去，結果下面的 t1 > t0 檢查會通過，回傳四個點全部重合的
+     退化曲線——底下那行註解本來就打算回傳 null，只是遮住了沒生效。
+     退化的路徑本身看不見，但箭頭標記會在那個點上畫出一個孤零零的箭頭。 */
+  if (dist < 1) return null;
+  const len = dist;
   const ux = dx / len, uy = dy / len;
 
   const theta = spread * MAX_DEPART_ANGLE;
@@ -1574,12 +1602,166 @@ function saveEditingEdge() {
 
 function deleteEditingEdge() {
   if (!editingEdgeId) return;
-  if (!confirm("確定要刪除此連線嗎？")) return;
-  const canvas = getCurrentWorldCanvas();
-  canvas.edges = canvas.edges.filter(e => e.id !== editingEdgeId);
-  saveData();
-  renderCanvasLines();
+  if (!confirm("確定要刪除此連線嗎？（可以到垃圾桶復原）")) return;
+  trashCanvasEdge(editingEdgeId);
   closeEdgeEditModal();
+}
+
+/* ---------- 白板物件的垃圾桶 ----------
+
+   節點、連線、便條紙原本刪了就沒了，沒有垃圾桶也沒有復原——但文檔那邊
+   刪掉是可以復原的。同一個 app 兩套規則，使用者會照文檔的習慣去按，
+   然後發現救不回來。
+
+   收進 appData.trash.canvas，跟文檔共用同一個垃圾桶視窗與 60 天清理。
+   刪節點時連著它的線要一起收走，復原時才能一起回來——不然復原了一個
+   沒有任何連線的孤零零節點。
+   ------------------------------------------------------------- */
+
+function pushCanvasTrash(entry) {
+  if (!appData.trash) appData.trash = { docs: [], folders: [], canvas: [] };
+  if (!Array.isArray(appData.trash.canvas)) appData.trash.canvas = [];
+  appData.trash.canvas.push(Object.assign({
+    worldId: activeWorldId,
+    deletedAt: formatTime(new Date()),
+    deletedTs: Date.now()
+  }, entry));
+}
+
+function trashCanvasNode(nodeId) {
+  const canvas = getCurrentWorldCanvas();
+  const node = canvas.nodes.find(n => n.id === nodeId);
+  if (!node) return;
+  const edges = canvas.edges.filter(e => e.source === nodeId || e.target === nodeId);
+  const doc = appData.docs.find(d => d.id === node.docId);
+
+  pushCanvasTrash({
+    kind: "node",
+    label: (doc ? (doc.icon || "📄") + " " + (doc.title || "無標題文檔") : "（文檔已不存在）"),
+    node: node,
+    edges: edges
+  });
+
+  canvas.nodes = canvas.nodes.filter(n => n.id !== nodeId);
+  canvas.edges = canvas.edges.filter(e => e.source !== nodeId && e.target !== nodeId);
+  saveData();
+  renderCanvas();
+}
+
+function trashCanvasEdge(edgeId) {
+  const canvas = getCurrentWorldCanvas();
+  const edge = canvas.edges.find(e => e.id === edgeId);
+  if (!edge) return;
+
+  const nameOf = function(nid) {
+    const n = canvas.nodes.find(x => x.id === nid);
+    const d = n && appData.docs.find(x => x.id === n.docId);
+    return d ? (d.title || "無標題") : "?";
+  };
+
+  pushCanvasTrash({
+    kind: "edge",
+    label: nameOf(edge.source) + " → " + nameOf(edge.target) + (edge.label ? "（" + edge.label + "）" : ""),
+    edge: edge
+  });
+
+  canvas.edges = canvas.edges.filter(e => e.id !== edgeId);
+  saveData();
+  renderCanvas();
+}
+
+function trashCanvasNote(noteId) {
+  const canvas = getCurrentWorldCanvas();
+  const note = (canvas.notes || []).find(n => n.id === noteId);
+  if (!note) return;
+
+  pushCanvasTrash({
+    kind: "note",
+    label: (note.text || "").slice(0, 20) || "（空白便條紙）",
+    note: note
+  });
+
+  canvas.notes = canvas.notes.filter(n => n.id !== noteId);
+  saveData();
+  renderCanvas();
+}
+
+/* 從垃圾桶把白板物件放回去。節點連同它的線一起回來；線要回去的話兩端的
+   節點都還得在，否則會出現連到空氣的線。 */
+function restoreCanvasTrashItem(index) {
+  const list = (appData.trash && appData.trash.canvas) || [];
+  const entry = list[index];
+  if (!entry) return false;
+
+  const world = appData.worldviews.find(w => w.id === entry.worldId);
+  if (!world) { alert("這個項目所屬的世界觀已經不存在了，無法復原。"); return false; }
+  if (!world.canvas) world.canvas = { nodes: [], edges: [], notes: [] };
+  const c = world.canvas;
+  if (!Array.isArray(c.nodes)) c.nodes = [];
+  if (!Array.isArray(c.edges)) c.edges = [];
+  if (!Array.isArray(c.notes)) c.notes = [];
+
+  if (entry.kind === "node") {
+    if (!appData.docs.find(d => d.id === entry.node.docId)) {
+      alert("這個節點對應的文檔已經不在了（可能還在垃圾桶裡）。請先復原那篇文檔。");
+      return false;
+    }
+    if (!c.nodes.find(n => n.id === entry.node.id)) c.nodes.push(entry.node);
+    (entry.edges || []).forEach(function(e) {
+      const bothEnds = c.nodes.find(n => n.id === e.source) && c.nodes.find(n => n.id === e.target);
+      if (bothEnds && !c.edges.find(x => x.id === e.id)) c.edges.push(e);
+    });
+  } else if (entry.kind === "edge") {
+    const e = entry.edge;
+    if (!c.nodes.find(n => n.id === e.source) || !c.nodes.find(n => n.id === e.target)) {
+      alert("這條連線兩端的節點不是都還在白板上，無法復原。");
+      return false;
+    }
+    if (!c.edges.find(x => x.id === e.id)) c.edges.push(e);
+  } else if (entry.kind === "note") {
+    if (!c.notes.find(n => n.id === entry.note.id)) c.notes.push(entry.note);
+  } else {
+    return false;
+  }
+
+  appData.trash.canvas.splice(index, 1);
+  saveData();
+  refreshCanvasIfVisible();
+  return true;
+}
+
+/* 文檔被刪掉之後，白板上指向它的節點與連線原本還留在資料裡——畫的時候
+   只是跳過不畫（見 renderCanvas 的 if (!doc) return），資料本身沒清，
+   用久了會一直累積，佔著本來就只有 5MB 的空間。
+
+   跟著文檔一起收進垃圾桶：這樣復原文檔之後，節點也回得來。 */
+function trashOrphanNodesForDocs(docIds) {
+  if (!docIds || !docIds.length) return;
+  const ids = {};
+  docIds.forEach(function(id) { ids[id] = true; });
+
+  appData.worldviews.forEach(function(w) {
+    const c = w.canvas;
+    if (!c || !Array.isArray(c.nodes)) return;
+    const doomed = c.nodes.filter(function(n) { return ids[n.docId]; });
+    if (!doomed.length) return;
+
+    doomed.forEach(function(node) {
+      const edges = (c.edges || []).filter(e => e.source === node.id || e.target === node.id);
+      pushCanvasTrash({
+        kind: "node",
+        worldId: w.id,
+        label: "（隨文檔一起刪除的白板節點）",
+        node: node,
+        edges: edges
+      });
+    });
+
+    const doomedIds = {};
+    doomed.forEach(function(n) { doomedIds[n.id] = true; });
+    c.nodes = c.nodes.filter(n => !doomedIds[n.id]);
+    c.edges = (c.edges || []).filter(e => !doomedIds[e.source] && !doomedIds[e.target]);
+  });
 }
 
 /* ---------- 節點右鍵 / 長按選單 ---------- */
@@ -1598,11 +1780,7 @@ function buildCanvasNodeMenuItems(node, doc) {
     }},
     { type: "divider" },
     { icon: "🗑️", label: "從白板移除", danger: true, action: function() {
-        const canvas = getCurrentWorldCanvas();
-        canvas.nodes = canvas.nodes.filter(n => n.id !== node.id);
-        canvas.edges = canvas.edges.filter(e => e.source !== node.id && e.target !== node.id);
-        saveData();
-        renderCanvas();
+        trashCanvasNode(node.id);
     }}
   ];
 }

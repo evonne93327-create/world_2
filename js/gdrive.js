@@ -17,7 +17,12 @@
 const GDRIVE_CONFIG_KEY = "world_gdrive_config_v1";
 const GDRIVE_FILE_KEY = "world_gdrive_file_v1";
 const GDRIVE_FILE_NAME = "worldbuilder_data.json";
-const GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+/* drive.file：只碰得到 app 自己建立的檔案，碰不到你雲端硬碟裡的其他東西。
+   openid email：只為了把「連到哪個 Google 帳號」顯示出來——原本
+   gdriveEmail 從頭到尾沒有任何一行賦值，永遠顯示「已授權」，
+   你不知道資料同步到誰的帳號去了。 */
+const GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file openid email";
+const GDRIVE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
 const GIS_SRC = "https://accounts.google.com/gsi/client";
 
 /* 存取權杖只放在記憶體：它一小時就過期，寫進 localStorage
@@ -29,23 +34,23 @@ let gisLoading = null;
 
 function loadGdriveConfig() {
   try {
-    return JSON.parse(localStorage.getItem(GDRIVE_CONFIG_KEY)) || { clientId: "" };
+    return JSON.parse(safeStorageGet(GDRIVE_CONFIG_KEY)) || { clientId: "" };
   } catch (e) {
     return { clientId: "" };
   }
 }
 
 function saveGdriveConfig(clientId) {
-  localStorage.setItem(GDRIVE_CONFIG_KEY, JSON.stringify({ clientId: (clientId || "").trim() }));
+  safeStorageSet(GDRIVE_CONFIG_KEY, JSON.stringify({ clientId: (clientId || "").trim() }));
 }
 
 function loadGdriveFileId() {
-  return localStorage.getItem(GDRIVE_FILE_KEY) || null;
+  return safeStorageGet(GDRIVE_FILE_KEY) || null;
 }
 
 function saveGdriveFileId(id) {
-  if (id) localStorage.setItem(GDRIVE_FILE_KEY, id);
-  else localStorage.removeItem(GDRIVE_FILE_KEY);
+  if (id) safeStorageSet(GDRIVE_FILE_KEY, id);
+  else safeStorageRemove(GDRIVE_FILE_KEY);
 }
 
 function gdriveError(message, status) {
@@ -95,6 +100,8 @@ function requestGdriveToken(interactive) {
           }
           gdriveToken = resp.access_token;
           gdriveTokenExpiresAt = Date.now() + (resp.expires_in || 3600) * 1000;
+          // 撈帳號是附帶的，失敗不影響同步本身
+          fetchGdriveEmail(gdriveToken);
           resolve(gdriveToken);
         },
         error_callback: function(err) {
@@ -104,6 +111,35 @@ function requestGdriveToken(interactive) {
       client.requestAccessToken();
     });
   });
+}
+
+function fetchGdriveEmail(token) {
+  return fetch(GDRIVE_USERINFO_URL, { headers: { "Authorization": "Bearer " + token } })
+    .then(function(res) { return res.ok ? res.json() : null; })
+    .then(function(info) {
+      if (info && info.email) {
+        gdriveEmail = info.email;
+        if (typeof renderSyncIndicator === "function") renderSyncIndicator();
+      }
+    })
+    .catch(function() { /* 顯示帳號是加分項，拿不到就維持「已授權」 */ });
+}
+
+/* 開啟 app 時試著靜默把權杖要回來。
+
+   權杖刻意不存 localStorage（那是對的，權杖不該落地），但結果是每次重開
+   記憶體裡就沒有了 → syncIsActive() 是 false → initSync() 直接 return →
+   同步整個悄悄關掉，而且不會告訴你。你以為同步開著，其實整天都沒上傳。
+
+   靜默模式（interactive=false）在使用者先前授權過、而且 Google 還記得他的
+   時候不會跳任何視窗，正好適合開場時試一次。拿不到就安靜放棄，維持
+   「未登入」讓使用者自己點——不要在開場彈一個授權視窗嚇人。 */
+function restoreGdriveSessionQuietly() {
+  if (!loadGdriveConfig().clientId) return Promise.resolve(false);
+  if (gdriveToken) return Promise.resolve(true);
+  return requestGdriveToken(false)
+    .then(function() { return true; })
+    .catch(function() { return false; });
 }
 
 /* 提早 60 秒換新的，免得請求送到一半剛好過期 */
@@ -317,7 +353,7 @@ function submitGdriveConfig() {
 }
 
 function clearGdriveConfig() {
-  localStorage.removeItem(GDRIVE_CONFIG_KEY);
+  safeStorageRemove(GDRIVE_CONFIG_KEY);
   gdriveProvider.signOut();
   setSyncStatus("off");
   renderSyncModal();

@@ -55,14 +55,42 @@ function loadDocToEditor(docId) {
   ensureDocHistory(doc.id, doc.content || "");
 }
 
+/* 標題每敲一個字原本都會 saveData() ＋ 重畫整棵側欄樹 ＋ 重畫麵包屑。
+   saveData() 是把整包 appData 序列化寫進 localStorage。實測 1500 篇文檔時，
+   敲一個字要 112ms（序列化 42ms、重畫樹 16ms），大概每秒只打得了 9 個字。
+
+   內文本來就有 400ms 的 debounce，標題沒有。補上同一套：
+   - 記憶體裡的 doc.title 立刻更新，畫面上該跟著變的（麵包屑、側欄那一列、
+     快速跳轉）也立刻更新——那幾個都是常數成本。
+   - 只有 saveData() 進 debounce。
+   - 側欄改成只更新受影響的那一列，不重畫整棵樹。 */
+let titlePersistTimer = null;
+let pendingTitleDocId = null;
+
+function schedulePersistTitle(docId) {
+  pendingTitleDocId = docId;
+  if (titlePersistTimer) clearTimeout(titlePersistTimer);
+  titlePersistTimer = setTimeout(function() {
+    titlePersistTimer = null;
+    flushPendingTitlePersist();
+  }, 400);
+}
+
+function flushPendingTitlePersist() {
+  if (!titlePersistTimer && !pendingTitleDocId) return;
+  if (titlePersistTimer) { clearTimeout(titlePersistTimer); titlePersistTimer = null; }
+  pendingTitleDocId = null;
+  saveData();
+}
+
 function onTitleChange() {
   const doc = appData.docs.find(d => d.id === activeDocId);
   if (!doc) return;
   doc.title = document.getElementById("docTitleInput").value;
   doc.updatedAt = formatTime(new Date());
   document.getElementById("statUpdatedAt").textContent = doc.updatedAt;
-  saveData();
-  renderSidebarTree();
+  schedulePersistTitle(doc.id);
+  updateDocRowInPlace(doc);
   renderBreadcrumb();
   if (document.getElementById("quickJumpPanel").classList.contains("active")) {
     document.getElementById("quickJumpDocTitle").textContent = doc.title || "未命名文檔";
@@ -88,6 +116,67 @@ function recomputeDocFromContent(doc, text) {
   });
 }
 
+/* 每敲一個字，原本會把整篇內文掃過好幾遍：算字數、抽標籤（兩輪正規
+   表示式）、重建章節目錄、重畫標籤列、重畫麵包屑。實測單篇 14 萬字時
+   一個字要 55ms，其中光 recomputeDocFromContent 就 17.5ms——打起來會黏。
+
+   拆成兩段：
+   - 立刻要做的只有「把字記進記憶體」跟「讓輸入框長高」。這兩件的成本
+     跟文章長度無關，不能延後，延後了畫面會頓。
+   - 其餘全部是「從內文推導出來的顯示」——字數、標籤、章節目錄、麵包屑。
+     晚 200ms 更新完全看不出來，但省掉的是每一鍵掃一次全文。
+
+   200ms 比存檔的 400ms 短：字數要先跟上，不然使用者會覺得它壞了。 */
+const DERIVED_UI_DELAY_MS = 200;
+let derivedUiTimer = null;
+let pendingDerivedDocId = null;
+
+function scheduleDerivedUi(docId) {
+  pendingDerivedDocId = docId;
+  if (derivedUiTimer) clearTimeout(derivedUiTimer);
+  derivedUiTimer = setTimeout(function() {
+    derivedUiTimer = null;
+    flushDerivedUi();
+  }, DERIVED_UI_DELAY_MS);
+}
+
+function flushDerivedUi() {
+  if (derivedUiTimer) { clearTimeout(derivedUiTimer); derivedUiTimer = null; }
+  const docId = pendingDerivedDocId;
+  pendingDerivedDocId = null;
+  if (!docId) return;
+
+  const doc = appData.docs.find(d => d.id === docId);
+  if (!doc) return;
+  const text = doc.content || "";
+
+  // 標題空白時用第一行當標題
+  const titleInput = document.getElementById("docTitleInput");
+  if (titleInput && !titleInput.value.trim()) {
+    doc.title = (text.trim().split("\n")[0] || "").substring(0, 24);
+  }
+
+  recomputeDocFromContent(doc, text);
+
+  if (docId !== activeDocId) return;   // 已經切到別篇了，畫面不用更新
+
+  const wc = document.getElementById("statWordCount");
+  if (wc) wc.textContent = doc.wordCount;
+  const ua = document.getElementById("statUpdatedAt");
+  if (ua) ua.textContent = doc.updatedAt;
+
+  renderBreadcrumb();
+  renderTOC(text);
+  renderLiveHashtags(doc.tags);
+  updateDocRowInPlace(doc);
+
+  if (document.getElementById("quickJumpPanel").classList.contains("active")) {
+    renderQuickJumpList(text);
+    document.getElementById("quickJumpWordCount").textContent = doc.wordCount;
+    document.getElementById("quickJumpUpdatedAt").textContent = doc.updatedAt;
+  }
+}
+
 function onContentChange() {
   const doc = appData.docs.find(d => d.id === activeDocId);
   if (!doc) return;
@@ -98,29 +187,59 @@ function onContentChange() {
   const textarea = document.getElementById("docContentInput");
   const text = textarea.value;
   doc.content = text;
-  autoGrowTextarea(textarea);
-
-  if (!document.getElementById("docTitleInput").value.trim()) {
-    const firstLine = text.trim().split("\n")[0] || "";
-    doc.title = firstLine.substring(0, 24);
-  }
-
-  recomputeDocFromContent(doc, text);
-  document.getElementById("statWordCount").textContent = doc.wordCount;
-
   doc.updatedAt = formatTime(new Date());
-  document.getElementById("statUpdatedAt").textContent = doc.updatedAt;
+  autoGrowTextareaFast(textarea);
 
-  renderBreadcrumb();
-  renderTOC(text);
-  renderLiveHashtags(doc.tags);
-  if (document.getElementById("quickJumpPanel").classList.contains("active")) {
-    renderQuickJumpList(text);
-    document.getElementById("quickJumpWordCount").textContent = doc.wordCount;
-    document.getElementById("quickJumpUpdatedAt").textContent = doc.updatedAt;
+  scheduleDerivedUi(doc.id);
+  scheduleContentPersist(doc.id, text);
+}
+
+/* 打字時用的快速版本。
+
+   autoGrowTextarea() 會把高度歸零再讀 scrollHeight，等於強迫瀏覽器把整篇
+   重新排版兩次。文章短的時候無所謂，一萬行的時候實測一鍵要 196ms。
+
+   但「在同一行裡打字」不會改變需要的高度。所以先數換行數（純字串掃描，
+   八萬字約 0.7ms），跟上次一樣就直接跳過重量——實測降到 0.2ms。
+
+   兩個漏網的情況用一個延後的完整量測補回來：
+   - 某一行長到自動換行，視覺上多了一行但換行數沒變
+   - 刪掉內容之後高度該縮回去（scrollHeight 不會告訴你這件事）
+   寬度變了（轉向、視窗縮放）也是靠那個延後的量測收尾——不能放進比對的
+   鍵裡，讀寬度本身就要排版。 */
+let lastGrowKey = null;
+let growCorrectTimer = null;
+
+function countNewlines(s) {
+  let n = 1;
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
+  return n;
+}
+
+function autoGrowTextareaFast(el) {
+  if (!el) return;
+
+  /* 這個鍵裡只能放「不需要排版就拿得到」的東西。
+
+     第一版我把 el.clientWidth 也放進來（想偵測轉向／視窗縮放），結果每敲
+     一個字都比原本更慢——讀 clientWidth 跟讀 scrollHeight 一樣會強迫瀏覽器
+     排版，我想避開的成本自己又叫了一次（實測 196ms → 219ms）。
+     寬度變化交給下面那個延後的完整量測處理就好。 */
+  const key = countNewlines(el.value);
+
+  if (key !== lastGrowKey) {
+    lastGrowKey = key;
+    autoGrowTextarea(el);
+    return;
   }
 
-  scheduleContentPersist(doc.id, text);
+  // 行數沒變：這一鍵不重量，但排一次延後的完整量測收尾
+  if (growCorrectTimer) clearTimeout(growCorrectTimer);
+  growCorrectTimer = setTimeout(function() {
+    growCorrectTimer = null;
+    lastGrowKey = null;      // 下次一定重量
+    autoGrowTextarea(el);
+  }, 250);
 }
 
 function autoGrowTextarea(el) {
@@ -164,6 +283,9 @@ function scheduleContentPersist(docId, text) {
 }
 
 function flushPendingContentPersist() {
+  flushPendingTitlePersist();   // 標題跟內文一起補存，兩邊都不要掉字
+  flushDerivedUi();             // 字數與標籤要先算完，不然存進去的是舊的
+
   const hadPending = !!contentPersistTimer || !!historySnapshotTimer;
 
   if (contentPersistTimer) {
@@ -186,9 +308,25 @@ function flushPendingContentPersist() {
 
 function ensureDocHistory(docId, content) {
   if (!docHistory[docId]) {
-    docHistory[docId] = { stack: [content], index: 0 };
+    docHistory[docId] = { stack: [content], index: 0, sel: [null] };
   }
   updateUndoRedoButtons(docId);
+}
+
+/* 自己接管了 Ctrl+Z，就要自己負責游標。
+
+   applyHistorySnapshot() 直接覆寫 textarea.value，瀏覽器會把游標丟到最後，
+   復原兩三次之後使用者就不知道自己在哪了。快照時一起把選取範圍記下來，
+   套用時還原。
+
+   選取範圍存在跟 stack 平行的 sel 陣列，不跟內文放在同一個物件裡——
+   記憶體上限那段是照字元總量算的（見 trimHistoryMemory），
+   把字串換成物件會把那套計算弄複雜。 */
+function currentSelectionOf(docId) {
+  if (docId !== activeDocId) return null;
+  const ta = document.getElementById("docContentInput");
+  if (!ta) return null;
+  return [ta.selectionStart, ta.selectionEnd];
 }
 
 function pushHistorySnapshot(docId, content) {
@@ -196,23 +334,76 @@ function pushHistorySnapshot(docId, content) {
   if (!h) return;
   if (h.stack[h.index] === content) return;
 
+  if (!h.sel) h.sel = [];
+  h.sel = h.sel.slice(0, h.index + 1);
+  h.sel.push(currentSelectionOf(docId));
+
   h.stack = h.stack.slice(0, h.index + 1);
   h.stack.push(content);
   h.index = h.stack.length - 1;
 
-  if (h.stack.length > DOC_HISTORY_LIMIT) {
+  // 單篇的步數上限。sel 要跟著一起剪，否則索引會對不上內容
+  while (h.stack.length > DOC_HISTORY_MAX_STEPS) {
     h.stack.splice(1, 1);
+    if (h.sel) h.sel.splice(1, 1);
     h.index--;
   }
+  trimHistoryMemory(docId);
 
   if (docId === activeDocId) updateUndoRedoButtons(docId);
 }
 
-function applyHistorySnapshot(doc, content) {
+/* 全部文檔的復原紀錄加起來的字元總量上限。
+
+   步數上限只擋得住單篇；docHistory 是全域的，開過的每一篇都留著自己那疊，
+   寫一整天下來開了三十篇就是三十疊。所以另外算總量，超過就從「最舊、而且
+   不是現在正在編輯的那篇」開始丟——正在寫的那篇不能被動，不然使用者會
+   發現自己按不了復原。 */
+function trimHistoryMemory(protectDocId) {
+  const total = function() {
+    let n = 0;
+    Object.keys(docHistory).forEach(function(id) {
+      docHistory[id].stack.forEach(function(t) { n += (t || "").length; });
+    });
+    return n;
+  };
+
+  if (total() <= DOC_HISTORY_MAX_CHARS) return;
+
+  // 先砍別篇：整疊只留目前那一格，復原紀錄沒了但內容還在
+  Object.keys(docHistory).forEach(function(id) {
+    if (id === protectDocId || id === activeDocId) return;
+    if (total() <= DOC_HISTORY_MAX_CHARS) return;
+    const h = docHistory[id];
+    h.stack = [h.stack[h.index]];
+    if (h.sel) h.sel = [h.sel[h.index]];
+    h.index = 0;
+  });
+
+  // 還是超過，才動正在編輯這篇最舊的那幾步
+  const h = docHistory[protectDocId] || docHistory[activeDocId];
+  while (h && h.stack.length > 1 && total() > DOC_HISTORY_MAX_CHARS) {
+    h.stack.splice(1, 1);
+    if (h.sel) h.sel.splice(1, 1);
+    if (h.index > 0) h.index--;
+  }
+}
+
+function applyHistorySnapshot(doc, content, selection) {
   doc.content = content;
   const textarea = document.getElementById("docContentInput");
   textarea.value = content;
   autoGrowTextarea(textarea);
+
+  /* 還原游標。內容換過了，位置要夾在新長度裡面，否則會丟出例外或跳到怪地方。
+     沒有記錄到選取範圍的（例如從別的裝置同步過來的舊資料）就放在結尾。 */
+  const max = content.length;
+  const start = selection ? Math.min(Math.max(0, selection[0]), max) : max;
+  const end = selection ? Math.min(Math.max(start, selection[1]), max) : max;
+  try {
+    textarea.focus();
+    textarea.setSelectionRange(start, end);
+  } catch (e) { /* textarea 還沒掛上時忽略 */ }
   // 復原／取消復原是整段換掉內文，標示的位置會完全對不上
   if (typeof clearSearchHighlight === "function") clearSearchHighlight();
 
@@ -242,7 +433,7 @@ function undoDocContent() {
   if (!h || h.index <= 0) return;
 
   h.index--;
-  applyHistorySnapshot(doc, h.stack[h.index]);
+  applyHistorySnapshot(doc, h.stack[h.index], h.sel && h.sel[h.index]);
   updateUndoRedoButtons(doc.id);
 }
 
@@ -254,7 +445,7 @@ function redoDocContent() {
   if (!h || h.index >= h.stack.length - 1) return;
 
   h.index++;
-  applyHistorySnapshot(doc, h.stack[h.index]);
+  applyHistorySnapshot(doc, h.stack[h.index], h.sel && h.sel[h.index]);
   updateUndoRedoButtons(doc.id);
 }
 
@@ -297,35 +488,91 @@ function renderTOC(content) {
     const chip = document.createElement("span");
     chip.className = "toc-chip";
     chip.textContent = "📍 " + ch.title;
+    /* 用行號定位，不要用 indexOf(fullText)。
+
+       indexOf 找的是「全文裡第一個長這樣的字串」——兩章同名，或內文裡
+       引用了章節標題，就會跳到錯的地方。章節物件上本來就帶著 lineIndex，
+       而 jumpToLine() 已經是照行號精準定位的正確實作（快速跳轉用的就是它）。 */
     chip.onclick = function() {
-      const textarea = document.getElementById("docContentInput");
-      const pos = textarea.value.indexOf(ch.fullText);
-      if (pos !== -1) {
-        textarea.focus();
-        textarea.setSelectionRange(pos, pos + ch.fullText.length);
-        const percent = pos / Math.max(1, textarea.value.length);
-        textarea.scrollTop = (textarea.scrollHeight - textarea.clientHeight) * percent;
-      }
+      jumpToLine(ch.lineIndex);
     };
     container.appendChild(chip);
   });
 }
 
+/* 圖片在存進去之前先縮小。
+
+   原本是 readAsDataURL 直接把原檔塞進 appData。手機拍的 4MB 照片轉成
+   base64 大約 5.3MB——localStorage 總共才 5MB，一張就爆，而且爆掉的時候
+   存檔是靜悄悄失敗的（見 storage.js 的 saveData）。
+
+   縮到長邊 1600px、JPEG 品質 0.82，一般照片會落在 150～300KB，二三十張
+   都還塞得下。1600px 是「白板縮圖與編輯器預覽都夠清楚」與「不要太大」
+   之間的折衷；原檔本來就比較小的話不會放大。 */
+const IMAGE_MAX_EDGE = 1600;
+const IMAGE_JPEG_QUALITY = 0.82;
+const IMAGE_MAX_BYTES = 1.5 * 1024 * 1024;   // 壓完還超過就擋下來
+
 function handleImageUpload(e) {
   const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(evt) {
-    const doc = appData.docs.find(d => d.id === activeDocId);
-    if (doc) {
-      if (!doc.images) doc.images = [];
-      doc.images.push(evt.target.result);
-      saveData();
-      renderDocImages(doc.images);
-    }
-  };
-  reader.readAsDataURL(file);
   e.target.value = "";
+  if (!file) return;
+
+  if (!/^image\//.test(file.type)) {
+    alert("這不是圖片檔。");
+    return;
+  }
+
+  compressImageFile(file).then(function(dataUrl) {
+    if (!isSafeImageSrc(dataUrl)) { alert("圖片處理失敗，請換一張試試。"); return; }
+    if (dataUrl.length > IMAGE_MAX_BYTES) {
+      alert("這張圖片壓縮後仍然有 " + Math.round(dataUrl.length / 1024) + " KB，太大了。\n" +
+            "瀏覽器的儲存空間只有約 5MB，請先用別的工具把它縮小再放進來。");
+      return;
+    }
+    const doc = appData.docs.find(d => d.id === activeDocId);
+    if (!doc) return;
+    if (!doc.images) doc.images = [];
+    doc.images.push(dataUrl);
+    saveData();
+    renderDocImages(doc.images);
+  }).catch(function(err) {
+    console.error(err);
+    alert("讀取圖片時發生錯誤，請換一張試試。");
+  });
+}
+
+function compressImageFile(file) {
+  return new Promise(function(resolve, reject) {
+    const reader = new FileReader();
+    reader.onerror = function() { reject(new Error("讀不到檔案")); };
+    reader.onload = function(evt) {
+      const img = new Image();
+      img.onerror = function() { reject(new Error("這個檔案不是瀏覽器認得的圖片")); };
+      img.onload = function() {
+        const scale = Math.min(1, IMAGE_MAX_EDGE / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        // JPEG 沒有透明度，先鋪白底，否則透明的地方會變成黑塊
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+
+        try {
+          resolve(canvas.toDataURL("image/jpeg", IMAGE_JPEG_QUALITY));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.src = evt.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function renderDocImages(images) {
@@ -334,11 +581,25 @@ function renderDocImages(images) {
   if (!images || images.length === 0) return;
 
   images.forEach(function(imgSrc, index) {
+    // 來路不明的字串不要進 <img src>（見 isSafeImageSrc）。用 DOM 屬性
+    // 設定而不是拼 HTML 字串，就算白名單哪天放寬了也跳不出屬性。
+    if (!isSafeImageSrc(imgSrc)) return;
+
     const box = document.createElement("div");
     box.className = "img-preview-box";
-    box.innerHTML = 
-      '<img src="' + imgSrc + '" alt="圖片">' +
-      '<button class="img-del-btn" title="刪除圖片" onclick="deleteDocImage(' + index + ')">✕</button>';
+
+    const img = document.createElement("img");
+    img.src = imgSrc;
+    img.alt = "圖片";
+
+    const del = document.createElement("button");
+    del.className = "img-del-btn";
+    del.title = "刪除圖片";
+    del.textContent = "✕";
+    del.onclick = function() { deleteDocImage(index); };
+
+    box.appendChild(img);
+    box.appendChild(del);
     strip.appendChild(box);
   });
 }
