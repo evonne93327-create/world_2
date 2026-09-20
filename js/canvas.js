@@ -183,11 +183,10 @@ function renderCanvas() {
        看不到的文字。120 字已經比那兩行塞得下的還多。 */
     const preview = (doc.content || "").replace(/\n/g, " ").slice(0, 120);
 
-    // 同樣只放行通過白名單的資料 URI（見 isSafeImageSrc）
-    let imgHtml = "";
-    if (doc.images && doc.images.length > 0 && isSafeImageSrc(doc.images[0])) {
-      imgHtml = '<img style="width:100%; height:75px; object-fit:cover; border-radius:4px; margin-bottom:6px;" src="' + doc.images[0] + '">';
-    }
+    // 白名單擋第一層；圖片本身改用 DOM 屬性掛上去，不拼進 HTML 字串（第二層）
+    const thumbSrc = (doc.images && doc.images.length > 0 && isSafeImageSrc(doc.images[0]))
+      ? doc.images[0] : null;
+    const imgHtml = thumbSrc ? '<div class="canvas-node-thumb"></div>' : "";
 
     el.innerHTML =
       '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
@@ -196,6 +195,17 @@ function renderCanvas() {
       imgHtml +
       '<div style="font-size:11px; color:var(--text-secondary); line-height:1.4; max-height:32px; overflow:hidden; margin-bottom:4px;">' + escapeHtml(preview) + '</div>' +
       '<div style="font-size:10px; color:var(--text-muted); text-align:right;">' + (doc.wordCount || 0) + ' 字</div>';
+
+    if (thumbSrc) {
+      const holder = el.querySelector(".canvas-node-thumb");
+      if (holder) {
+        const thumb = document.createElementNS(XHTML_NS, "img");
+        thumb.setAttribute("style",
+          "width:100%; height:75px; object-fit:cover; border-radius:4px; margin-bottom:6px;");
+        thumb.src = thumbSrc;
+        holder.replaceWith(thumb);
+      }
+    }
 
     el.ondblclick = function() {
       if (connectingSourceNodeId) return;
@@ -1090,7 +1100,14 @@ function buildEdgeCurve(rectA, rectB, spread) {
   const cA = nodeCenter(rectA);
   const cB = nodeCenter(rectB);
   const dx = cB.x - cA.x, dy = cB.y - cA.y;
-  const len = Math.hypot(dx, dy) || 1;
+  const dist = Math.hypot(dx, dy);
+
+  /* 兩個節點被拖到幾乎完全重疊時，中心連線沒有方向可言。原本靠
+     `|| 1` 兜過去，結果下面的 t1 > t0 檢查會通過，回傳四個點全部重合的
+     退化曲線——底下那行註解本來就打算回傳 null，只是遮住了沒生效。
+     退化的路徑本身看不見，但箭頭標記會在那個點上畫出一個孤零零的箭頭。 */
+  if (dist < 1) return null;
+  const len = dist;
   const ux = dx / len, uy = dy / len;
 
   const theta = spread * MAX_DEPART_ANGLE;

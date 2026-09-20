@@ -201,6 +201,51 @@ function flushBeforeLeaving() {
   } catch (e) { /* 空間滿了的話 saveData 那邊已經提醒過了 */ }
 }
 
+/* 多分頁互相覆蓋。
+
+   兩個分頁同時開著，各自的 appData 在記憶體裡分岔，誰後存誰贏——先寫的
+   那邊整段進度會被另一邊的舊狀態蓋掉，而且兩邊都不知道發生過這件事。
+
+   storage 事件只會在「其他分頁」寫入時觸發（自己寫不會收到），正好拿來
+   偵測。刻意不自動採用：這個分頁可能正打到一半，直接換掉會把使用者
+   手上的東西弄丟。跳出來讓他自己選，並且講清楚兩邊各是什麼狀態。 */
+let otherTabNoticeShown = false;
+
+window.addEventListener("storage", function(e) {
+  if (e.key !== "novel_multi_world_data_v5" || !e.newValue) return;
+  if (otherTabNoticeShown) return;
+  otherTabNoticeShown = true;
+
+  let theirDocs = "?";
+  try { theirDocs = (JSON.parse(e.newValue).docs || []).length; } catch (err) {}
+
+  const modal = document.getElementById("otherTabModal");
+  if (!modal) {
+    if (confirm("另一個分頁修改了資料。要重新載入以採用那一份嗎？\n（這個分頁尚未存檔的修改會遺失）")) {
+      location.reload();
+    }
+    otherTabNoticeShown = false;
+    return;
+  }
+
+  const info = document.getElementById("otherTabInfo");
+  if (info) {
+    info.textContent = "另一個分頁剛剛存了一份有 " + theirDocs + " 篇文檔的資料；" +
+      "這個分頁目前是 " + (appData.docs || []).length + " 篇。" +
+      "兩邊繼續各自編輯的話，後存的那一份會蓋掉先存的。";
+  }
+  modal.classList.add("active");
+});
+
+function closeOtherTabModal() {
+  document.getElementById("otherTabModal").classList.remove("active");
+  otherTabNoticeShown = false;   // 下次別的分頁再寫入時還要再提醒
+}
+
+function reloadForOtherTab() {
+  location.reload();
+}
+
 window.addEventListener("beforeunload", flushBeforeLeaving);
 window.addEventListener("pagehide", flushBeforeLeaving);
 document.addEventListener("visibilitychange", function() {

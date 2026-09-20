@@ -16,9 +16,26 @@ function openBatchExportModal() {
 
     const docs = appData.docs.filter(d => d.worldId === w.id);
     docs.forEach(function(d) {
+      /* 用 DOM 屬性設定，不要把 d.id 拼進 data-id="..."。
+
+         id 是從匯入的檔案來的。原本這裡是字串拼接，一份動過手腳的備份檔
+         只要把 id 寫成 x" onfocus="..." autofocus data-y=" 就能跳出屬性，
+         在使用者打開匯出視窗時執行任意程式碼——讀得到 localStorage 裡的
+         Supabase session token。已用 PoC 確認過可利用。 */
       const row = document.createElement("div");
       row.style.padding = "4px 10px";
-      row.innerHTML = `<input type="checkbox" class="export-checkbox" data-id="${d.id}" checked> <span>${escapeHtml(d.icon || '📄')} ${escapeHtml(d.title || '無標題')}</span>`;
+
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.className = "export-checkbox";
+      box.dataset.id = d.id;
+      box.checked = true;
+
+      const label = document.createElement("span");
+      label.textContent = " " + (d.icon || "📄") + " " + (d.title || "無標題");
+
+      row.appendChild(box);
+      row.appendChild(label);
       container.appendChild(row);
     });
   });
@@ -174,6 +191,11 @@ function looksLikeFullDatabase(data) {
    原本只確認那三個欄位是陣列就整包換掉 appData，裡面是什麼完全不管。
    一份缺欄位的檔案匯進來，app 會在之後某個地方才爆掉，而那時原本的資料
    已經被洗掉了。寧可在這裡擋下來。 */
+/* id 會被放進 HTML 屬性、CSS 選擇器與 DOM 的 id。app 自己產生的 id 一律是
+   英數字加底線／連字號，所以把其餘字元擋掉不會拒絕任何正常的備份檔，
+   卻能在輸入端就堵死屬性注入（輸出端也已經改用 DOM API，兩層都有）。 */
+const SAFE_ID = /^[A-Za-z0-9_-]+$/;
+
 function validateFullDatabase(data) {
   if (!data.worldviews.length) return "檔案裡沒有任何世界觀。";
 
@@ -182,6 +204,7 @@ function validateFullDatabase(data) {
     if (!w || typeof w !== "object" || typeof w.id !== "string" || !w.id) {
       return "第 " + (i + 1) + " 個世界觀缺少 id。";
     }
+    if (!SAFE_ID.test(w.id)) return "第 " + (i + 1) + " 個世界觀的 id 含有不允許的字元。";
   }
   const worldIds = data.worldviews.map(function(w) { return w.id; });
 
@@ -190,6 +213,7 @@ function validateFullDatabase(data) {
     if (!d || typeof d !== "object" || typeof d.id !== "string" || !d.id) {
       return "第 " + (i + 1) + " 篇文檔缺少 id。";
     }
+    if (!SAFE_ID.test(d.id)) return "文檔「" + (d.title || d.id) + "」的 id 含有不允許的字元。";
     if (worldIds.indexOf(d.worldId) === -1) {
       return "文檔「" + (d.title || d.id) + "」指向一個不存在的世界觀。";
     }
@@ -199,6 +223,7 @@ function validateFullDatabase(data) {
     if (!f || typeof f !== "object" || typeof f.id !== "string" || !f.id) {
       return "第 " + (i + 1) + " 個資料夾缺少 id。";
     }
+    if (!SAFE_ID.test(f.id)) return "第 " + (i + 1) + " 個資料夾的 id 含有不允許的字元。";
   }
   return null;
 }
@@ -207,13 +232,61 @@ function validateFullDatabase(data) {
 
    __proto__ / constructor 這類鍵用 JSON.parse 讀進來只是普通屬性，不會
    污染原型；但還是只挑認得的欄位重建，不要把整個外來物件當成自己的狀態。 */
+/* 把一筆文檔補成 app 各處都能直接用的形狀。
+
+   結構驗證只確認 id 跟歸屬正確，欄位缺不缺它不管——少一個 tags 陣列，
+   之後某個 .forEach 就會爆，而那時原本的資料已經被覆蓋掉了。
+   storage.js 的 migration 是同樣的思路，這裡做一次等於把那套前移到匯入時。 */
+function normalizeImportedDoc(d) {
+  const str = function(v, fallback) { return typeof v === "string" ? v : (fallback || ""); };
+  const doc = {
+    id: d.id,
+    worldId: d.worldId,
+    folderId: typeof d.folderId === "string" ? d.folderId : null,
+    icon: str(d.icon, "📄"),
+    title: str(d.title, "無標題文檔"),
+    content: str(d.content),
+    tags: Array.isArray(d.tags) ? d.tags.filter(function(t) { return typeof t === "string"; }) : [],
+    manualTags: Array.isArray(d.manualTags)
+      ? d.manualTags.filter(function(t) { return typeof t === "string"; }) : [],
+    images: sanitizeImageList(d.images),
+    wordCount: 0,
+    updatedAt: str(d.updatedAt, formatTime(new Date()))
+  };
+  if (d.createdAt) doc.createdAt = d.createdAt;
+  // 字數與標籤一律重算，不要相信檔案裡寫的
+  recomputeDocFromContent(doc, doc.content);
+  return doc;
+}
+
+function normalizeImportedFolder(f) {
+  return {
+    id: f.id,
+    worldId: f.worldId,
+    parentId: typeof f.parentId === "string" ? f.parentId : null,
+    name: typeof f.name === "string" ? f.name : "未命名資料夾",
+    icon: typeof f.icon === "string" ? f.icon : "📁"
+  };
+}
+
+function normalizeImportedWorld(w) {
+  const c = (w.canvas && typeof w.canvas === "object") ? w.canvas : {};
+  return Object.assign({}, w, {
+    name: typeof w.name === "string" ? w.name : "未命名世界觀",
+    icon: typeof w.icon === "string" ? w.icon : "🌐",
+    canvas: {
+      nodes: Array.isArray(c.nodes) ? c.nodes : [],
+      edges: Array.isArray(c.edges) ? c.edges : [],
+      notes: Array.isArray(c.notes) ? c.notes : []
+    }
+  });
+}
+
 function normalizeImportedDatabase(data) {
   const clean = {
-    worldviews: data.worldviews,
-    folders: data.folders,
-    docs: data.docs.map(function(d) {
-      return Object.assign({}, d, { images: sanitizeImageList(d.images) });
-    }),
+    worldviews: data.worldviews.map(normalizeImportedWorld),
+    folders: data.folders.map(normalizeImportedFolder),
+    docs: data.docs.map(normalizeImportedDoc),
     colorPalette: (data.colorPalette && typeof data.colorPalette === "object")
       ? data.colorPalette : Object.assign({}, DEFAULT_PALETTES),
     tagSettings: (data.tagSettings && typeof data.tagSettings === "object") ? data.tagSettings : {},

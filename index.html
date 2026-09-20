@@ -295,6 +295,26 @@
   </div>
 
   <!-- 彈窗：Hashtag 篩選（依顏色分類，列出標籤／行數／文章標題，點擊跳轉） -->
+  <!-- 彈窗：另一個分頁改了資料。刻意不自動採用——這裡可能正打到一半。 -->
+  <div class="modal-overlay" id="otherTabModal">
+    <div class="modal-card" style="width:440px;">
+      <div class="modal-head">
+        <div class="modal-title">🔀 另一個分頁修改了資料</div>
+        <button class="icon-sm-btn" title="關閉" onclick="closeOtherTabModal()">✕</button>
+      </div>
+      <p style="font-size:13px; color:var(--text-primary); line-height:1.7;" id="otherTabInfo"></p>
+      <p style="font-size:12px; color:var(--text-secondary); line-height:1.7;">
+        建議只留一個分頁編輯。重新載入會採用另一個分頁那一份，
+        <strong>這個分頁尚未存檔的修改會遺失</strong>。
+      </p>
+      <div style="display:flex; gap:8px; margin-top:4px;">
+        <button class="btn btn-primary" style="flex:1; justify-content:center;"
+                onclick="reloadForOtherTab()">🔄 重新載入，採用那一份</button>
+        <button class="btn btn-secondary" onclick="closeOtherTabModal()">先不要</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 彈窗：儲存空間滿了。這是資料遺失的最後一道提醒，不能靜悄悄。 -->
   <div class="modal-overlay" id="storageFullModal">
     <div class="modal-card" style="width:460px;">

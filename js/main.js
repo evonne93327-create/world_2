@@ -44,9 +44,15 @@ function sanitizeImageList(list) {
   return list.filter(isSafeImageSrc);
 }
 
+/* 單引號也要跳脫：屬性不一定都用雙引號包，漏掉它等於留了一條跳脫屬性的路。 */
 function escapeHtml(str) {
  if (!str) return '';
- return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+ return String(str)
+ .replace(/&/g, '&amp;')
+ .replace(/</g, '&lt;')
+ .replace(/>/g, '&gt;')
+ .replace(/"/g, '&quot;')
+ .replace(/'/g, '&#39;');
 }
 
 // 3. 畫面切換 (編輯器 / 白板)
