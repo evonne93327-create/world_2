@@ -167,8 +167,11 @@
 
       <!-- 2. 白板關係區 (Graphs) -->
       <section id="canvasView" class="view-panel" style="display:none;">
-        <!-- 左下角浮動提示 -->
-        <div class="canvas-hint-floating canvas-hint-text">💡 點「🔗」連線；長按／右鍵連線中段可編輯；長按空白處新增便條紙；拖空白處平移，滾輪／雙指縮放</div>
+        <!-- 頂端操作提示，可收合。按鈕放在提示窗外面，高度跟著提示窗一起長 -->
+        <div class="canvas-hint-row">
+          <div class="canvas-hint-floating canvas-hint-text" id="canvasHint">💡 點「🔗」連線；長按／右鍵連線中段可編輯；長按空白處新增便條紙；拖空白處平移，滾輪／雙指縮放</div>
+          <button class="canvas-hint-toggle" id="canvasHintToggle" onclick="toggleCanvasHint()" aria-expanded="true" title="隱藏操作提示">?</button>
+        </div>
 
         <!-- 右下角浮動按鈕 -->
         <div class="canvas-floating-actions">
