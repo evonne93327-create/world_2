@@ -798,8 +798,11 @@ main.content-workspace {
   pointer-events: auto;
   display: flex;
   flex-direction: column;
-  position: relative;
   overflow: hidden;
+  /* 這裡不能有 position: relative。便條紙住在 SVG 的 foreignObject 裡，
+     WebKit（iPad Safari）遇到被定位的 foreignObject 內容時，版面算得對、
+     卻把它畫在完全無視 viewBox 縮放的位置上——便條紙因此釘死在螢幕某一點，
+     白板一縮放就跟節點分家。右下角的把手改用 flex 排，就不需要定位了。 */
 }
 .canvas-note.is-editing { cursor: text; }
 
@@ -829,11 +832,13 @@ main.content-workspace {
 
 /* 右下角的調整大小把手 */
 .canvas-note-resize {
-  position: absolute;
-  right: 0;
-  bottom: 0;
+  /* 用 flex 排到右下角，不用 position: absolute（理由見 .canvas-note）。
+     負的外距把它拉到內距外面，貼齊便條紙的右下角。 */
+  align-self: flex-end;
+  flex: none;
   width: 18px;
   height: 18px;
+  margin: 2px calc(var(--sp-10) * -1) calc(var(--sp-10) * -1) 0;
   cursor: nwse-resize;
   /* 兩條斜線，視覺上就是常見的拉伸角 */
   background:
