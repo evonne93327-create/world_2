@@ -998,6 +998,53 @@ main.content-workspace {
    - 按鈕尺寸 / 位置完全比照快速跳轉按鈕（.quickjump-fab）
    ---------------------------------------------------------- */
 /* ----------------------------------------------------------
+   麵包屑收合
+
+   完整路徑（世界觀 › 資料夾 › 子資料夾 › 文檔）在窄一點的畫面放不下，
+   會折成兩行把版面推開。收成「第一個 … 最後一個」：起點與目前位置
+   最重要，中間層級點第一個的下拉選單一樣到得了。
+
+   條件比手機版寬（到 1024px）：平板直式的內容區只有 478px，同樣塞不下。
+   ---------------------------------------------------------- */
+@media (max-width: 1024px), (max-height: 500px) {
+.breadcrumb-row {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.breadcrumb-row.dropdown-open {
+  overflow: visible;
+}
+.breadcrumb-sep {
+  display: none;
+}
+.breadcrumb-item {
+  flex-shrink: 0;
+}
+.breadcrumb-item:not(:first-child):not(:last-child) {
+  display: none;
+}
+.breadcrumb-item:first-child:not(:has(~ .breadcrumb-item:not(:last-child))) + .breadcrumb-sep {
+  display: inline;
+}
+.breadcrumb-item:first-child:has(~ .breadcrumb-item:not(:last-child)) + .breadcrumb-sep {
+  display: inline;
+  font-size: 0;
+}
+.breadcrumb-item:first-child:has(~ .breadcrumb-item:not(:last-child)) + .breadcrumb-sep::after {
+  content: '› … ›';
+  font-size: var(--fs-10);
+}
+.breadcrumb-item:last-child {
+  flex: 1;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+}
+
+/* ----------------------------------------------------------
    中間尺寸（平板直式、視窗拉窄的桌機）
 
    768 以上就走電腦版三欄，但 820 這種寬度放進「直欄 62 + 目錄 280」之後
@@ -1414,42 +1461,6 @@ main.content-workspace {
   }
   .tab-btn::first-letter {
     font-size: var(--fs-14) !important;
-  }
-
-  .breadcrumb-row {
-    flex-wrap: nowrap;
-    overflow: hidden;
-  }
-  .breadcrumb-row.dropdown-open {
-    overflow: visible;
-  }
-  .breadcrumb-sep {
-    display: none;
-  }
-  .breadcrumb-item {
-    flex-shrink: 0;
-  }
-  .breadcrumb-item:not(:first-child):not(:last-child) {
-    display: none;
-  }
-  .breadcrumb-item:first-child:not(:has(~ .breadcrumb-item:not(:last-child))) + .breadcrumb-sep {
-    display: inline;
-  }
-  .breadcrumb-item:first-child:has(~ .breadcrumb-item:not(:last-child)) + .breadcrumb-sep {
-    display: inline;
-    font-size: 0;
-  }
-  .breadcrumb-item:first-child:has(~ .breadcrumb-item:not(:last-child)) + .breadcrumb-sep::after {
-    content: '› … ›';
-    font-size: var(--fs-10);
-  }
-  .breadcrumb-item:last-child {
-    flex: 1;
-    flex-shrink: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   aside.world-rail {
