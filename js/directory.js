@@ -160,7 +160,7 @@ caretHtml +
 
  attachContextMenu(folderRow, function() { return buildFolderMenuItems(folder); }, function() { return (folder.icon || '📁') + ' ' + folder.name; });
 
- folderRow.ondragover = function(e) { e.preventDefault(); folderRow.style.background = "#E0E7FF"; };
+ folderRow.ondragover = function(e) { e.preventDefault(); folderRow.style.background = "var(--select-bg)"; };
  folderRow.ondragleave = function() { folderRow.style.background = ""; };
  folderRow.ondrop = function(e) {
  e.preventDefault();

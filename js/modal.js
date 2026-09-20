@@ -151,7 +151,7 @@ function renderHashtagFilterColorChips() {
  wrap.appendChild(allChip);
 
  Object.keys(appData.colorPalette).forEach(function(colorId) {
- const palette = appData.colorPalette[colorId] || DEFAULT_PALETTES.c_gray;
+ const palette = getPalette(colorId);
  const chip = document.createElement("div");
  chip.className = "hashtag-filter-color-chip" + (hashtagFilterActiveColor === colorId ? " active" : "");
  chip.innerHTML =
@@ -224,7 +224,7 @@ function renderHashtagFilterList() {
  }
 
  results.forEach(function(item) {
- const palette = appData.colorPalette[item.colorId] || DEFAULT_PALETTES.c_gray;
+ const palette = getPalette(item.colorId);
 
  const row = document.createElement("div");
  row.className = "hashtag-filter-item";
@@ -356,7 +356,7 @@ function renderLiveHashtags(tags) {
 
  (tags || []).forEach(function(tag) {
  const colorId = appData.tagSettings[tag] || "c_gray";
- const palette = appData.colorPalette[colorId] || DEFAULT_PALETTES.c_gray;
+ const palette = getPalette(colorId);
 
  const chip = document.createElement("span");
  chip.className = "tag-chip";
@@ -850,7 +850,7 @@ function openPaletteModal() {
  container.innerHTML = "";
 
  Object.keys(DEFAULT_PALETTES).forEach(function(key) {
- const pal = appData.colorPalette[key] || DEFAULT_PALETTES[key];
+ const pal = getPalette(key);
  const row = document.createElement("div");
  row.className = "palette-row";
 
@@ -894,7 +894,7 @@ function openColorPicker(tag, anchorElement) {
  popover.innerHTML = '<div style="font-size:11px; font-weight:700; color:var(--text-muted); margin-bottom:4px;">指定分類顏色：</div>';
 
  Object.keys(DEFAULT_PALETTES).forEach(function(key) {
- const pal = appData.colorPalette[key] || DEFAULT_PALETTES[key];
+ const pal = getPalette(key);
  const opt = document.createElement("div");
  opt.className = "picker-option";
  opt.innerHTML = `<span style="width:14px; height:14px; border-radius:50%; background:${pal.bg}; border:1.5px solid ${pal.text};"></span><span style="color:${pal.text}; font-weight:600;">${escapeHtml(pal.name)}</span>`;

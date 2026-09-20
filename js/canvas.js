@@ -237,9 +237,8 @@ function refreshCanvasIfVisible() {
    ------------------------------------------------------------- */
 
 function getNodePalette(node) {
-  if (!node || !node.color) return null;
-  return (appData.colorPalette && appData.colorPalette[node.color]) ||
-         DEFAULT_PALETTES[node.color] || null;
+  if (!node || !node.color || !DEFAULT_PALETTES[node.color]) return null;
+  return getPalette(node.color);
 }
 
 /* 調色盤只存了 bg 與 text 兩色，邊框用 text 淡化出來，
@@ -276,7 +275,7 @@ function openNodeColorPicker(node) {
     '<div style="font-size:11px; font-weight:700; color:var(--text-muted); margin-bottom:4px;">節點底色：</div>';
 
   Object.keys(DEFAULT_PALETTES).forEach(function(key) {
-    const pal = (appData.colorPalette && appData.colorPalette[key]) || DEFAULT_PALETTES[key];
+    const pal = getPalette(key);
     const opt = document.createElement("div");
     opt.className = "picker-option";
     opt.dataset.colorId = key;
@@ -978,8 +977,7 @@ function completeConnection(targetNodeId) {
 /* ---------- 顏色 ---------- */
 
 function getEdgeColor(edge) {
-  const id = edge.color || "e_gray";
-  return EDGE_COLORS[id] || EDGE_COLORS["e_gray"];
+  return { stroke: getEdgeStroke(edge.color || "e_gray") };
 }
 
 /* ---------- 節點矩形（含 DOM 量測）---------- */
@@ -1155,7 +1153,7 @@ function renderCanvasLines() {
   // 箭頭 marker
   const defs = document.createElementNS(NS, "defs");
   Object.keys(EDGE_COLORS).forEach(function(colorId) {
-    const col = EDGE_COLORS[colorId];
+    const col = { stroke: getEdgeStroke(colorId) };
     const marker = document.createElementNS(NS, "marker");
     marker.setAttribute("id", "arrow_" + colorId);
     marker.setAttribute("viewBox", "0 0 10 10");
@@ -1499,11 +1497,11 @@ function openEdgeEditModal(edgeId) {
   colorRow.innerHTML = "";
   const currentColor = edge.color || "e_gray";
   Object.keys(EDGE_COLORS).forEach(function(colorId) {
-    const col = EDGE_COLORS[colorId];
+    const col = { stroke: getEdgeStroke(colorId), name: EDGE_COLORS[colorId].name };
     const chip = document.createElement("div");
     chip.className = "edge-color-chip" + (colorId === currentColor ? " active" : "");
     chip.style.background = col.stroke;
-    chip.style.borderColor = colorId === currentColor ? "#2A2420" : "transparent";
+    chip.style.borderColor = colorId === currentColor ? "var(--text-primary)" : "transparent";
     chip.title = col.name;
     chip.dataset.colorId = colorId;
     chip.onclick = function() {
@@ -1512,7 +1510,7 @@ function openEdgeEditModal(edgeId) {
         c.style.borderColor = "transparent";
       });
       chip.classList.add("active");
-      chip.style.borderColor = "#2A2420";
+      chip.style.borderColor = "var(--text-primary)";
     };
     colorRow.appendChild(chip);
   });

@@ -88,9 +88,9 @@ aside.world-rail {
 .world-rail-btn.active {
   border-radius: var(--radius-pill);
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   border-color: var(--accent-hover);
-  box-shadow: 0 2px 8px rgba(172,59,42,0.35);
+  box-shadow: 0 2px 8px var(--accent-glow);
 }
 .world-rail-btn.add-btn {
   border-radius: var(--radius-pill);
@@ -289,9 +289,9 @@ aside.sidebar-directory.collapsed {
 }
 .node-row:hover { background: var(--bg-sunken); color: var(--text-primary); }
 .node-row.selected {
-  background: #E2EAF4;
-  border: 1px solid #BCCFDF;
-  color: #1E3A5F;
+  background: var(--select-bg);
+  border: 1px solid var(--select-border);
+  color: var(--select-text);
 }
 .node-row.active {
   background: var(--accent-light);
@@ -300,9 +300,9 @@ aside.sidebar-directory.collapsed {
   font-weight: 600;
 }
 .node-row.batch-checked {
-  background: #FBE4E4;
-  border: 1px solid #E8AFAF;
-  color: #A23B3B;
+  background: var(--batch-bg);
+  border: 1px solid var(--batch-border);
+  color: var(--batch-text);
 }
 .node-left {
   display: flex;
@@ -416,7 +416,7 @@ header.top-nav-bar {
   cursor: pointer;
   border: 1px solid transparent;
 }
-.nav-action-btn.primary { background: var(--accent); color: white; }
+.nav-action-btn.primary { background: var(--accent); color: var(--on-accent); }
 .nav-action-btn.secondary { background: var(--bg-card); border-color: var(--border); color: var(--text-primary); }
 
 main.content-workspace {
@@ -646,7 +646,7 @@ main.content-workspace {
   border: none !important;
   outline: none !important;
   resize: none;
-  color: #3A322A;
+  color: var(--editor-text);
   background: transparent;
 }
 
@@ -660,7 +660,7 @@ main.content-workspace {
   overflow: hidden;
 }
 .content-highlight-layer mark {
-  background: #FFE9A8;
+  background: var(--mark-bg);
   color: transparent;
   border-radius: 2px;
 }
@@ -714,7 +714,7 @@ main.content-workspace {
   width: 100%;
   height: 100%;
   background-color: var(--bg-main);
-  background-image: radial-gradient(#D7CBB0 1.2px, transparent 1.2px);
+  background-image: radial-gradient(var(--canvas-dot) 1.2px, transparent 1.2px);
   background-size: 24px 24px;
   overflow: hidden;
   touch-action: none;
@@ -789,8 +789,8 @@ main.content-workspace {
   box-sizing: border-box;
   width: 100%;
   height: 100%;
-  background: #FBF0C9;
-  border: 1px solid #E4D2A0;
+  background: var(--note-bg);
+  border: 1px solid var(--note-border);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
   padding: var(--sp-10);
@@ -842,8 +842,8 @@ main.content-workspace {
   cursor: nwse-resize;
   /* 兩條斜線，視覺上就是常見的拉伸角 */
   background:
-    linear-gradient(135deg, transparent 0 46%, #C4AE72 46% 54%, transparent 54% 70%,
-                    #C4AE72 70% 78%, transparent 78% 100%);
+    linear-gradient(135deg, transparent 0 46%, var(--note-handle) 46% 54%, transparent 54% 70%,
+                    var(--note-handle) 70% 78%, transparent 78% 100%);
   touch-action: none;
 }
 
@@ -1128,7 +1128,7 @@ main.content-workspace {
   cursor: pointer;
   border: 1px solid transparent;
 }
-.btn-primary { background: var(--accent); color: white; }
+.btn-primary { background: var(--accent); color: var(--on-accent); }
 .btn-secondary { background: var(--bg-card); border-color: var(--border); color: var(--text-primary); }
 
 /* 同步面板裡的按鈕多半被拉成整列寬或等分寬，.btn 預設靠左會讓文字黏在左邊。
@@ -1136,7 +1136,7 @@ main.content-workspace {
 #syncModal .btn,
 #syncConflictModal .btn { justify-content: center; }
 .btn-secondary:hover { background: var(--bg-sunken); }
-.btn-danger { background: #fff; border-color: var(--danger-light); color: var(--danger); }
+.btn-danger { background: var(--bg-card); border-color: var(--danger-light); color: var(--danger); }
 
 .modal-overlay {
   position: fixed;
@@ -1629,7 +1629,7 @@ main.content-workspace {
   height: var(--icon-44);
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border: none;
   box-shadow: var(--shadow-md);
   font-size: var(--fs-20);
@@ -1867,3 +1867,97 @@ main.content-workspace {
   -webkit-user-select: none;
 }
 
+
+/* ==========================================================
+   設定視窗
+   ========================================================== */
+/* 總表。每一列是一顆大圓角按鈕，點進去開各自的視窗。 */
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  padding-top: var(--sp-4);
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  width: 100%;
+  padding: var(--sp-14) var(--sp-16);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.settings-row:hover { background: var(--bg-sunken); border-color: var(--accent-line); }
+.settings-row:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+
+.settings-row-icon { font-size: var(--fs-20); line-height: 1; flex: none; }
+.settings-row-text { display: flex; flex-direction: column; gap: var(--sp-2); flex: 1; min-width: 0; }
+.settings-row-title { font-size: var(--fs-14); font-weight: 600; color: var(--text-primary); }
+.settings-row-desc {
+  font-size: var(--fs-12);
+  color: var(--text-secondary);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-row-desc.is-alert { color: var(--danger); font-weight: 600; }
+.settings-row-value { font-size: var(--fs-12); color: var(--text-muted); flex: none; }
+.settings-row-go { font-size: var(--fs-18); color: var(--text-muted); flex: none; line-height: 1; }
+
+/* 同步出問題時，設定按鈕上點一個紅點——那顆 ☁️ 已經收進來了，
+   不給一點提示就完全看不出裡面有事情要處理。 */
+.world-rail-btn.has-alert { position: relative; }
+.world-rail-btn.has-alert::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--danger);
+  border: 1.5px solid var(--bg-rail);
+}
+
+.settings-hint {
+  font-size: var(--fs-12);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.settings-hint:empty { display: none; }   /* 不是「跟隨系統」時不留空行 */
+
+/* 三選一。做成連在一起的一排，看得出來是互斥的選擇，
+   而不是三顆各自獨立的按鈕。 */
+.theme-choice {
+  display: flex;
+  gap: var(--sp-6);
+}
+.theme-opt {
+  flex: 1;
+  padding: var(--sp-10) var(--sp-8);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.theme-opt:hover { background: var(--bg-sunken); color: var(--text-primary); }
+.theme-opt.active {
+  background: var(--accent-light);
+  border-color: var(--accent-line);
+  color: var(--accent-hover);
+}
+.theme-opt:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
