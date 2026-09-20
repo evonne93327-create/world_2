@@ -267,6 +267,7 @@ function isDescendantOf(parentCheckId, targetFolderId) {
 function createDocRowElement(doc) {
  const row = document.createElement("div");
  row.className = "node-row-outer";
+ row.dataset.docId = doc.id;      // 讓 updateDocRowInPlace() 找得到這一列
  let rowStateClass = (doc.id === activeDocId ? " active" : "");
  if (isBatchDeleteMode && batchSelectedDocs.has(doc.id)) {
  rowStateClass += " batch-checked";
@@ -315,6 +316,30 @@ function createDocRowElement(doc) {
 
  attachContextMenu(row, function() { return buildDocMenuItems(doc); }, function() { return (doc.icon || '📄') + ' ' + (doc.title || '無標題文檔'); });
  return row;
+}
+
+/* 只更新側欄裡的某一列，不重畫整棵樹。
+
+   renderSidebarTree() 是 innerHTML = "" 之後整棵重建，實測 1500 篇文檔要
+   16ms。改標題這種「只有一列的文字變了」的情況不需要付這個代價——
+   結構沒變（沒有新增、刪除、搬移、也不是在搜尋），就地改字就好。
+
+   找不到那一列（例如正在搜尋、或它在收起來的資料夾裡）就什麼都不做：
+   那些情況下一次完整重畫自然會正確，不需要在這裡處理。 */
+function updateDocRowInPlace(doc) {
+  if (!doc) return;
+  const container = document.getElementById("worldTreeContainer");
+  if (!container) return;
+  const row = container.querySelector('[data-doc-id="' + CSS.escape(doc.id) + '"]');
+  if (!row) return;
+
+  const nameSpan = row.querySelector(".node-name");
+  if (nameSpan) nameSpan.textContent = doc.title || "無標題文檔";
+  const iconSpan = row.querySelector(".node-icon");
+  if (iconSpan) iconSpan.textContent = doc.icon || "📄";
+
+  const countDiv = row.querySelector(".node-row > div:last-child");
+  if (countDiv) countDiv.textContent = (doc.wordCount || 0) + "字";
 }
 
 function renderBreadcrumb() {

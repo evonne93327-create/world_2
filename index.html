@@ -2,7 +2,10 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <!-- 刻意不加 maximum-scale / user-scalable=no：那會讓使用者無法放大，
+       是 WCAG 1.4.4 的明確違反項，對一個要長時間讀寫小說的 app 影響很大。
+       處理鍵盤遮擋的是 interactive-widget=resizes-content，跟縮放無關。 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <title>世界觀架構工作台 | WorldBuilder Canvas</title>
 
   <!-- 分頁上的小圖示。manifest 裡的圖示只給「安裝成 app」用，

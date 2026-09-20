@@ -128,6 +128,16 @@ function addCurrentDocToCanvas() {
    重新描字，而不是把一張畫好的貼圖拉伸，因此不會糊。
    ------------------------------------------------------------- */
 
+/* 節點量出來的高度。
+
+   原本是掛在 appData 裡的 node 物件上（node._lastH），那是量測用的暫存值，
+   卻會跟著被序列化進 localStorage、也會被同步上雲、匯出檔案裡也有。
+   改存在一個獨立的 Map，跟資料完全分開。
+
+   不需要清理：節點被刪掉之後那一筆留著也只是幾個位元組，而且 id 不重複，
+   下次用到同一個 id 一定是同一個節點。 */
+const nodeHeightCache = new Map();
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
@@ -157,7 +167,7 @@ function renderCanvas() {
     fo.setAttribute("x", node.x);
     fo.setAttribute("y", node.y);
     fo.setAttribute("width", CANVAS_NODE_W);
-    fo.setAttribute("height", node._lastH || 80);
+    fo.setAttribute("height", nodeHeightCache.get(node.id) || 80);
 
     const el = document.createElementNS(XHTML_NS, "div");
     el.className = "canvas-node";
@@ -168,7 +178,10 @@ function renderCanvas() {
     applyNodeColor(el, node);
 
     const title = (doc.icon || '📄') + " " + (doc.title || "無標題文檔");
-    const preview = (doc.content || "").replace(/\n/g, " ");
+    /* 只取前面一小段。原本是把整篇內文塞進 DOM，只靠 CSS 的
+       max-height:32px 裁掉——節點多又都是長文時，DOM 裡會有大量根本
+       看不到的文字。120 字已經比那兩行塞得下的還多。 */
+    const preview = (doc.content || "").replace(/\n/g, " ").slice(0, 120);
 
     // 同樣只放行通過白名單的資料 URI（見 isSafeImageSrc）
     let imgHtml = "";
@@ -208,7 +221,7 @@ function renderCanvas() {
     if (!el) return;
     const fo = el.parentNode;
     const h = el.offsetHeight || 80;
-    node._lastH = h;
+    nodeHeightCache.set(node.id, h);
     if (fo && fo.setAttribute) fo.setAttribute("height", h);
   });
 
