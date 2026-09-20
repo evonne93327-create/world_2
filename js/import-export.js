@@ -217,7 +217,7 @@ function normalizeImportedDatabase(data) {
     colorPalette: (data.colorPalette && typeof data.colorPalette === "object")
       ? data.colorPalette : Object.assign({}, DEFAULT_PALETTES),
     tagSettings: (data.tagSettings && typeof data.tagSettings === "object") ? data.tagSettings : {},
-    trash: { docs: [], folders: [] }
+    trash: { docs: [], folders: [], canvas: [] }
   };
   if (data.trash && typeof data.trash === "object") {
     if (Array.isArray(data.trash.docs)) {
@@ -226,6 +226,7 @@ function normalizeImportedDatabase(data) {
       });
     }
     if (Array.isArray(data.trash.folders)) clean.trash.folders = data.trash.folders;
+    if (Array.isArray(data.trash.canvas)) clean.trash.canvas = data.trash.canvas;
   }
   return clean;
 }
@@ -276,7 +277,7 @@ function importDocsArray(docsArray) {
   if (!confirm(`即將匯入 ${docsArray.length} 篇文檔到「${getWorldName(activeWorldId)}」，確定嗎？`)) return;
 
   docsArray.forEach(function(d) {
-    appData.docs.unshift({
+    const doc = {
       id: "doc_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
       worldId: activeWorldId,
       folderId: activeFolderId || null,
@@ -286,9 +287,16 @@ function importDocsArray(docsArray) {
       tags: Array.isArray(d.tags) ? d.tags : [],
       manualTags: computeManualTagsFor(d.content, d.tags),
       images: sanitizeImageList(d.images),   // 來路不明的字串不要進 <img src>
-      wordCount: (d.content || "").length,
+      wordCount: 0,
       updatedAt: formatTime(new Date())
-    });
+    };
+    /* 字數與標籤一律交給編輯器用的同一個函式算。
+
+       原本這裡寫 wordCount: content.length（字串長度），但編輯器算的是
+       「中文字數 + 英文單詞數」。匯入一篇 "Hello world" 會顯示 11 而不是 2，
+       標點與換行也全算進去，直到使用者去編輯它一次才會自己修正。 */
+    recomputeDocFromContent(doc, doc.content);
+    appData.docs.unshift(doc);
   });
   saveData();
   renderSidebarTree();

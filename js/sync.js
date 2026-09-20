@@ -62,9 +62,52 @@ function syncIsActive() {
 /* ---------- 啟動時的對帳 ---------- */
 
 // 本機資料是否還是完全沒動過的預設範例
+/* 這台裝置是不是還停在出廠狀態（只有那幾篇範例文檔、一個字都沒改）。
+
+   原本是把整包 appData 轉成文字跟 INITIAL_APP_DATA 比對——但載入時
+   migrateDocTags() 已經先幫每篇補上 manualTags，而 INITIAL_APP_DATA 裡
+   沒有這個 key，所以兩串文字永遠不可能相同，這個函式永遠回傳 false。
+   之後再加任何欄位也會重蹈覆轍。
+
+   改成只看「認得出來的身分」：篇數一樣、id 一樣、標題與內文都沒被動過。
+   往資料結構加欄位不會影響這個判斷。
+
+   （這個函式有兩個用途：判斷要不要跳同步衝突，以及判斷有沒有還沒備份的
+   修改。壞掉的時候後者會讓全新安裝、一個字都沒寫就跳出備份提醒。） */
 function localLooksUntouched() {
   try {
-    return JSON.stringify(appData) === JSON.stringify(INITIAL_APP_DATA);
+    const initial = INITIAL_APP_DATA.docs || [];
+    const now = appData.docs || [];
+    if (now.length !== initial.length) return false;
+
+    for (let i = 0; i < initial.length; i++) {
+      const a = initial[i];
+      const b = now.find(function(d) { return d.id === a.id; });
+      if (!b) return false;
+      if ((b.title || "") !== (a.title || "")) return false;
+      if ((b.content || "") !== (a.content || "")) return false;
+    }
+
+    // 資料夾與世界觀的數量也要沒變，否則「只是還沒寫字，但已經建好架構了」
+    // 會被誤判成沒動過
+    if ((appData.folders || []).length !== (INITIAL_APP_DATA.folders || []).length) return false;
+    if ((appData.worldviews || []).length !== (INITIAL_APP_DATA.worldviews || []).length) return false;
+
+    /* 白板也要比。注意出廠預設本來就附了一個範例白板（兩個節點一條線），
+       所以不能寫成「白板上有東西就算動過」——那樣又會永遠回傳 false，
+       跟原本拿整包 JSON 比對是同一類錯誤。跟出廠那份的數量比才對。 */
+    const countOf = function(w) {
+      const c = (w && w.canvas) || {};
+      return (c.nodes || []).length + ":" + (c.edges || []).length + ":" + (c.notes || []).length;
+    };
+    for (let i = 0; i < (INITIAL_APP_DATA.worldviews || []).length; i++) {
+      const iw = INITIAL_APP_DATA.worldviews[i];
+      const nw = (appData.worldviews || []).find(function(w) { return w.id === iw.id; });
+      if (!nw) return false;
+      if (countOf(nw) !== countOf(iw)) return false;
+    }
+
+    return true;
   } catch (e) {
     return false;
   }
@@ -97,6 +140,16 @@ function adoptRemote(row) {
 
 async function initSync() {
   renderSyncIndicator();
+
+  /* Google 雲端硬碟的權杖不存本機，每次重開都是空的。先靜默試著要回來，
+     不然 syncIsActive() 一定是 false，同步會在使用者毫不知情的狀況下關掉。
+     Supabase 的 session 有存在 localStorage，不需要這一步。 */
+  if (loadProviderId() === "gdrive" && typeof restoreGdriveSessionQuietly === "function") {
+    setSyncStatus("syncing", "正在恢復 Google 授權…");
+    await restoreGdriveSessionQuietly();
+    renderSyncIndicator();
+  }
+
   if (!syncIsActive()) { setSyncStatus("off"); return; }
 
   setSyncStatus("syncing", "正在對帳…");

@@ -638,6 +638,12 @@ function moveDocsToTrash(docsArray) {
  appData.trash.docs.push(Object.assign({}, d, { deletedAt: now, deletedTs: Date.now() }));
  delete docHistory[d.id];
  });
+
+ /* 白板上指向這些文檔的節點與連線原本會留在資料裡（畫的時候跳過不畫），
+    一直累積佔空間。一起收進垃圾桶，復原文檔之後節點也回得來。 */
+ if (typeof trashOrphanNodesForDocs === "function") {
+ trashOrphanNodesForDocs(docsArray.map(function(d) { return d.id; }));
+ }
 }
 
 function moveFoldersToTrash(foldersArray) {
@@ -664,8 +670,9 @@ function renderTrashList() {
 
  const folders = appData.trash.folders || [];
  const docs = appData.trash.docs || [];
+ const canvasItems = appData.trash.canvas || [];
 
- if (folders.length === 0 && docs.length === 0) {
+ if (folders.length === 0 && docs.length === 0 && canvasItems.length === 0) {
  list.innerHTML = '<div class="hashtag-filter-empty">垃圾桶目前是空的</div>';
  return;
  }
@@ -685,6 +692,28 @@ function renderTrashList() {
  permanentlyDeleteTrashDoc(d.id);
  }));
  });
+
+ /* 白板上刪掉的節點／連線／便條紙。用索引而不是 id 來指，因為這三種
+    東西的 id 各自獨立、不保證不重複。 */
+ const canvasIcons = { node: '🔗', edge: '↔️', note: '🗒️' };
+ canvasItems.forEach(function(item, index) {
+ const world = appData.worldviews.find(w => w.id === item.worldId);
+ const where = world ? ('　·　' + (world.icon || '🌐') + ' ' + world.name) : '';
+ list.appendChild(createTrashRow(
+ canvasIcons[item.kind] || '🧩',
+ (item.label || '白板項目') + where,
+ item.deletedAt,
+ function() { if (restoreCanvasTrashItem(index)) renderTrashList(); },
+ function() { permanentlyDeleteCanvasTrashItem(index); }
+ ));
+ });
+}
+
+function permanentlyDeleteCanvasTrashItem(index) {
+ if (!confirm("確定要永久刪除這個白板項目嗎？此動作無法復原。")) return;
+ appData.trash.canvas.splice(index, 1);
+ saveData();
+ renderTrashList();
 }
 
 function createTrashRow(icon, name, deletedAt, onRestore, onPermanentDelete) {
@@ -784,11 +813,13 @@ function permanentlyDeleteTrashDoc(docId) {
 }
 
 function emptyTrash() {
- const total = (appData.trash.docs || []).length + (appData.trash.folders || []).length;
+ const total = (appData.trash.docs || []).length + (appData.trash.folders || []).length +
+ (appData.trash.canvas || []).length;
  if (total === 0) { alert("垃圾桶目前是空的。"); return; }
  if (!confirm("確定要清空垃圾桶嗎？裡面的 " + total + " 個項目將會永久刪除，此動作無法復原！")) return;
  appData.trash.docs = [];
  appData.trash.folders = [];
+ appData.trash.canvas = [];
  saveData();
  renderTrashList();
 }

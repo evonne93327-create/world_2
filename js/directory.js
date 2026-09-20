@@ -87,8 +87,33 @@ function folderHasChildren(folderId) {
  appData.docs.some(d => d.folderId === folderId);
 }
 
+/* 搜尋時，這個資料夾（含它底下所有層）裡有沒有命中的文檔。
+
+   原本搜尋只過濾文檔、資料夾一律照畫，所以搜「騎士」會看到一整棵完整的
+   樹，兩筆結果散在裡面要自己用眼睛找。現在整個子樹都沒命中就不畫。
+
+   遞迴時把走過的資料夾記下來，資料損毀造成 parentId 繞成圈時才不會無限遞迴。 */
+function folderSubtreeHasMatch(worldId, folderId, search, seen) {
+ seen = seen || {};
+ if (seen[folderId]) return false;
+ seen[folderId] = true;
+
+ const hit = appData.docs.some(function(d) {
+ return d.worldId === worldId && d.folderId === folderId && docMatchesSearch(d, search);
+ });
+ if (hit) return true;
+
+ return appData.folders.some(function(f) {
+ return f.worldId === worldId && f.parentId === folderId &&
+ folderSubtreeHasMatch(worldId, f.id, search, seen);
+ });
+}
+
 function renderFolderLevel(worldId, parentId, parentElement, search) {
- const folders = appData.folders.filter(f => f.worldId === worldId && f.parentId === parentId);
+ let folders = appData.folders.filter(f => f.worldId === worldId && f.parentId === parentId);
+ if (search) {
+ folders = folders.filter(function(f) { return folderSubtreeHasMatch(worldId, f.id, search); });
+ }
 
  folders.forEach(function(folder) {
  const folderDiv = document.createElement("div");

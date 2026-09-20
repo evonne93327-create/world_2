@@ -333,15 +333,13 @@ function renderTOC(content) {
     const chip = document.createElement("span");
     chip.className = "toc-chip";
     chip.textContent = "📍 " + ch.title;
+    /* 用行號定位，不要用 indexOf(fullText)。
+
+       indexOf 找的是「全文裡第一個長這樣的字串」——兩章同名，或內文裡
+       引用了章節標題，就會跳到錯的地方。章節物件上本來就帶著 lineIndex，
+       而 jumpToLine() 已經是照行號精準定位的正確實作（快速跳轉用的就是它）。 */
     chip.onclick = function() {
-      const textarea = document.getElementById("docContentInput");
-      const pos = textarea.value.indexOf(ch.fullText);
-      if (pos !== -1) {
-        textarea.focus();
-        textarea.setSelectionRange(pos, pos + ch.fullText.length);
-        const percent = pos / Math.max(1, textarea.value.length);
-        textarea.scrollTop = (textarea.scrollHeight - textarea.clientHeight) * percent;
-      }
+      jumpToLine(ch.lineIndex);
     };
     container.appendChild(chip);
   });

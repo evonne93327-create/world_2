@@ -73,7 +73,7 @@ function computeManualTagsFor(content, tags) {
   };
 
   let removed = 0;
-  ["docs", "folders"].forEach(function(kind) {
+  ["docs", "folders", "canvas"].forEach(function(kind) {
     if (!Array.isArray(appData.trash[kind])) return;
     const before = appData.trash[kind].length;
     appData.trash[kind] = appData.trash[kind].filter(function(item) { return !expired(item); });
@@ -102,10 +102,12 @@ function computeManualTagsFor(content, tags) {
 })();
 
 if (!appData.trash || typeof appData.trash !== "object") {
-  appData.trash = { docs: [], folders: [] };
+  appData.trash = { docs: [], folders: [], canvas: [] };
 }
 if (!Array.isArray(appData.trash.docs)) appData.trash.docs = [];
 if (!Array.isArray(appData.trash.folders)) appData.trash.folders = [];
+// 白板的節點與連線原本刪了就沒了，跟文檔「都能復原」的預期不一致
+if (!Array.isArray(appData.trash.canvas)) appData.trash.canvas = [];
 
 /* localStorage 滿了的時候只提醒一次，不要每敲一個字就跳一次。
    等到真的存成功了才把旗標放掉——中間都還在危險狀態。 */
@@ -180,7 +182,27 @@ function localStorageUsage() {
   return used;
 }
 
-// 3. 確保重新整理或關閉分頁前，一定會記住最後的瀏覽位置
-window.addEventListener("beforeunload", function() {
-  localStorage.setItem("novel_ui_state", JSON.stringify({ activeWorldId, activeDocId, activeFolderId }));
+/* 離開／切到背景之前，把還沒寫進去的東西補存。
+
+   內文是打完停手 400ms 才存的，所以打完最後一句立刻關掉分頁，那 400ms
+   的字會掉。原本這裡只存了「停在哪個文檔」這種畫面狀態，沒有補存內文。
+
+   而且不能只靠 beforeunload：iOS 的 PWA 幾乎不觸發它（系統把 app 從背景
+   回收時根本不會跑）。visibilitychange 的 hidden 才是 iOS 上可靠的那一個，
+   pagehide 則補桌面版關分頁的情況。三個都掛上，重複存一次沒有壞處。
+
+   localStorage 是同步寫入的，在這些事件裡寫得完，不用擔心來不及。 */
+function flushBeforeLeaving() {
+  try {
+    if (typeof flushPendingContentPersist === "function") flushPendingContentPersist();
+  } catch (e) { console.error(e); }
+  try {
+    localStorage.setItem("novel_ui_state", JSON.stringify({ activeWorldId, activeDocId, activeFolderId }));
+  } catch (e) { /* 空間滿了的話 saveData 那邊已經提醒過了 */ }
+}
+
+window.addEventListener("beforeunload", flushBeforeLeaving);
+window.addEventListener("pagehide", flushBeforeLeaving);
+document.addEventListener("visibilitychange", function() {
+  if (document.visibilityState === "hidden") flushBeforeLeaving();
 });
