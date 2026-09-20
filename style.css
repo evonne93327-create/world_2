@@ -1120,14 +1120,17 @@ main.content-workspace {
   gap: var(--sp-6);
   padding: var(--sp-5) var(--sp-10);
   border-radius: var(--radius-lg);
-  border: 1.5px solid transparent;
+  /* 平常是白底配邊框，只有滑鼠移上去才有底色。
+     原本相反——預設填滿米色、hover 才變白，整排看起來像全部都被選取了。 */
+  border: 1.5px solid var(--border);
   cursor: pointer;
   font-size: var(--fs-12);
   font-weight: 600;
-  background: var(--bg-sunken);
+  background: var(--bg-card);
   color: var(--text-secondary);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.hashtag-filter-color-chip:hover { background: var(--bg-card); }
+.hashtag-filter-color-chip:hover { background: var(--bg-sunken); }
 .hashtag-filter-color-chip.active { border-color: var(--accent); color: var(--text-primary); }
 .hashtag-filter-color-dot {
   width: var(--icon-10);
@@ -1767,41 +1770,3 @@ main.content-workspace {
   -webkit-user-select: none;
 }
 
-/* ----------------------------------------------------------
-   有新版本的提示
-
-   放在上方置中：白板的浮動按鈕、提示文字、縮放指示都擠在下半部，
-   底部又有手機的底欄與安全區，上面是唯一不會跟人打架的位置。
-   ---------------------------------------------------------- */
-.update-toast {
-  position: fixed;
-  top: var(--toast-top);
-  left: 50%;
-  transform: translateX(-50%) translateY(-16px);
-  display: none;
-  align-items: center;
-  gap: var(--sp-10);
-  max-width: calc(100vw - 32px);
-  padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-14);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  box-shadow: var(--shadow-lg);
-  z-index: var(--z-update-toast);
-  opacity: 0;
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-.update-toast.active {
-  display: flex;
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-.update-toast-text {
-  font-size: var(--fs-12);
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-.update-toast-btn {
-  padding: var(--sp-5) var(--sp-12);
-  white-space: nowrap;
-}

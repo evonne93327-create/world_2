@@ -277,13 +277,13 @@
   <!-- 彈窗：Hashtag 篩選（依顏色分類，列出標籤／行數／文章標題，點擊跳轉） -->
   <div class="modal-overlay" id="hashtagFilterModal">
     <div class="modal-card" style="width:480px;">
-      <div class="modal-title">🏷️ Hashtag 篩選</div>
+      <div class="modal-head">
+        <div class="modal-title">🏷️ Hashtag 篩選</div>
+        <button class="icon-sm-btn" title="關閉" onclick="closeHashtagFilterModal()">✕</button>
+      </div>
       <p style="font-size:12px; color:var(--text-secondary);">依顏色分類篩選目前世界觀中的 Hashtag，點擊項目可直接跳轉至該文檔段落：</p>
       <div class="hashtag-filter-colors" id="hashtagFilterColors"></div>
       <div class="hashtag-filter-list" id="hashtagFilterList"></div>
-      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
-        <button class="btn btn-secondary" onclick="closeHashtagFilterModal()">關閉</button>
-      </div>
     </div>
   </div>
 
@@ -383,10 +383,15 @@
 
   <!-- 右鍵 / 長按 自訂選單 -->
   <!-- 有新版本時的提示。不自動重載——正在打字的人被硬生生重整會很惱火 -->
-  <div class="update-toast" id="updateToast" role="status" aria-live="polite">
-    <span class="update-toast-text">有新版本可以用了</span>
-    <button class="btn btn-primary update-toast-btn" onclick="reloadForUpdate()">重新載入</button>
-    <button class="icon-sm-btn" title="稍後再說" onclick="dismissUpdateToast()">✕</button>
+  <div class="modal-overlay" id="updateModal">
+    <div class="modal-card" style="width:420px;">
+      <div class="modal-title">✨ 有新版本</div>
+      <p style="font-size:12px; color:var(--text-secondary);">程式已經更新，重新載入之後才會套用。資料都存在這台裝置上，重新載入不會遺失。</p>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
+        <button class="btn btn-secondary" onclick="dismissUpdateModal()">稍後再說</button>
+        <button class="btn btn-primary" onclick="reloadForUpdate()">重新載入</button>
+      </div>
+    </div>
   </div>
 
   <div class="ctx-menu-overlay" id="ctxMenuOverlay"></div>
