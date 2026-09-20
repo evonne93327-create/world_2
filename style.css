@@ -608,20 +608,61 @@ main.content-workspace {
   flex-direction: column;
   gap: var(--sp-12);
 }
-.content-textarea {
+/* 外層只是給高亮圖層一個定位基準；原本 textarea 是 .editor-content-area
+   的 flex 子元素，這些屬性要搬到它身上，版面才不會變。 */
+.content-editor-wrap {
+  position: relative;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+/* 兩層的字體排版必須完全一致，否則高亮會跟文字錯開。
+   padding 明確寫 0：textarea 在各家瀏覽器有各自的預設內距（Chrome 是 2px），
+   不寫死的話兩層會差那幾個 px。 */
+.content-textarea,
+.content-highlight-layer {
   width: 100%;
   min-height: 400px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  font-size: var(--fs-16);
+  line-height: 1.9;
+  font-family: var(--font-ui);
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.content-textarea {
+  position: relative;
+  z-index: 1;
+  /* textarea 預設是 inline-block，會在下緣留一塊行高造成的空隙，
+     外層 wrap 因此比 textarea 高幾 px，高亮圖層也跟著多出來一截 */
+  display: block;
   height: auto;
   overflow-y: hidden;
-  flex-shrink: 0;
   border: none !important;
   outline: none !important;
   resize: none;
-  font-size: var(--fs-16);
-  line-height: 1.9;
   color: #3A322A;
-  font-family: var(--font-ui);
   background: transparent;
+}
+
+.content-highlight-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  color: transparent;          /* 只負責畫底色，字由上層的 textarea 顯示 */
+  user-select: none;
+  overflow: hidden;
+}
+.content-highlight-layer mark {
+  background: #FFE9A8;
+  color: transparent;
+  border-radius: 2px;
 }
 .toc-card {
   background: var(--bg-sunken);

@@ -261,6 +261,9 @@ function createDocRowElement(doc) {
  updateWorldBadge();
  loadDocToEditor(doc.id);
  openDocFromDirectory(doc);
+ // 有在搜尋的話，把搜尋的詞在內文裡標起來並捲過去。
+ // 停在白板檢視時不做——那裡看的是節點，不是內文。
+ if (activeView === 'editor') applySearchHighlightForOpenedDoc();
  if (window.innerWidth <= 768) closeSidebarMobile();
  };
 

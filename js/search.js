@@ -18,6 +18,7 @@ function clearSearchInput() {
   inputEl.value = "";
   clearBtn.style.display = "none";
   renderSidebarTree();
+  clearSearchHighlight();
   inputEl.focus();
 }
 
@@ -41,4 +42,94 @@ function renderActiveDocSearchPin(container, search) {
 
   pinWrap.appendChild(createDocRowElement(doc));
   container.appendChild(pinWrap);
+}
+
+/* ==========================================================
+   搜尋命中標示
+
+   從搜尋結果點進文檔時，把搜尋的詞在內文裡標起來。
+
+   做法是在 textarea 底下墊一層同樣排版的圖層，命中的字用 <mark> 畫底色，
+   再讓上層透明底的 textarea 把字顯示在上面。
+
+   不用原生選取（setSelectionRange）的原因有兩個：選取只有在 textarea
+   取得焦點時才看得見，手機上那會彈出鍵盤；而且選取一次只能標一段，
+   同一個詞出現很多次的話只看得到第一個。
+   ========================================================== */
+
+let searchHighlightTerm = "";
+
+function currentSearchTerm() {
+  const el = document.getElementById("searchInput");
+  return el ? el.value.trim() : "";
+}
+
+function setSearchHighlight(term) {
+  searchHighlightTerm = term || "";
+  renderSearchHighlight();
+}
+
+function clearSearchHighlight() {
+  if (!searchHighlightTerm) return;
+  searchHighlightTerm = "";
+  renderSearchHighlight();
+}
+
+function renderSearchHighlight() {
+  const layer = document.getElementById("docContentHighlight");
+  const textarea = document.getElementById("docContentInput");
+  if (!layer || !textarea) return;
+
+  const text = textarea.value || "";
+  const term = searchHighlightTerm;
+
+  if (!term) { layer.innerHTML = ""; return; }
+
+  // 不分大小寫比對，但畫出來的要是原文
+  const lower = text.toLowerCase();
+  const needle = term.toLowerCase();
+  let html = "";
+  let from = 0;
+  let idx = lower.indexOf(needle);
+
+  while (idx !== -1) {
+    html += escapeHtml(text.slice(from, idx));
+    html += "<mark>" + escapeHtml(text.slice(idx, idx + term.length)) + "</mark>";
+    from = idx + term.length;
+    idx = lower.indexOf(needle, from);
+  }
+  html += escapeHtml(text.slice(from));
+
+  // 結尾的換行在 pre-wrap 下不會產生最後一個空行，補一個字元讓兩層等高
+  layer.innerHTML = html + "\n";
+}
+
+/* 捲到第一個命中的地方。位置直接量圖層裡第一個 <mark>，
+   不用自己推算行號與折行——圖層跟 textarea 排版一致，量到的就是對的。 */
+function scrollToFirstSearchHit() {
+  const layer = document.getElementById("docContentHighlight");
+  const scroller = document.querySelector(".editor-content-area");
+  if (!layer || !scroller) return;
+
+  const mark = layer.querySelector("mark");
+  if (!mark) return;
+
+  const markRect = mark.getBoundingClientRect();
+  const scrollerRect = scroller.getBoundingClientRect();
+  if (markRect.height === 0) return;
+
+  // 已經看得到就不要亂捲
+  if (markRect.top >= scrollerRect.top && markRect.bottom <= scrollerRect.bottom) return;
+
+  // 擺在容器上方三分之一處，前後文都看得到
+  const offset = markRect.top - scrollerRect.top - scroller.clientHeight / 3;
+  scroller.scrollTop += offset;
+}
+
+/* 從搜尋結果點進某篇文檔時呼叫。搜尋框是空的就什麼都不做。 */
+function applySearchHighlightForOpenedDoc() {
+  const term = currentSearchTerm();
+  if (!term) { clearSearchHighlight(); return; }
+  setSearchHighlight(term);
+  scrollToFirstSearchHit();
 }

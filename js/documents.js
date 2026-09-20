@@ -48,6 +48,9 @@ function loadDocToEditor(docId) {
   renderDocImages(doc.images || []);
   renderSidebarTree();
   closeQuickJumpPanel();
+  // 換了一篇文檔，上一篇的搜尋標示不該留著。
+  // 從搜尋結果點進來的那條路徑會在這之後自己加回去。
+  if (typeof clearSearchHighlight === "function") clearSearchHighlight();
 
   ensureDocHistory(doc.id, doc.content || "");
 }
@@ -88,6 +91,9 @@ function recomputeDocFromContent(doc, text) {
 function onContentChange() {
   const doc = appData.docs.find(d => d.id === activeDocId);
   if (!doc) return;
+
+  // 一開始編輯就把搜尋標示清掉：文字一動，標示的位置就不對了
+  if (typeof clearSearchHighlight === "function") clearSearchHighlight();
 
   const textarea = document.getElementById("docContentInput");
   const text = textarea.value;

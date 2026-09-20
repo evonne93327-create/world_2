@@ -154,9 +154,15 @@
 
           <div class="doc-images-strip" id="docImagesContainer"></div>
 
-          <textarea id="docContentInput" class="content-textarea" placeholder="在此記錄設定、勢力、背景或法術細節...
+          <!-- 高亮圖層墊在 textarea 底下：textarea 本來就是透明底，兩層用同一組
+               字體與行高，搜尋命中的字就會剛好透出來。這樣不用把焦點搶過來
+               （手機才不會彈鍵盤），而且所有出現的位置都標得到。 -->
+          <div class="content-editor-wrap">
+            <div class="content-highlight-layer" id="docContentHighlight" aria-hidden="true"></div>
+            <textarea id="docContentInput" class="content-textarea" placeholder="在此記錄設定、勢力、背景或法術細節...
 💡 章節標註：輸入「# 第一章 啟程」或「第1章」系統會自動在頂部生成快速跳轉按鈕。
 💡 標籤標註：輸入「#帝國軍方 #反抗勢力」系統會自動抽取並套色；點擊上方 Hashtag 名稱可直接定位到內文段落！" oninput="onContentChange()"></textarea>
+          </div>
 
           <div class="undoredo-sticky-bar" id="undoRedoFabGroup">
             <button class="undoredo-fab-btn" id="docUndoBtn" title="復原（上一步內文變更）" onclick="undoDocContent()" disabled>↩️</button>
