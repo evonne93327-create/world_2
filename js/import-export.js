@@ -272,11 +272,50 @@ function importFromHTML(text) {
   importDocsArray(docs);
 }
 
-function importDocsArray(docsArray) {
-  if (!docsArray || !docsArray.length) { alert("此檔案沒有可匯入的文檔。"); return; }
-  if (!confirm(`即將匯入 ${docsArray.length} 篇文檔到「${getWorldName(activeWorldId)}」，確定嗎？`)) return;
+/* 把外來的一筆資料整成一篇能用的文檔；整不出來就回傳 null。
 
+   模糊測試丟了 31 種畸形檔案進來，發現這裡原本完全不檢查每一筆的內容：
+   [1,2,3] 會匯入三篇空白垃圾文檔、[{}] 會匯入一篇全空的、title 是物件
+   會變成 [object Object]、十萬字元的標題會整條塞進目錄欄。
+   另外 [null,null] 會先說「即將匯入 2 篇」再跳「匯入失敗」，訊息自相矛盾。 */
+const IMPORT_MAX_TITLE = 200;
+
+function coerceImportedDoc(d) {
+  if (!d || typeof d !== "object" || Array.isArray(d)) return null;
+
+  const str = function(v) { return typeof v === "string" ? v : ""; };
+  const title = str(d.title).trim().slice(0, IMPORT_MAX_TITLE);
+  const content = str(d.content);
+  const icon = str(d.icon).slice(0, 8);
+  const tags = Array.isArray(d.tags) ? d.tags.filter(function(t) { return typeof t === "string"; }) : [];
+  const images = sanitizeImageList(d.images);   // 來路不明的字串不要進 <img src>
+
+  // 標題、內文、圖片全空的就不是一篇文檔，只是雜訊
+  if (!title && !content && !images.length) return null;
+
+  return { title: title || "匯入文檔", content: content, icon: icon || "📄", tags: tags, images: images };
+}
+
+function importDocsArray(docsArray) {
+  if (!Array.isArray(docsArray) || !docsArray.length) { alert("此檔案沒有可匯入的文檔。"); return; }
+
+  const usable = [];
+  let skipped = 0;
   docsArray.forEach(function(d) {
+    const doc = coerceImportedDoc(d);
+    if (doc) usable.push(doc); else skipped++;
+  });
+
+  if (!usable.length) {
+    alert("此檔案沒有可匯入的文檔。" + (skipped ? "（有 " + skipped + " 筆資料無法辨識）" : ""));
+    return;
+  }
+
+  // 數量要在檢查之後才報，不然會出現「即將匯入 2 篇」後面接「匯入失敗」
+  if (!confirm("即將匯入 " + usable.length + " 篇文檔到「" + getWorldName(activeWorldId) + "」"
+        + (skipped ? "（另有 " + skipped + " 筆資料無法辨識，會略過）" : "") + "，確定嗎？")) return;
+
+  usable.forEach(function(d) {
     const doc = {
       id: "doc_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
       worldId: activeWorldId,
@@ -300,7 +339,8 @@ function importDocsArray(docsArray) {
   });
   saveData();
   renderSidebarTree();
-  alert("匯入完成！");
+  alert("匯入完成！已匯入 " + usable.length + " 篇"
+    + (skipped ? "，略過 " + skipped + " 筆無法辨識的資料" : "") + "。");
 }
 
 function getWorldName(id) {

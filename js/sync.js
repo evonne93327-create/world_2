@@ -113,6 +113,20 @@ function localLooksUntouched() {
   }
 }
 
+/* 採用雲端會不會讓內容變少。
+
+   只看篇數不夠——改標題不會變篇數，但整篇被刪掉就會。這裡刻意寬鬆：
+   只要雲端的文檔或世界觀比本機少，就算「可能會毀掉東西」，寧可多問一次。
+   使用者在別台裝置真的刪了文檔時也會問，那是對的：刪除本來就該確認一次。 */
+function remoteWouldLoseContent(remote) {
+  const rd = (remote && remote.data) || {};
+  const remoteDocs = Array.isArray(rd.docs) ? rd.docs.length : 0;
+  const remoteWorlds = Array.isArray(rd.worldviews) ? rd.worldviews.length : 0;
+  const localDocs = (appData.docs || []).length;
+  const localWorlds = (appData.worldviews || []).length;
+  return remoteDocs < localDocs || remoteWorlds < localWorlds;
+}
+
 function adoptRemote(row) {
   appData = row.data;
   saveSyncState(row.version, row.at);
@@ -157,8 +171,16 @@ async function initSync() {
     const remote = await P().pull();
     const state = loadSyncState();
 
-    // 雲端還沒有資料：把本機推上去當作第一版
+    /* 雲端還沒有資料：把本機推上去當作第一版。
+
+       但如果本機還是出廠範例（剛裝好就登入），推上去等於用範例資料佔住
+       雲端的第一版——之後其他裝置對帳時會看到一份「有效但內容是範例」的
+       雲端資料。不推，等使用者真的寫了東西再說。 */
     if (!remote) {
+      if (localLooksUntouched()) {
+        setSyncStatus("idle", "雲端還沒有資料，開始寫之後會自動上傳");
+        return;
+      }
       await pushNow(true);
       return;
     }
@@ -170,15 +192,30 @@ async function initSync() {
       return;
     }
 
-    // 雲端的版本跟本機記錄的不一樣，代表別的地方寫過。
-    // 本機沒有未推送的變更，或本機根本還是預設範例 → 直接採用雲端。
-    if (!isLocalDirty() || localLooksUntouched()) {
+    /* 雲端的版本跟本機記錄的不一樣，代表別的地方寫過。
+
+       但「版本不一樣」不等於「雲端比較新」。schema 裡資料列被重建時
+       version 會歸 1（supabase/schema.sql 的 trigger：insert 時 version := 1），
+       所以「本機記錄 57、雲端是 1」也算不一樣——那其實是雲端被重設了。
+
+       原本的判斷是「沒有待上傳的修改 → 直接採用雲端」。實測過：本機 200 篇、
+       雲端 2 篇，會直接覆蓋成 2 篇，寫進 localStorage，不問也不提示。
+       「沒有待上傳的修改」只代表沒東西要推，不代表本機的資料不值錢。
+
+       改成：只有在確定不會毀掉東西的時候才安靜採用，其餘一律跳出來問。 */
+    if (localLooksUntouched()) {
       adoptRemote(remote);
       setSyncStatus("idle", "已從雲端更新");
       return;
     }
 
-    // 兩邊都有變更 → 停下來問，不猜
+    if (!isLocalDirty() && !remoteWouldLoseContent(remote)) {
+      adoptRemote(remote);
+      setSyncStatus("idle", "已從雲端更新");
+      return;
+    }
+
+    // 兩邊都有變更，或採用雲端會少掉東西 → 停下來問，不猜
     openSyncConflictModal(remote);
   } catch (e) {
     setSyncStatus("error", e.message || "同步失敗");
