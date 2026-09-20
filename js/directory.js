@@ -265,7 +265,7 @@ function createDocRowElement(doc) {
  // 有在搜尋的話，把搜尋的詞在內文裡標起來並捲過去。
  // 停在白板檢視時不做——那裡看的是節點，不是內文。
  if (activeView === 'editor') applySearchHighlightForOpenedDoc();
- if (window.innerWidth <= 768) closeSidebarMobile();
+ if (isMobileLayout()) closeSidebarMobile();
  };
 
  const displayTitle = doc.title || "無標題文檔";
@@ -375,7 +375,7 @@ function navigateToBreadcrumbFolder(folder) {
  updateWorldBadge();
  renderSidebarTree();
 
- if (window.innerWidth <= 768) {
+ if (isMobileLayout()) {
  const sidebar = document.getElementById("appSidebar");
  const overlay = document.getElementById("sidebarOverlay");
  if (!sidebar.classList.contains("drawer-open")) {
@@ -563,7 +563,7 @@ function createNewDoc(targetFolderId = null, worldId = null) {
  renderSidebarTree();
  loadDocToEditor(newDoc.id);
  switchView('editor');
- if (window.innerWidth <= 768) closeSidebarMobile();
+ if (isMobileLayout()) closeSidebarMobile();
 }
 
 function promptRenameItem(type, id, currentName) {

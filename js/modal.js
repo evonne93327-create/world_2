@@ -285,7 +285,7 @@ function jumpToHashtagOccurrence(docId, lineIndex) {
  setTimeout(function() { jumpToLine(lineIndex); }, 0);
  }
 
- if (window.innerWidth <= 768) closeSidebarMobile();
+ if (isMobileLayout()) closeSidebarMobile();
 }
 
 function attachLongPress(el, callback, duration) {
@@ -490,7 +490,7 @@ function showContextMenu(e, items, title) {
  overlay.classList.add("active");
  menu.classList.add("active");
 
- const isMobile = window.innerWidth <= 768;
+ const isMobile = isMobileLayout();
  if (!isMobile) {
  // 電腦端隱藏遮罩，允許點擊穿透到底層元素
  overlay.style.pointerEvents = "none";

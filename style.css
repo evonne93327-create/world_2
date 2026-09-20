@@ -997,7 +997,86 @@ main.content-workspace {
    - hint 移到上方
    - 按鈕尺寸 / 位置完全比照快速跳轉按鈕（.quickjump-fab）
    ---------------------------------------------------------- */
-@media (max-width: 768px) {
+/* ----------------------------------------------------------
+   麵包屑收合
+
+   完整路徑（世界觀 › 資料夾 › 子資料夾 › 文檔）在窄一點的畫面放不下，
+   會折成兩行把版面推開。收成「第一個 … 最後一個」：起點與目前位置
+   最重要，中間層級點第一個的下拉選單一樣到得了。
+
+   條件比手機版寬（到 1024px）：平板直式的內容區只有 478px，同樣塞不下。
+   ---------------------------------------------------------- */
+@media (max-width: 1024px), (max-height: 500px) {
+.breadcrumb-row {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.breadcrumb-row.dropdown-open {
+  overflow: visible;
+}
+.breadcrumb-sep {
+  display: none;
+}
+.breadcrumb-item {
+  flex-shrink: 0;
+}
+.breadcrumb-item:not(:first-child):not(:last-child) {
+  display: none;
+}
+.breadcrumb-item:first-child:not(:has(~ .breadcrumb-item:not(:last-child))) + .breadcrumb-sep {
+  display: inline;
+}
+.breadcrumb-item:first-child:has(~ .breadcrumb-item:not(:last-child)) + .breadcrumb-sep {
+  display: inline;
+  font-size: 0;
+}
+.breadcrumb-item:first-child:has(~ .breadcrumb-item:not(:last-child)) + .breadcrumb-sep::after {
+  content: '› … ›';
+  font-size: var(--fs-10);
+}
+.breadcrumb-item:last-child {
+  flex: 1;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+}
+
+/* ----------------------------------------------------------
+   中間尺寸（平板直式、視窗拉窄的桌機）
+
+   768 以上就走電腦版三欄，但 820 這種寬度放進「直欄 62 + 目錄 280」之後
+   只剩 478px，頂端那一列會擠到把「文檔／白板」的字直排成兩行。
+
+   不退成手機版——這個寬度仍然放得下目錄，而平板直式有很高的垂直空間，
+   目錄一直看得到是好事。改成把頂端可以省的東西省掉就夠了。
+   ---------------------------------------------------------- */
+@media (min-width: 769px) and (max-width: 1024px) {
+  /* 動作按鈕只留圖示，「匯出」「新文檔」的字收起來 */
+  .nav-action-btn .btn-text { display: none; }
+  .nav-action-btn { padding: var(--sp-7) var(--sp-10); }
+
+  /* 世界觀名稱太長就截斷，不要把整列推開 */
+  .nav-world-btn { max-width: 26vw; }
+  #currentWorldName {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 就算空間還是不夠，分頁切換也不准把字拆成直排 */
+  .tab-btn { white-space: nowrap; }
+
+  .top-nav-bar { gap: var(--sp-6); }
+}
+
+/* 「手機版」的條件是寬度窄 或 高度矮。
+   手機橫放是 844×390：寬度超過 768 所以本來會拿到電腦版，但高度只有
+   390，目錄欄吃掉一半寬度之後幾乎沒有地方可以寫東西。只看寬度會漏掉
+   這種情況。 */
+@media (max-width: 768px), (max-height: 500px) {
   .canvas-hint-row {
     top: 12px;
     left: 12px;
@@ -1339,7 +1418,11 @@ main.content-workspace {
 /* ==========================================================
    手機版響應式
    ========================================================== */
-@media (max-width: 768px) {
+/* 「手機版」的條件是寬度窄 或 高度矮。
+   手機橫放是 844×390：寬度超過 768 所以本來會拿到電腦版，但高度只有
+   390，目錄欄吃掉一半寬度之後幾乎沒有地方可以寫東西。只看寬度會漏掉
+   這種情況。 */
+@media (max-width: 768px), (max-height: 500px) {
   body {
     flex-direction: column;
   }
@@ -1378,42 +1461,6 @@ main.content-workspace {
   }
   .tab-btn::first-letter {
     font-size: var(--fs-14) !important;
-  }
-
-  .breadcrumb-row {
-    flex-wrap: nowrap;
-    overflow: hidden;
-  }
-  .breadcrumb-row.dropdown-open {
-    overflow: visible;
-  }
-  .breadcrumb-sep {
-    display: none;
-  }
-  .breadcrumb-item {
-    flex-shrink: 0;
-  }
-  .breadcrumb-item:not(:first-child):not(:last-child) {
-    display: none;
-  }
-  .breadcrumb-item:first-child:not(:has(~ .breadcrumb-item:not(:last-child))) + .breadcrumb-sep {
-    display: inline;
-  }
-  .breadcrumb-item:first-child:has(~ .breadcrumb-item:not(:last-child)) + .breadcrumb-sep {
-    display: inline;
-    font-size: 0;
-  }
-  .breadcrumb-item:first-child:has(~ .breadcrumb-item:not(:last-child)) + .breadcrumb-sep::after {
-    content: '› … ›';
-    font-size: var(--fs-10);
-  }
-  .breadcrumb-item:last-child {
-    flex: 1;
-    flex-shrink: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   aside.world-rail {
@@ -1695,7 +1742,11 @@ main.content-workspace {
 .quickjump-item.is-tag .quickjump-item-label { color: var(--accent); font-weight: 600; }
 .quickjump-empty { padding: var(--sp-24) var(--sp-12); text-align: center; color: var(--text-muted); font-size: var(--fs-12); line-height: 1.7; }
 
-@media (max-width: 768px) {
+/* 「手機版」的條件是寬度窄 或 高度矮。
+   手機橫放是 844×390：寬度超過 768 所以本來會拿到電腦版，但高度只有
+   390，目錄欄吃掉一半寬度之後幾乎沒有地方可以寫東西。只看寬度會漏掉
+   這種情況。 */
+@media (max-width: 768px), (max-height: 500px) {
   .quickjump-fab { bottom: var(--fab-bottom); right: 16px; width: var(--icon-40); height: var(--icon-40); font-size: var(--fs-18); }
   .undoredo-sticky-bar { bottom: var(--fab-bottom); right: calc(16px + var(--icon-40) + var(--sp-12)); }
   .undoredo-fab-btn { width: var(--icon-40); height: var(--icon-40); font-size: var(--fs-16); }

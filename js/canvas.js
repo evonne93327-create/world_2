@@ -131,6 +131,18 @@ function addCurrentDocToCanvas() {
 const SVG_NS = "http://www.w3.org/2000/svg";
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
+/* foreignObject 的擺位一律用 transform，x/y 固定 0。
+
+   WebKit 對「viewBox 有縮放時 foreignObject 的 x/y」處理跟其他瀏覽器不
+   一致，會讓白板一放大縮小，便條紙與節點就跟連線、跟彼此對不起來
+   （iPad Safari 上發生，100% 時正常）。transform 走的是一般的 SVG
+   變換路徑，各家行為一致，是這個問題公認的解法。 */
+function placeForeignObject(fo, x, y) {
+  fo.setAttribute("x", 0);
+  fo.setAttribute("y", 0);
+  fo.setAttribute("transform", "translate(" + x + "," + y + ")");
+}
+
 function getCanvasNodesLayer(svg) {
   let layer = document.getElementById("canvasNodesLayer");
   if (!layer) {
@@ -154,8 +166,7 @@ function renderCanvas() {
     if (!doc) return;
 
     const fo = document.createElementNS(SVG_NS, "foreignObject");
-    fo.setAttribute("x", node.x);
-    fo.setAttribute("y", node.y);
+    placeForeignObject(fo, node.x, node.y);
     fo.setAttribute("width", CANVAS_NODE_W);
     fo.setAttribute("height", node._lastH || 80);
 
@@ -204,7 +215,7 @@ function renderCanvas() {
     const el = document.getElementById(node.id);
     if (!el) return;
     const fo = el.parentNode;
-    const h = el.offsetHeight || 80;
+    const h = measureNodeHeight(el);
     node._lastH = h;
     if (fo && fo.setAttribute) fo.setAttribute("height", h);
   });
@@ -223,6 +234,43 @@ function renderCanvas() {
 function refreshCanvasIfVisible() {
   if (typeof activeView !== "undefined" && activeView !== "canvas") return;
   renderCanvas();
+}
+
+/* 量節點高度。
+
+   不能直接量 foreignObject 裡的那個元素：它活在被 viewBox 縮放的 SVG
+   底下，WebKit 回傳的尺寸會被縮放倍率污染，量到的高度隨白板放大縮小
+   而浮動。便條紙的高度是存下來的數字、不量測，所以不受影響——結果就是
+   縮放之後節點跟便條紙的相對位置會分家（iPad Safari 上重現得到，
+   100% 時正常、一放大就跑掉）。
+
+   改成複製一份到 SVG 外面的隱藏容器量。那裡是一般的 DOM，沒有 viewBox
+   縮放，各家瀏覽器量出來的都是同一個值。 */
+
+let nodeMeasureMirror = null;
+
+function getNodeMeasureMirror() {
+  if (nodeMeasureMirror && nodeMeasureMirror.isConnected) return nodeMeasureMirror;
+  const el = document.createElement("div");
+  el.id = "canvasNodeMeasureMirror";
+  el.setAttribute("aria-hidden", "true");
+  el.style.cssText =
+    "position:absolute; left:-99999px; top:0; visibility:hidden; pointer-events:none; " +
+    "width:" + CANVAS_NODE_W + "px;";
+  document.body.appendChild(el);
+  nodeMeasureMirror = el;
+  return el;
+}
+
+function measureNodeHeight(el) {
+  const mirror = getNodeMeasureMirror();
+  const clone = el.cloneNode(true);
+  clone.removeAttribute("id");          // 不要製造重複 id
+  mirror.innerHTML = "";
+  mirror.appendChild(clone);
+  const h = clone.offsetHeight || 80;
+  mirror.innerHTML = "";
+  return h;
 }
 
 /* ---------- 縮放指示（節點/連線都已在 SVG 裡，viewBox 自動處理縮放）---------- */
@@ -445,8 +493,7 @@ function renderCanvasNotes() {
 
   canvas.notes.forEach(function(note) {
     const fo = document.createElementNS(SVG_NS, "foreignObject");
-    fo.setAttribute("x", note.x);
-    fo.setAttribute("y", note.y);
+    placeForeignObject(fo, note.x, note.y);
     fo.setAttribute("width", note.w);
     fo.setAttribute("height", note.h);
 
@@ -533,8 +580,7 @@ function enableNoteDrag(el, note, fo) {
     if (!dragging) return;
     note.x = initX + (clientX - startX) / canvasTransform.scale;
     note.y = initY + (clientY - startY) / canvasTransform.scale;
-    fo.setAttribute("x", note.x);
-    fo.setAttribute("y", note.y);
+    placeForeignObject(fo, note.x, note.y);
   }
   function end() {
     if (!dragging) return;
@@ -770,8 +816,7 @@ function enableDualDrag(element, nodeData) {
     nodeData.y = initialTop + dy / canvasTransform.scale;
     const fo = element.parentNode;
     if (fo && fo.setAttribute) {
-      fo.setAttribute("x", nodeData.x);
-      fo.setAttribute("y", nodeData.y);
+      placeForeignObject(fo, nodeData.x, nodeData.y);
     }
     renderCanvasLines();
   }
@@ -875,9 +920,16 @@ function getEdgeColor(edge) {
 
 /* ---------- 節點矩形（含 DOM 量測）---------- */
 function getNodeRect(node) {
-  const el = document.getElementById(node.id);
-  const w = el ? (el.offsetWidth || CANVAS_NODE_W) : CANVAS_NODE_W;
-  const h = el ? (el.offsetHeight || 80) : 80;
+  // 節點寬度就是 foreignObject 的 width（.canvas-node 是 width:100%），
+  // 高度用 renderCanvas() 量好存起來的那一份。都不要去問 SVG 裡的元素
+  // 自己多大——那個數字會被 viewBox 縮放污染（見 measureNodeHeight）。
+  const w = CANVAS_NODE_W;
+  let h = node._lastH;
+  if (!h) {
+    const el = document.getElementById(node.id);
+    h = el ? measureNodeHeight(el) : 80;
+    node._lastH = h;
+  }
   return { left: node.x, top: node.y, right: node.x + w, bottom: node.y + h, w: w, h: h };
 }
 
@@ -1431,7 +1483,7 @@ function openEdgeEditModal(edgeId) {
   document.getElementById("edgeEditModal").classList.add("active");
   setTimeout(function() {
     const input = document.getElementById("edgeEditLabelInput");
-    if (input && window.innerWidth > 768) { input.focus(); input.select(); }
+    if (input && !isMobileLayout()) { input.focus(); input.select(); }
   }, 50);
 }
 
