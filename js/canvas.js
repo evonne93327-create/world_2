@@ -99,7 +99,14 @@ function addCurrentDocToCanvas() {
 
   const canvas = getCurrentWorldCanvas();
   const exists = canvas.nodes.find(n => n.docId === currentDoc.id);
-  if (exists) { alert("此文檔已存在於當前白板！"); switchView('canvas'); return; }
+  if (exists) {
+    alert("此文檔已存在於當前白板！");
+    switchView('canvas');
+    // 已經在白板上了，那就帶使用者去看它在哪——光說「已存在」不夠，
+    // 白板拉遠或平移過的時候根本找不到那個節點
+    focusCanvasNode(currentDoc.id);
+    return;
+  }
 
   canvas.nodes.push({
     id: "node_" + currentDoc.id,
@@ -110,6 +117,9 @@ function addCurrentDocToCanvas() {
 
   saveData();
   switchView('canvas');
+  // 新節點是照既有數量排位置的，白板平移縮放過之後它不一定落在看得見的
+  // 地方。投射完直接對準它，跟在白板檢視下點目錄同樣的感覺。
+  focusCanvasNode(currentDoc.id);
 }
 
 /* ---------- 渲染節點 ----------
