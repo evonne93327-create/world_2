@@ -27,6 +27,23 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="ui-tokens.css">
   <link rel="stylesheet" href="style.css">
+
+  <!-- 主題要在 CSS 生效前就定下來，否則夜間模式每次開啟都會先閃一下白畫面。
+       這份是 js/theme.js 的極短版，邏輯必須跟那邊一致（key 也是）。 -->
+  <script>
+    (function () {
+      try {
+        var p = localStorage.getItem("wb_theme");
+        if (p !== "light" && p !== "dark") {
+          p = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)
+            ? "dark" : "light";
+        }
+        document.documentElement.setAttribute("data-theme", p);
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    })();
+  </script>
 </head>
 <body>
 
@@ -34,7 +51,7 @@
   <aside class="world-rail" id="appWorldRail">
     <button class="world-rail-btn add-btn" title="新增頂層世界觀" onclick="promptCreateWorldview()">＋</button>
     <div class="world-rail-list" id="worldRailContainer"></div>
-    <button class="world-rail-btn" title="備份完整資料庫" onclick="exportFullDatabaseJSON()">💾</button>
+    <button class="world-rail-btn" title="設定" onclick="openSettingsModal()">⚙️</button>
     <button class="world-rail-btn" id="syncRailBtn" title="雲端同步" onclick="openSyncModal()">☁️</button>
   </aside>
 
@@ -281,6 +298,37 @@
   </div>
 
   <!-- 彈窗：Hashtag 篩選（依顏色分類，列出標籤／行數／文章標題，點擊跳轉） -->
+  <!-- 彈窗：設定 -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal-card" style="width:420px;">
+      <div class="modal-head">
+        <div class="modal-title">⚙️ 設定</div>
+        <button class="icon-sm-btn" title="關閉" onclick="closeSettingsModal()">✕</button>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-label">外觀</div>
+        <div class="theme-choice" id="themeChoiceRow">
+          <button type="button" class="theme-opt" data-theme="light" aria-pressed="false"
+                  onclick="setThemePref('light')">☀️ 日間</button>
+          <button type="button" class="theme-opt" data-theme="dark" aria-pressed="false"
+                  onclick="setThemePref('dark')">🌙 夜間</button>
+          <button type="button" class="theme-opt" data-theme="auto" aria-pressed="false"
+                  onclick="setThemePref('auto')">🔄 跟隨系統</button>
+        </div>
+        <div class="settings-hint" id="themeAutoHint"></div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-label">資料</div>
+        <button class="btn btn-secondary" style="width:100%;" onclick="exportFullDatabaseJSON()">
+          💾 備份完整資料庫
+        </button>
+        <div class="settings-hint">把所有世界觀、文檔與白板存成一個 JSON 檔下載下來。</div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="hashtagFilterModal">
     <div class="modal-card" style="width:480px;">
       <div class="modal-head">
@@ -415,6 +463,7 @@
   <script src="js/api.js"></script>
   <script src="js/gdrive.js"></script>
   <script src="js/sync.js"></script>
+  <script src="js/theme.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

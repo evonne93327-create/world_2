@@ -15,6 +15,7 @@ window.addEventListener("DOMContentLoaded", function() {
   setupGlobalKeyboardShortcuts();
   setupHistoryNavigation();
   initSync();
+  initTheme();
   initIdleBackupReminder();
   registerServiceWorker();
 

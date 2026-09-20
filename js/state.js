@@ -18,6 +18,53 @@ const EDGE_COLORS = {
   "e_gray":   { name: "灰",   stroke: "#6E6152" }
 };
 
+/* 夜間版的同一組分類。深色底配亮字，色相跟日間版對齊，
+   所以「紫色＝角色人物誌」在兩個主題下都還是紫的，只是換了明暗。
+
+   名稱不放在這裡：使用者在「標籤分類設定」改的名字存在
+   appData.colorPalette，兩個主題共用同一份。這裡只管顏色。 */
+const DARK_PALETTES = {
+  "c_gray":   { bg: "#33302A", text: "#D5CCBC" },
+  "c_blue":   { bg: "#1F2E3C", text: "#9FC4E2" },
+  "c_green":  { bg: "#1E3229", text: "#99D0B3" },
+  "c_purple": { bg: "#2D2539", text: "#C4AFDD" },
+  "c_orange": { bg: "#3A2A1B", text: "#E2B079" },
+  "c_rose":   { bg: "#3A2220", text: "#E7A194" },
+  "c_yellow": { bg: "#363019", text: "#DCC98A" }
+};
+
+/* 連線在夜間也要提亮，原本那組在深色底上會糊成一團 */
+const DARK_EDGE_COLORS = {
+  "e_red":    { stroke: "#EE6A60" },
+  "e_blue":   { stroke: "#6BA5DC" },
+  "e_green":  { stroke: "#5FBE8A" },
+  "e_purple": { stroke: "#A986DC" },
+  "e_orange": { stroke: "#E8A35C" },
+  "e_rose":   { stroke: "#E4749A" },
+  "e_gray":   { stroke: "#A0937E" }
+};
+
+/* 主題目前是不是暗的。唯一的判斷來源是 <html data-theme>，
+   由 js/theme.js 寫入；CSS 與 JS 都看同一個值，不會各自解讀。 */
+function isDarkTheme() {
+  return document.documentElement.getAttribute("data-theme") === "dark";
+}
+
+/* 取一個標籤分類的顏色。名稱一律來自使用者改過的 appData.colorPalette，
+   顏色則看現在是哪個主題。所有要畫標籤／節點顏色的地方都走這裡，
+   不要再自己去讀 colorPalette，不然切主題會漏掉。 */
+function getPalette(key) {
+  const id = DEFAULT_PALETTES[key] ? key : "c_gray";
+  const saved = (appData && appData.colorPalette && appData.colorPalette[id]) || DEFAULT_PALETTES[id];
+  const colors = isDarkTheme() ? (DARK_PALETTES[id] || DARK_PALETTES.c_gray) : saved;
+  return { name: saved.name || DEFAULT_PALETTES[id].name, bg: colors.bg, text: colors.text };
+}
+
+function getEdgeStroke(colorId) {
+  const id = EDGE_COLORS[colorId] ? colorId : "e_gray";
+  return (isDarkTheme() ? DARK_EDGE_COLORS[id] : EDGE_COLORS[id]).stroke;
+}
+
 const COMMON_ICONS = ["📁", "🌍", "⚔️", "🛡️", "📜", "🏰", "🧙", "🐉", "🔮", "🔥", "💎", "🏛️", "👑", "🗡️", "🏹", "📖", "✨", "🔖"];
 const MARKDOWN_HEADING_REGEX = /^#\s+(.+)/;
 const CHAPTER_LINE_REGEX = /^(第[0-9一二三四五六七八九十百]+[章回卷節]|Chapter\s+[0-9]+)/i;

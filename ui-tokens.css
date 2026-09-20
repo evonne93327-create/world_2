@@ -34,6 +34,26 @@
   --danger-hover: #93291F;
   --danger-light: #F7E1DC;
 
+  /* 鋪在 accent／danger 底色上的文字。夜間的強調色是亮的，
+     再壓白字會看不清楚，所以這個值兩個主題是相反的。 */
+  --on-accent: #FFFFFF;
+  --accent-glow: rgba(172,59,42,0.35);
+
+  /* 以下這幾個原本直接寫死在 style.css 裡。夜間模式要換色，
+     所以一併收進來——不然切了主題只有一半的畫面會變。 */
+  --select-bg: #E2EAF4;        /* 目錄多選中的項目 */
+  --select-border: #BCCFDF;
+  --select-text: #1E3A5F;
+  --batch-bg: #FBE4E4;         /* 目錄批次勾選中的項目 */
+  --batch-border: #E8AFAF;
+  --batch-text: #A23B3B;
+  --editor-text: #3A322A;      /* 內文編輯區（比 text-primary 稍淡一點） */
+  --mark-bg: #FFE9A8;          /* 搜尋結果在內文裡的標示 */
+  --canvas-dot: #D7CBB0;       /* 白板的點陣底紋 */
+  --note-bg: #FBF0C9;          /* 白板便條紙 */
+  --note-border: #E4D2A0;
+  --note-handle: #C4AE72;
+
   /* ---------- 陰影 Shadow ---------- */
   --shadow-sm: 0 1px 2px rgba(42,36,32,0.06);
   --shadow-md: 0 6px 18px rgba(42,36,32,0.10);
@@ -145,4 +165,66 @@
      不能靠 flex 的 stretch + aspect-ratio：在橫向 flex 裡，項目的寬度由
      flex 基準尺寸決定，aspect-ratio 推不動它（實測過四種寫法都不行）。 */
   --hint-h: 30px;
+}
+
+/* ==========================================================
+   夜間模式
+
+   只覆蓋顏色，字級／間距／圓角／層級一律沿用上面那份。
+
+   不用 @media (prefers-color-scheme) 做樣式切換，而是由 js/theme.js
+   把解析後的結果寫成 <html data-theme="light|dark">。理由是節點底色
+   與連線顏色是 JS 直接寫進 style 的，CSS 的媒體查詢管不到；讓 JS 成為
+   唯一的判斷來源，兩邊才不會各自解讀、出現一半亮一半暗的畫面。
+
+   配色刻意維持這個 app 原本的暖調（咖啡／奶油），不是常見的藍黑，
+   夜間看起來才像同一個產品的另一面，而不是換了一套皮。
+   ========================================================== */
+
+:root[data-theme="dark"] {
+  --bg-main: #1E1A16;
+  --bg-sidebar: #26221C;
+  --bg-rail: #15120F;
+  --bg-card: #26221C;
+  --bg-sunken: #171410;
+  --border: #3B342B;
+  --border-soft: #2E2821;
+  --border-focus: #8FA4BC;
+
+  --text-primary: #EFE7DA;
+  --text-secondary: #BCB0A0;
+  --text-muted: #897F70;
+
+  /* 原本的磚紅 #AC3B2A 在深色底上會沉下去，提亮並降一點彩度 */
+  --accent: #E07A65;
+  --accent-hover: #EE9077;
+  --accent-light: #3B2520;
+  --accent-line: #71392D;
+  --on-accent: #2A1712;
+  --accent-glow: rgba(0,0,0,0.45);
+
+  --jade: #7FB9A4;
+  --jade-light: #22322C;
+
+  --danger: #E4786C;
+  --danger-hover: #F09184;
+  --danger-light: #3C231F;
+
+  /* 深色底上的陰影要靠純黑才看得出來，原本那組帶暖色的會整個消失 */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.45);
+  --shadow-md: 0 6px 18px rgba(0,0,0,0.42);
+  --shadow-lg: 0 16px 40px -8px rgba(0,0,0,0.60);
+
+  --select-bg: #1F2A36;
+  --select-border: #3A5066;
+  --select-text: #A8C6E2;
+  --batch-bg: #3A2320;
+  --batch-border: #6B3A34;
+  --batch-text: #E79C92;
+  --editor-text: #E4DCCE;
+  --mark-bg: #6B5320;
+  --canvas-dot: #332C23;
+  --note-bg: #3A3320;
+  --note-border: #554A2C;
+  --note-handle: #8A7A46;
 }
