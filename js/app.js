@@ -44,7 +44,7 @@ function registerServiceWorker() {
   // updatefound 可能已經發生過了，監聽器掛上去也接不到。
   navigator.serviceWorker.addEventListener("controllerchange", function() {
     if (!hadController) { hadController = true; return; }
-    showUpdateToast();
+    showUpdateModal();
   });
 
   navigator.serviceWorker.register("sw.js").then(function(reg) {
@@ -55,7 +55,7 @@ function registerServiceWorker() {
       if (!incoming || !hadController) return;
       incoming.addEventListener("statechange", function() {
         if (incoming.state === "installed" || incoming.state === "activated") {
-          showUpdateToast();
+          showUpdateModal();
         }
       });
     });
@@ -75,22 +75,43 @@ function registerServiceWorker() {
    重整會很惱火，而且捲動位置、展開的資料夾、白板的平移縮放都會跑掉。
    什麼時候換版讓使用者自己決定。 */
 
-let updateToastShown = false;
+let updateModalShown = false;
+let updatePendingTimer = null;
 
-function showUpdateToast() {
-  if (updateToastShown) return;     // 一次就好，不要每次檢查都跳
-  const el = document.getElementById("updateToast");
+/* 有別的彈窗開著時不要疊上去。更新沒有急迫性，等對方關掉再說——
+   使用者正在改標籤分類或解同步衝突，被蓋一層新彈窗只會讓人不知所措。 */
+function otherModalOpen() {
+  const open = document.querySelector(".modal-overlay.active");
+  return !!open && open.id !== "updateModal";
+}
+
+function showUpdateModal() {
+  if (updateModalShown) return;     // 一次就好，不要每次檢查都跳
+  const el = document.getElementById("updateModal");
   if (!el) return;
-  updateToastShown = true;
+
+  if (otherModalOpen()) {
+    // 排隊重試，而不是直接放棄——放棄的話這次更新就再也不會通知了
+    if (!updatePendingTimer) {
+      updatePendingTimer = setInterval(function() {
+        if (updateModalShown) { clearInterval(updatePendingTimer); updatePendingTimer = null; return; }
+        if (!otherModalOpen()) showUpdateModal();
+      }, 5000);
+    }
+    return;
+  }
+
+  if (updatePendingTimer) { clearInterval(updatePendingTimer); updatePendingTimer = null; }
+  updateModalShown = true;
   el.classList.add("active");
 }
 
-function dismissUpdateToast() {
-  const el = document.getElementById("updateToast");
+function dismissUpdateModal() {
+  const el = document.getElementById("updateModal");
   if (el) el.classList.remove("active");
 }
 
 function reloadForUpdate() {
-  dismissUpdateToast();
+  dismissUpdateModal();
   location.reload();
 }
