@@ -357,7 +357,7 @@ function renderBreadcrumb() {
 
  const docItem = document.createElement("span");
  docItem.className = "breadcrumb-item";
- docItem.style.color = "var(--accent)";
+ docItem.style.color = "var(--accent-text)";
  docItem.textContent = (doc.icon || '📄') + " " + (doc.title || "無標題文檔");
  bar.appendChild(docItem);
 }

@@ -24,6 +24,9 @@
 
   --accent: #AC3B2A;
   --accent-hover: #8C2E20;
+  /* 強調色拿來「寫字」時用這個。填色按鈕可以用飽和一點的色塊，
+     同一個顏色變成細細的筆畫就不夠讀了——夜間差別特別明顯。 */
+  --accent-text: #AC3B2A;
   --accent-light: #F6E2DA;
   --accent-line: #E6BBAC;
 
@@ -186,21 +189,25 @@
   --bg-sidebar: #26221C;
   --bg-rail: #15120F;
   --bg-card: #26221C;
-  --bg-sunken: #171410;
+  /* 日間的 bg-sunken 比卡片暗，是「凹進去」的意思。深色底下沿用同一個
+     邏輯會讓搜尋框、頂部按鈕這些控制項比周圍更暗，看起來像洞不像按鈕。
+     夜間反過來做成「浮起來」——比卡片亮一階。 */
+  --bg-sunken: #383128;
   --border: #3B342B;
   --border-soft: #2E2821;
   --border-focus: #8FA4BC;
 
-  --text-primary: #EFE7DA;
+  --text-primary: #D6CFC5;
   --text-secondary: #BCB0A0;
-  --text-muted: #897F70;
+  --text-muted: #A89C8B;   /* 要在提亮後的 bg-sunken 上也讀得動 */
 
   /* 原本的磚紅 #AC3B2A 在深色底上會沉下去，提亮並降一點彩度 */
-  --accent: #E07A65;
-  --accent-hover: #EE9077;
+  --accent: #C4634F;
+  --accent-hover: #D9755F;
+  --accent-text: #D2775F;   /* 比按鈕底色亮一階，當文字才夠對比 */
   --accent-light: #3B2520;
   --accent-line: #71392D;
-  --on-accent: #2A1712;
+  --on-accent: #1C0D09;
   --accent-glow: rgba(0,0,0,0.45);
 
   --jade: #7FB9A4;
