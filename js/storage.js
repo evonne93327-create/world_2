@@ -2,7 +2,7 @@
    存儲與資料遷移 (storage.js)
    ========================================================== */
 
-const saved = localStorage.getItem("novel_multi_world_data_v5");
+const saved = safeStorageGet("novel_multi_world_data_v5");
 if (saved) {
   try {
     const parsed = JSON.parse(saved);
@@ -13,7 +13,7 @@ if (saved) {
 }
 
 // 1. 讀取上一次的 UI 狀態 (停留在哪個世界/文檔/資料夾)
-const savedState = localStorage.getItem("novel_ui_state");
+const savedState = safeStorageGet("novel_ui_state");
 if (savedState) {
   try {
     const parsedState = JSON.parse(savedState);
@@ -81,7 +81,7 @@ function computeManualTagsFor(content, tags) {
   });
 
   if (removed) {
-    try { localStorage.setItem("novel_multi_world_data_v5", JSON.stringify(appData)); } catch (err) {}
+    safeStorageSet("novel_multi_world_data_v5", JSON.stringify(appData));
   }
 })();
 
@@ -97,7 +97,7 @@ function computeManualTagsFor(content, tags) {
     });
   });
   if (changed) {
-    try { localStorage.setItem("novel_multi_world_data_v5", JSON.stringify(appData)); } catch (err) {}
+    safeStorageSet("novel_multi_world_data_v5", JSON.stringify(appData));
   }
 })();
 
@@ -115,12 +115,12 @@ let storageFullNotified = false;
 
 function saveData() {
   let ok = true;
-  try {
-    localStorage.setItem("novel_multi_world_data_v5", JSON.stringify(appData));
+  const err = safeStorageSet("novel_multi_world_data_v5", JSON.stringify(appData));
+  if (!err) {
     // 存檔時一併記錄當前的 UI 狀態
-    localStorage.setItem("novel_ui_state", JSON.stringify({ activeWorldId, activeDocId, activeFolderId }));
+    safeStorageSet("novel_ui_state", JSON.stringify({ activeWorldId, activeDocId, activeFolderId }));
     storageFullNotified = false;
-  } catch (err) {
+  } else {
     /* localStorage 大約只有 5MB，而圖片是整張 base64 存進去的。滿了之後
        setItem 會丟 QuotaExceededError——原本沒有接，於是：畫面上還是
        使用者剛打的字、硬碟上卻還是上一次成功存檔的版本，而且完全沒有
@@ -145,14 +145,16 @@ function notifyStorageFull(err) {
   const isQuota = err && (err.name === "QuotaExceededError" ||
                           err.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
                           err.code === 22);
+  // 空間滿了跟「瀏覽器根本不讓存」是兩回事，能做的事也完全不同
+  const isBlocked = !isQuota && !storageAvailable();
   if (storageFullNotified) return;
   storageFullNotified = true;
 
   const modal = document.getElementById("storageFullModal");
   if (!modal) {
     // 極端狀況（彈窗還沒載入）至少要吵一下，不能靜悄悄
-    alert(isQuota
-      ? "儲存空間已滿，這次的修改沒有存進這台裝置！請立刻備份。"
+    alert(isQuota ? "儲存空間已滿，這次的修改沒有存進這台裝置！請立刻備份。"
+      : isBlocked ? "這個瀏覽器不允許本機儲存，你的修改不會被保存！請立刻備份。"
       : "存檔失敗：" + (err && err.message ? err.message : "未知錯誤"));
     return;
   }
@@ -161,7 +163,18 @@ function notifyStorageFull(err) {
   if (detail) {
     detail.textContent = isQuota
       ? "這台裝置的瀏覽器儲存空間（約 5MB）已經滿了，通常是文檔裡的圖片佔掉的。"
+      : isBlocked
+      ? "這個瀏覽器不允許網站在本機儲存資料（可能是隱私模式、或設定裡關掉了網站資料）。" +
+        "在這個狀態下，所有的修改都只存在記憶體裡，關掉分頁就會消失。"
       : "存檔時發生錯誤：" + (err && err.message ? err.message : "未知錯誤");
+  }
+
+  const hint = document.getElementById("storageFullHint");
+  if (hint) {
+    hint.textContent = isBlocked
+      ? "解決方法：關掉隱私／無痕模式，或在瀏覽器設定裡允許這個網站儲存資料。"
+      : "騰出空間的方法：刪掉文檔裡用不到的圖片、清空垃圾桶（設定 → 垃圾桶），" +
+        "或把整個世界觀匯出成檔案之後刪掉它。";
   }
   modal.classList.add("active");
 }
@@ -197,7 +210,7 @@ function flushBeforeLeaving() {
     if (typeof flushPendingContentPersist === "function") flushPendingContentPersist();
   } catch (e) { console.error(e); }
   try {
-    localStorage.setItem("novel_ui_state", JSON.stringify({ activeWorldId, activeDocId, activeFolderId }));
+    safeStorageSet("novel_ui_state", JSON.stringify({ activeWorldId, activeDocId, activeFolderId }));
   } catch (e) { /* 空間滿了的話 saveData 那邊已經提醒過了 */ }
 }
 

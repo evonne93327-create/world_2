@@ -116,6 +116,67 @@ function recomputeDocFromContent(doc, text) {
   });
 }
 
+/* 每敲一個字，原本會把整篇內文掃過好幾遍：算字數、抽標籤（兩輪正規
+   表示式）、重建章節目錄、重畫標籤列、重畫麵包屑。實測單篇 14 萬字時
+   一個字要 55ms，其中光 recomputeDocFromContent 就 17.5ms——打起來會黏。
+
+   拆成兩段：
+   - 立刻要做的只有「把字記進記憶體」跟「讓輸入框長高」。這兩件的成本
+     跟文章長度無關，不能延後，延後了畫面會頓。
+   - 其餘全部是「從內文推導出來的顯示」——字數、標籤、章節目錄、麵包屑。
+     晚 200ms 更新完全看不出來，但省掉的是每一鍵掃一次全文。
+
+   200ms 比存檔的 400ms 短：字數要先跟上，不然使用者會覺得它壞了。 */
+const DERIVED_UI_DELAY_MS = 200;
+let derivedUiTimer = null;
+let pendingDerivedDocId = null;
+
+function scheduleDerivedUi(docId) {
+  pendingDerivedDocId = docId;
+  if (derivedUiTimer) clearTimeout(derivedUiTimer);
+  derivedUiTimer = setTimeout(function() {
+    derivedUiTimer = null;
+    flushDerivedUi();
+  }, DERIVED_UI_DELAY_MS);
+}
+
+function flushDerivedUi() {
+  if (derivedUiTimer) { clearTimeout(derivedUiTimer); derivedUiTimer = null; }
+  const docId = pendingDerivedDocId;
+  pendingDerivedDocId = null;
+  if (!docId) return;
+
+  const doc = appData.docs.find(d => d.id === docId);
+  if (!doc) return;
+  const text = doc.content || "";
+
+  // 標題空白時用第一行當標題
+  const titleInput = document.getElementById("docTitleInput");
+  if (titleInput && !titleInput.value.trim()) {
+    doc.title = (text.trim().split("\n")[0] || "").substring(0, 24);
+  }
+
+  recomputeDocFromContent(doc, text);
+
+  if (docId !== activeDocId) return;   // 已經切到別篇了，畫面不用更新
+
+  const wc = document.getElementById("statWordCount");
+  if (wc) wc.textContent = doc.wordCount;
+  const ua = document.getElementById("statUpdatedAt");
+  if (ua) ua.textContent = doc.updatedAt;
+
+  renderBreadcrumb();
+  renderTOC(text);
+  renderLiveHashtags(doc.tags);
+  updateDocRowInPlace(doc);
+
+  if (document.getElementById("quickJumpPanel").classList.contains("active")) {
+    renderQuickJumpList(text);
+    document.getElementById("quickJumpWordCount").textContent = doc.wordCount;
+    document.getElementById("quickJumpUpdatedAt").textContent = doc.updatedAt;
+  }
+}
+
 function onContentChange() {
   const doc = appData.docs.find(d => d.id === activeDocId);
   if (!doc) return;
@@ -126,29 +187,59 @@ function onContentChange() {
   const textarea = document.getElementById("docContentInput");
   const text = textarea.value;
   doc.content = text;
-  autoGrowTextarea(textarea);
-
-  if (!document.getElementById("docTitleInput").value.trim()) {
-    const firstLine = text.trim().split("\n")[0] || "";
-    doc.title = firstLine.substring(0, 24);
-  }
-
-  recomputeDocFromContent(doc, text);
-  document.getElementById("statWordCount").textContent = doc.wordCount;
-
   doc.updatedAt = formatTime(new Date());
-  document.getElementById("statUpdatedAt").textContent = doc.updatedAt;
+  autoGrowTextareaFast(textarea);
 
-  renderBreadcrumb();
-  renderTOC(text);
-  renderLiveHashtags(doc.tags);
-  if (document.getElementById("quickJumpPanel").classList.contains("active")) {
-    renderQuickJumpList(text);
-    document.getElementById("quickJumpWordCount").textContent = doc.wordCount;
-    document.getElementById("quickJumpUpdatedAt").textContent = doc.updatedAt;
+  scheduleDerivedUi(doc.id);
+  scheduleContentPersist(doc.id, text);
+}
+
+/* 打字時用的快速版本。
+
+   autoGrowTextarea() 會把高度歸零再讀 scrollHeight，等於強迫瀏覽器把整篇
+   重新排版兩次。文章短的時候無所謂，一萬行的時候實測一鍵要 196ms。
+
+   但「在同一行裡打字」不會改變需要的高度。所以先數換行數（純字串掃描，
+   八萬字約 0.7ms），跟上次一樣就直接跳過重量——實測降到 0.2ms。
+
+   兩個漏網的情況用一個延後的完整量測補回來：
+   - 某一行長到自動換行，視覺上多了一行但換行數沒變
+   - 刪掉內容之後高度該縮回去（scrollHeight 不會告訴你這件事）
+   寬度變了（轉向、視窗縮放）也是靠那個延後的量測收尾——不能放進比對的
+   鍵裡，讀寬度本身就要排版。 */
+let lastGrowKey = null;
+let growCorrectTimer = null;
+
+function countNewlines(s) {
+  let n = 1;
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
+  return n;
+}
+
+function autoGrowTextareaFast(el) {
+  if (!el) return;
+
+  /* 這個鍵裡只能放「不需要排版就拿得到」的東西。
+
+     第一版我把 el.clientWidth 也放進來（想偵測轉向／視窗縮放），結果每敲
+     一個字都比原本更慢——讀 clientWidth 跟讀 scrollHeight 一樣會強迫瀏覽器
+     排版，我想避開的成本自己又叫了一次（實測 196ms → 219ms）。
+     寬度變化交給下面那個延後的完整量測處理就好。 */
+  const key = countNewlines(el.value);
+
+  if (key !== lastGrowKey) {
+    lastGrowKey = key;
+    autoGrowTextarea(el);
+    return;
   }
 
-  scheduleContentPersist(doc.id, text);
+  // 行數沒變：這一鍵不重量，但排一次延後的完整量測收尾
+  if (growCorrectTimer) clearTimeout(growCorrectTimer);
+  growCorrectTimer = setTimeout(function() {
+    growCorrectTimer = null;
+    lastGrowKey = null;      // 下次一定重量
+    autoGrowTextarea(el);
+  }, 250);
 }
 
 function autoGrowTextarea(el) {
@@ -193,6 +284,7 @@ function scheduleContentPersist(docId, text) {
 
 function flushPendingContentPersist() {
   flushPendingTitlePersist();   // 標題跟內文一起補存，兩邊都不要掉字
+  flushDerivedUi();             // 字數與標籤要先算完，不然存進去的是舊的
 
   const hadPending = !!contentPersistTimer || !!historySnapshotTimer;
 

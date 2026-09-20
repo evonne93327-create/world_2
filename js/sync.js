@@ -20,11 +20,11 @@ let lastPushedPayload = null; // 內容沒變就不重送
    只放在記憶體的話下次開啟就不知道本機是髒的，
    會把別台裝置的版本當成最新而蓋掉這次的修改。 */
 function isLocalDirty() {
-  return localStorage.getItem(SYNC_DIRTY_KEY) === "1";
+  return safeStorageGet(SYNC_DIRTY_KEY) === "1";
 }
 function setLocalDirty(dirty) {
-  if (dirty) localStorage.setItem(SYNC_DIRTY_KEY, "1");
-  else localStorage.removeItem(SYNC_DIRTY_KEY);
+  if (dirty) safeStorageSet(SYNC_DIRTY_KEY, "1");
+  else safeStorageRemove(SYNC_DIRTY_KEY);
 }
 
 function setSyncStatus(status, detail) {
@@ -42,11 +42,11 @@ function setSyncStatus(status, detail) {
 const SYNC_PROVIDER_KEY = "world_sync_provider_v1";
 
 function loadProviderId() {
-  return localStorage.getItem(SYNC_PROVIDER_KEY) || "supabase";
+  return safeStorageGet(SYNC_PROVIDER_KEY) || "supabase";
 }
 
 function saveProviderId(id) {
-  localStorage.setItem(SYNC_PROVIDER_KEY, id);
+  safeStorageSet(SYNC_PROVIDER_KEY, id);
 }
 
 /* 同步流程一律透過這個物件跟後端講話，不直接碰 Supabase 或 Google 的東西 */
@@ -134,7 +134,7 @@ function adoptRemote(row) {
   lastPushedPayload = JSON.stringify(appData);
 
   // 直接寫回 localStorage，不要走 saveData()，否則會又標成髒的、又排一次推送
-  localStorage.setItem("novel_multi_world_data_v5", JSON.stringify(appData));
+  safeStorageSet("novel_multi_world_data_v5", JSON.stringify(appData));
 
   // 套用雲端資料後，目前選取的文件可能已經不存在了
   if (activeDocId && !appData.docs.find(d => d.id === activeDocId)) {

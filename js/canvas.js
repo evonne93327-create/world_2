@@ -50,7 +50,7 @@ const CANVAS_HINT_KEY = "world_canvas_hint_hidden_v1";
 
 function isCanvasHintHidden() {
   try {
-    return localStorage.getItem(CANVAS_HINT_KEY) === "1";
+    return safeStorageGet(CANVAS_HINT_KEY) === "1";
   } catch (e) {
     // 隱私模式之類讀不到 localStorage 的情況，就當作沒收起來
     return false;
@@ -72,7 +72,7 @@ function applyCanvasHintVisibility() {
 
 function toggleCanvasHint() {
   try {
-    localStorage.setItem(CANVAS_HINT_KEY, isCanvasHintHidden() ? "0" : "1");
+    safeStorageSet(CANVAS_HINT_KEY, isCanvasHintHidden() ? "0" : "1");
   } catch (e) { /* 存不了就只有這次有效，不影響操作 */ }
   applyCanvasHintVisibility();
 }

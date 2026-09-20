@@ -34,23 +34,23 @@ let gisLoading = null;
 
 function loadGdriveConfig() {
   try {
-    return JSON.parse(localStorage.getItem(GDRIVE_CONFIG_KEY)) || { clientId: "" };
+    return JSON.parse(safeStorageGet(GDRIVE_CONFIG_KEY)) || { clientId: "" };
   } catch (e) {
     return { clientId: "" };
   }
 }
 
 function saveGdriveConfig(clientId) {
-  localStorage.setItem(GDRIVE_CONFIG_KEY, JSON.stringify({ clientId: (clientId || "").trim() }));
+  safeStorageSet(GDRIVE_CONFIG_KEY, JSON.stringify({ clientId: (clientId || "").trim() }));
 }
 
 function loadGdriveFileId() {
-  return localStorage.getItem(GDRIVE_FILE_KEY) || null;
+  return safeStorageGet(GDRIVE_FILE_KEY) || null;
 }
 
 function saveGdriveFileId(id) {
-  if (id) localStorage.setItem(GDRIVE_FILE_KEY, id);
-  else localStorage.removeItem(GDRIVE_FILE_KEY);
+  if (id) safeStorageSet(GDRIVE_FILE_KEY, id);
+  else safeStorageRemove(GDRIVE_FILE_KEY);
 }
 
 function gdriveError(message, status) {
@@ -353,7 +353,7 @@ function submitGdriveConfig() {
 }
 
 function clearGdriveConfig() {
-  localStorage.removeItem(GDRIVE_CONFIG_KEY);
+  safeStorageRemove(GDRIVE_CONFIG_KEY);
   gdriveProvider.signOut();
   setSyncStatus("off");
   renderSyncModal();

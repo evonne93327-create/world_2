@@ -69,6 +69,45 @@ function getEdgeStroke(colorId) {
   return (isDarkTheme() ? DARK_EDGE_COLORS[id] : EDGE_COLORS[id]).stroke;
 }
 
+/* localStorage 的安全存取。
+
+   不是只有「空間滿了」一種壞法：瀏覽器設定裡關掉網站資料、企業政策、
+   某些嚴格的隱私模式下，光是讀取 window.localStorage 這個屬性本身就會
+   丟 SecurityError。storage.js 原本第一行就直接讀它，沒有 try/catch——
+   一丟例外整個檔案就在那裡中斷，後面的 let 宣告全部沒執行到。函式因為
+   提升看起來還在，一呼叫就撞上 TDZ（實測：saveData() 丟
+   ReferenceError: Cannot access 'storageFullNotified' before initialization）。
+
+   結果是 app 看起來完全正常、打字切換都能用，但每次存檔都在背景丟例外，
+   什麼都沒存進去，而且不會告訴使用者。跟「空間滿了」同一類的靜默資料
+   遺失，只是觸發條件不同。
+
+   這三個工具讓所有存取都不會把呼叫端炸掉；真正需要知道「存進去了沒」的
+   地方（saveData）自己看回傳值。 */
+function storageAvailable() {
+  try {
+    const k = "__probe__";
+    window.localStorage.setItem(k, "1");
+    window.localStorage.removeItem(k);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function safeStorageGet(key) {
+  try { return window.localStorage.getItem(key); } catch (e) { return null; }
+}
+
+/* 存成功回傳 null，失敗回傳那個 error——呼叫端要據此決定怎麼告訴使用者 */
+function safeStorageSet(key, value) {
+  try { window.localStorage.setItem(key, value); return null; } catch (e) { return e; }
+}
+
+function safeStorageRemove(key) {
+  try { window.localStorage.removeItem(key); } catch (e) { /* 存不了就不用刪 */ }
+}
+
 const COMMON_ICONS = ["📁", "🌍", "⚔️", "🛡️", "📜", "🏰", "🧙", "🐉", "🔮", "🔥", "💎", "🏛️", "👑", "🗡️", "🏹", "📖", "✨", "🔖"];
 const MARKDOWN_HEADING_REGEX = /^#\s+(.+)/;
 const CHAPTER_LINE_REGEX = /^(第[0-9一二三四五六七八九十百]+[章回卷節]|Chapter\s+[0-9]+)/i;
