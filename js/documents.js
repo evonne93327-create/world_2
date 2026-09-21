@@ -48,9 +48,10 @@ function loadDocToEditor(docId) {
   renderDocImages(doc.images || []);
   renderSidebarTree();
   closeQuickJumpPanel();
-  // 換了一篇文檔，上一篇的搜尋標示不該留著。
+  // 換了一篇文檔，上一篇的標示不該留著。
   // 從搜尋結果點進來的那條路徑會在這之後自己加回去。
   if (typeof clearSearchHighlight === "function") clearSearchHighlight();
+  if (typeof clearJumpHighlight === "function") clearJumpHighlight();
 
   ensureDocHistory(doc.id, doc.content || "");
 }
@@ -181,8 +182,9 @@ function onContentChange() {
   const doc = appData.docs.find(d => d.id === activeDocId);
   if (!doc) return;
 
-  // 一開始編輯就把搜尋標示清掉：文字一動，標示的位置就不對了
+  // 一開始編輯就把標示清掉：文字一動，標示的位置就不對了
   if (typeof clearSearchHighlight === "function") clearSearchHighlight();
+  if (typeof clearJumpHighlight === "function") clearJumpHighlight();
 
   const textarea = document.getElementById("docContentInput");
   const text = textarea.value;
@@ -406,6 +408,7 @@ function applyHistorySnapshot(doc, content, selection) {
   } catch (e) { /* textarea 還沒掛上時忽略 */ }
   // 復原／取消復原是整段換掉內文，標示的位置會完全對不上
   if (typeof clearSearchHighlight === "function") clearSearchHighlight();
+  if (typeof clearJumpHighlight === "function") clearJumpHighlight();
 
   recomputeDocFromContent(doc, content);
   doc.updatedAt = formatTime(new Date());
@@ -611,4 +614,106 @@ function deleteDocImage(index) {
     saveData();
     renderDocImages(doc.images);
   }
+}
+
+/* ==========================================================
+   段首空兩格
+
+   中文排版的習慣是每一段開頭空兩個全形字。手動打的話每寫一段就要補一次，
+   而且從別處貼進來的文字通常沒有。這裡一次整理整篇。
+
+   刻意跳過的幾種行：
+   - 空行：段落之間的分隔，縮排它只會留下兩個看不見的空白。
+   - 已經有縮排的：再加一次就變四格，按第二次就會越縮越裡面。
+     所以這個動作是可以重複按的，按幾次結果都一樣。
+   - 標題行（「# 第一章」「第1章」）：那是結構不是內文，縮排會讓它
+     看起來像段落，而且目錄那邊是照行首比對的。
+   - 整行只有標籤的（「#問題 #0921問題」）：那是給系統看的中繼資料。
+
+   走 pushHistorySnapshot()，所以按錯了可以直接按復原。
+   ========================================================== */
+
+const PARAGRAPH_INDENT = "　　";   // 兩個全形空格
+
+/* 這一行是不是「整行都是標籤」。用 extractHashtagsFromText 判斷太鬆
+   （內文裡夾一個標籤也會中），所以自己切開來看每一段是不是都以 # 開頭。 */
+function isTagOnlyLine(line) {
+  const parts = line.trim().split(/\s+/);
+  return parts.length > 0 && parts.every(function(p) { return p.length > 1 && p[0] === "#"; });
+}
+
+function shouldIndentLine(line) {
+  if (!line.trim()) return false;                       // 空行
+  if (/^[\s　]/.test(line)) return false;           // 已經有縮排了
+  if (MARKDOWN_HEADING_REGEX.test(line)) return false;  // 「# 第一章 啟程」
+  if (CHAPTER_LINE_REGEX.test(line)) return false;      // 「第1章」「Chapter 3」
+  if (isTagOnlyLine(line)) return false;                // 整行都是標籤
+  return true;
+}
+
+function indentParagraphsInText(text) {
+  const lines = (text || "").split("\n");
+  let changed = 0;
+  const out = lines.map(function(line) {
+    if (!shouldIndentLine(line)) return line;
+    changed++;
+    return PARAGRAPH_INDENT + line;
+  });
+  return { text: out.join("\n"), changed: changed };
+}
+
+function indentCurrentDocParagraphs() {
+  closeDocActionsPanel();
+
+  const doc = appData.docs.find(d => d.id === activeDocId);
+  const textarea = document.getElementById("docContentInput");
+  if (!doc || !textarea) return;
+
+  /* 先把還在等 debounce 的那一筆寫進去再動手，否則稍後那筆會拿著
+     縮排之前的舊內容蓋回來，等於白做。 */
+  flushPendingContentPersist();
+
+  const result = indentParagraphsInText(textarea.value);
+  if (!result.changed) {
+    showDocToolHint("每一段開頭都已經空兩格了");
+    return;
+  }
+
+  ensureDocHistory(doc.id, doc.content || "");
+  pushHistorySnapshot(doc.id, textarea.value);   // 動手前的樣子，按復原回得來
+
+  textarea.value = result.text;
+  doc.content = result.text;
+  doc.updatedAt = formatTime(new Date());
+  autoGrowTextarea(textarea);
+
+  pushHistorySnapshot(doc.id, result.text);
+
+  // 字數、標籤、目錄、側欄那一列都要跟著更新，走平常那條路就好
+  scheduleDerivedUi(doc.id);
+  flushDerivedUi();
+  saveData();
+  renderSidebarTree();
+
+  // 整篇換過了，原本標示的位置已經不對
+  if (typeof clearSearchHighlight === "function") clearSearchHighlight();
+  if (typeof clearJumpHighlight === "function") clearJumpHighlight();
+
+  showDocToolHint("已在 " + result.changed + " 個段落前空兩格（可按復原還原）");
+}
+
+/* 小工具的操作結果要說一聲，不然使用者按下去什麼都沒看到，會以為壞了。
+   用短暫的浮出提示而不是 alert：不用再點一次關掉。 */
+let docToolHintTimer = null;
+
+function showDocToolHint(text) {
+  const el = document.getElementById("docToolHint");
+  if (!el) return;
+  el.textContent = text;
+  el.classList.add("active");
+  if (docToolHintTimer) clearTimeout(docToolHintTimer);
+  docToolHintTimer = setTimeout(function() {
+    el.classList.remove("active");
+    docToolHintTimer = null;
+  }, 2600);
 }

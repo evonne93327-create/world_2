@@ -340,21 +340,10 @@ function openNodeColorPicker(node) {
 
 /* 彈窗要夾在畫面裡。節點可能被拖到邊邊，或在手機上佔掉大半個螢幕，
    直接貼在節點下方常常會掉出去。 */
+/* 白板的節點顏色選單跟標籤的顏色選單是同一個 DOM 元素，定位規則也該一樣。
+   共用 openAnchoredPopover() 之後，白板平移縮放時它也會跟著節點跑。 */
 function showPickerNear(popover, anchor) {
-  popover.classList.add("active");
-  popover.style.left = "-9999px";
-  popover.style.top = "-9999px";
-
-  const r = anchor ? anchor.getBoundingClientRect() : { left: 40, top: 40, bottom: 40 };
-  requestAnimationFrame(function() {
-    const pr = popover.getBoundingClientRect();
-    let left = r.left;
-    let top = r.bottom + 6;
-    if (left + pr.width > window.innerWidth - 8) left = window.innerWidth - pr.width - 8;
-    if (top + pr.height > window.innerHeight - 8) top = r.top - pr.height - 6;
-    popover.style.left = Math.max(8, left) + "px";
-    popover.style.top = Math.max(8, Math.min(top, window.innerHeight - pr.height - 8)) + "px";
-  });
+  openAnchoredPopover(popover, anchor);
 }
 
 /* ---------- 縮放指示（節點/連線都已在 SVG 裡，viewBox 自動處理縮放）---------- */

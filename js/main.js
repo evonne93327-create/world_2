@@ -242,7 +242,7 @@ function setupGlobalClickDismiss() {
  // 關閉 Hashtag 顏色選單
  const popover = document.getElementById("colorPickerPopover");
  if (popover && popover.classList.contains("active") && !popover.contains(e.target)) {
- popover.classList.remove("active");
+ closeAnchoredPopover();
  }
  
  // 關閉麵包屑下拉選單
@@ -505,4 +505,73 @@ function setupUiBackButton() {
        關掉之後又開了別的（設定的子視窗關掉會回到設定總表）也在這裡對齊。 */
     scheduleUiHistorySync();
   });
+}
+
+/* ==========================================================
+   浮動選單跟著它的錨點跑
+
+   顏色選單是 position:absolute，開啟時算一次位置就固定在那裡。但標籤
+   chip 是長在編輯區裡的，而編輯區自己是一個會捲動的容器——捲動它並不會
+   改變頁面的 scrollY，所以選單原地不動，內容卻跑掉了，選單就浮在半空中
+   指著錯的東西（甚至指到別的標籤）。
+
+   改成 position:fixed（直接用視窗座標，不用管中間有幾層捲動容器），
+   並且在開啟期間盯著捲動與視窗尺寸變化，每次都重新貼回錨點旁邊。
+   錨點被捲出可視範圍、或整個從畫面上消失時就把選單收起來——它已經
+   沒有東西可以指了。
+
+   scroll 用捕獲階段監聽：捲動事件不會冒泡到 window，只有在捕獲階段
+   才接得到內層容器（編輯區）的捲動。
+   ========================================================== */
+
+let anchoredPopoverEl = null;
+let anchoredPopoverAnchor = null;
+
+function positionAnchoredPopover() {
+  const popover = anchoredPopoverEl;
+  const anchor = anchoredPopoverAnchor;
+  if (!popover || !popover.classList.contains("active")) return;
+
+  // 錨點被重繪掉了（例如標籤列重畫）就沒有東西好指
+  if (!anchor || !document.contains(anchor)) { closeAnchoredPopover(); return; }
+
+  const r = anchor.getBoundingClientRect();
+  if (r.width === 0 && r.height === 0) { closeAnchoredPopover(); return; }
+
+  /* 錨點捲出可視範圍就收起來。留 4px 容忍值，免得剛好貼齊邊界時
+     因為次像素誤差一直開開關關。 */
+  if (r.bottom < 4 || r.top > window.innerHeight - 4) { closeAnchoredPopover(); return; }
+
+  const pr = popover.getBoundingClientRect();
+  let left = r.left;
+  let top = r.bottom + 6;
+  if (left + pr.width > window.innerWidth - 8) left = window.innerWidth - pr.width - 8;
+  // 下面放不下就翻到錨點上方
+  if (top + pr.height > window.innerHeight - 8) top = r.top - pr.height - 6;
+
+  popover.style.left = Math.max(8, left) + "px";
+  popover.style.top = Math.max(8, Math.min(top, window.innerHeight - pr.height - 8)) + "px";
+}
+
+function openAnchoredPopover(popover, anchor) {
+  anchoredPopoverEl = popover;
+  anchoredPopoverAnchor = anchor || null;
+
+  // 先移到畫面外量尺寸，免得使用者看到它先閃在左上角再跳到正確位置
+  popover.style.left = "-9999px";
+  popover.style.top = "-9999px";
+  popover.classList.add("active");
+  requestAnimationFrame(positionAnchoredPopover);
+}
+
+function closeAnchoredPopover() {
+  if (anchoredPopoverEl) anchoredPopoverEl.classList.remove("active");
+  anchoredPopoverEl = null;
+  anchoredPopoverAnchor = null;
+}
+
+function setupAnchoredPopoverFollow() {
+  // 捕獲階段才接得到內層捲動容器的 scroll
+  document.addEventListener("scroll", positionAnchoredPopover, true);
+  window.addEventListener("resize", positionAnchoredPopover);
 }

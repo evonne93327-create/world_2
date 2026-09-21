@@ -10,6 +10,7 @@ window.addEventListener("DOMContentLoaded", function() {
   setupCanvasEvents();
   applyCanvasHintVisibility();
   setupGlobalClickDismiss();
+  setupAnchoredPopoverFollow();
   setupDirectoryContextMenu();
   setupDeleteKeyShortcut();
   setupGlobalKeyboardShortcuts();

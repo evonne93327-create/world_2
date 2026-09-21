@@ -105,8 +105,18 @@ function renderQuickJumpList(content) {
  });
 }
 
+/* 跳到某一行，並且用跟搜尋一樣的方式把那一行標起來。
+
+   原本是用 textarea 的原生選取：得先 focus() 才看得見，手機上因此每次
+   跳轉都彈鍵盤；捲動則是拿「字元位置佔全文的百分比」乘上總高度去估的，
+   段落長短不一時會偏掉。現在畫在高亮圖層上，捲動直接量那個 <mark>
+   的實際位置。
+
+   游標還是放過去（想接著打字的人按一下就在對的地方），但只有在有實體
+   鍵盤的裝置上才把焦點搶過來——觸控裝置搶焦點就等於叫出鍵盤。 */
 function jumpToLine(lineIndex) {
  const textarea = document.getElementById("docContentInput");
+ if (!textarea) return;
  const lines = textarea.value.split("\n");
  let pos = 0;
  for (let i = 0; i < lineIndex && i < lines.length; i++) {
@@ -114,12 +124,20 @@ function jumpToLine(lineIndex) {
  }
  const lineLength = (lines[lineIndex] || "").length;
 
- textarea.focus();
+ if (typeof setJumpHighlight === "function") setJumpHighlight(pos, pos + lineLength);
+
+ try {
+ if (typeof isTouchPrimary === "function" && !isTouchPrimary()) textarea.focus();
  textarea.setSelectionRange(pos, pos + lineLength);
- const percent = pos / Math.max(1, textarea.value.length);
- textarea.scrollTop = (textarea.scrollHeight - textarea.clientHeight) * percent;
+ } catch (e) { /* 還沒掛上或瀏覽器不給就算了，標示已經畫出來了 */ }
 
  closeQuickJumpPanel();
+
+ /* 關閉快速跳轉面板會改動版面（面板收起來、捲軸可能變長），
+    等瀏覽器重排完再量位置，否則量到的是收起來之前的座標。 */
+ requestAnimationFrame(function() {
+ if (typeof scrollToFirstSearchHit === "function") scrollToFirstSearchHit("mark.is-jump");
+ });
 }
 
 function openHashtagFilterModal() {
@@ -427,8 +445,9 @@ function removeHashtagFromDoc(tag) {
  inlineRe.lastIndex = 0;
  doc.content = (doc.content || "").replace(inlineRe, "");
  document.getElementById("docContentInput").value = doc.content;
- // 內文被改寫了，搜尋標示的位置不再正確
+ // 內文被改寫了，標示的位置不再正確
  if (typeof clearSearchHighlight === "function") clearSearchHighlight();
+ if (typeof clearJumpHighlight === "function") clearJumpHighlight();
  }
 
  if (Array.isArray(doc.manualTags)) {
@@ -937,7 +956,7 @@ function openColorPicker(tag, anchorElement) {
  opt.onclick = function() {
  appData.tagSettings[tag] = key;
  saveData();
- popover.classList.remove("active");
+ closeAnchoredPopover();
  const currentDoc = appData.docs.find(d => d.id === activeDocId);
  if (currentDoc) renderLiveHashtags(currentDoc.tags);
  };
@@ -952,15 +971,15 @@ function openColorPicker(tag, anchorElement) {
  removeOpt.className = "picker-option picker-option-danger";
  removeOpt.innerHTML = '<span style="width:14px; text-align:center;">✕</span><span>移除此標籤</span>';
  removeOpt.onclick = function() {
- popover.classList.remove("active");
+ closeAnchoredPopover();
  removeHashtagFromDoc(tag);
  };
  popover.appendChild(removeOpt);
 
- const rect = anchorElement.getBoundingClientRect();
- popover.style.top = (rect.bottom + window.scrollY + 6) + "px";
- popover.style.left = Math.max(10, rect.left + window.scrollX) + "px";
- popover.classList.add("active");
+ /* 定位交給 openAnchoredPopover()：它用視窗座標、會在捲動時跟著錨點跑，
+    而且放不下時會自動翻到標籤上方。原本這裡是自己算一次就固定，
+    標籤所在的編輯區一捲動，選單就留在原地指著錯的東西。 */
+ openAnchoredPopover(popover, anchorElement);
 }
 
 function promptMoveFolder(folderId) {
