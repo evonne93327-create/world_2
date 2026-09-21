@@ -646,6 +646,10 @@ function setupKeyboardInset() {
   if (!vv) return;   // 沒有這個 API 的瀏覽器維持原本的行為
 
   vv.addEventListener("resize", applyKeyboardInset);
+  /* 鍵盤升起／收起都會改變「看得見的底」在哪裡，游標的位置要重新確認一次 */
+  vv.addEventListener("resize", function() {
+    if (typeof scheduleCaretRoomCheck === "function") scheduleCaretRoomCheck();
+  });
   window.addEventListener("orientationchange", function() {
     setTimeout(applyKeyboardInset, 250);
   });

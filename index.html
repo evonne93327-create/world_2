@@ -456,9 +456,13 @@
 
         <label style="font-size:12px; color:var(--text-secondary); margin-top:6px;">線條樣式：</label>
         <div class="edge-style-row" id="edgeStyleRow">
-          <button type="button" class="edge-opt-btn" data-dash="solid">—— 實線</button>
-          <button type="button" class="edge-opt-btn" data-dash="dashed">– – 虛線</button>
-          <button type="button" class="edge-opt-btn" data-dash="dotted">· · 點線</button>
+          <!-- 預覽用 CSS 的 border-style 畫真正的線，不要用「——」「– –」這些字。
+               破折號是一個一個的字，字跟字之間本來就有縫，所以「實線」看起來
+               也像虛線，三個選項擠在一起更分不出來。border-style 畫出來的
+               就是 SVG 上會看到的那個樣子。 -->
+          <button type="button" class="edge-opt-btn" data-dash="solid"><span class="dash-preview is-solid"></span>實線</button>
+          <button type="button" class="edge-opt-btn" data-dash="dashed"><span class="dash-preview is-dashed"></span>虛線</button>
+          <button type="button" class="edge-opt-btn" data-dash="dotted"><span class="dash-preview is-dotted"></span>點線</button>
         </div>
 
         <label style="font-size:12px; color:var(--text-secondary); margin-top:6px;">箭頭方向：</label>

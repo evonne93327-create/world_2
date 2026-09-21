@@ -235,6 +235,12 @@ function autoGrowTextareaFast(el) {
   if (key !== lastGrowKey) {
     lastGrowKey = key;
     autoGrowTextarea(el);
+    /* 行數變了（多半是剛按下 Enter）才順便確認游標沒被鍵盤壓到。
+
+       掛在這裡而不是每一鍵都做，是因為那幾個 getBoundingClientRect 一樣
+       會強迫排版——同一行裡打字時不做，就不會把上面辛苦省下來的成本又
+       花回去。而且行數沒變的時候游標本來就不會往下掉。 */
+    scheduleCaretRoomCheck();
     return;
   }
 
@@ -244,7 +250,66 @@ function autoGrowTextareaFast(el) {
     growCorrectTimer = null;
     lastGrowKey = null;      // 下次一定重量
     autoGrowTextarea(el);
+    scheduleCaretRoomCheck();
   }, 250);
+}
+
+/* ==========================================================
+   游標與鍵盤之間至少留一行
+
+   CSS 的 scroll-padding-bottom 已經告訴瀏覽器「把東西捲進視野時下面要留
+   這麼多」，但那條規則對「游標」的捲動有沒有被遵守，各家瀏覽器的行為
+   不一致（而且這個環境裝不起 WebKit，沒辦法驗 Safari）。所以再加一道
+   自己算的保險。
+
+   只處理「游標在最後一行」的情況。那正是連按 Enter 會遇到的，而且這種
+   情況下游標那一行的底就是 textarea 的底——一次 getBoundingClientRect
+   就問得到，不用像量任意位置的游標那樣把整篇文章重排一次（實測一萬行
+   要 106ms）。游標在中間時交給瀏覽器自己處理。
+
+   「最後一行」用「游標後面沒有換行」判斷。那一行如果長到自動換行、而
+   游標停在前面幾段，這裡會多捲一點——方向是安全的（游標只會更靠上）。
+   ========================================================== */
+
+let caretRoomRaf = null;
+
+function scheduleCaretRoomCheck() {
+  if (caretRoomRaf) return;
+  caretRoomRaf = requestAnimationFrame(function() {
+    caretRoomRaf = null;
+    ensureCaretRoom();
+  });
+}
+
+function ensureCaretRoom() {
+  const ta = document.getElementById("docContentInput");
+  const scroller = document.querySelector(".editor-content-area");
+  if (!ta || !scroller || document.activeElement !== ta) return;
+
+  const caret = ta.selectionStart;
+  if (caret !== ta.selectionEnd) return;                  // 有選取範圍就不要亂動
+  if (ta.value.indexOf("\n", caret) !== -1) return;       // 不在最後一行
+
+  /* 真正看得見的底：可視區域與捲動容器取交集。
+     visualViewport 才知道鍵盤蓋掉多少，window.innerHeight 不知道。 */
+  const vv = window.visualViewport;
+  const viewBottom = vv ? (vv.offsetTop + vv.height) : window.innerHeight;
+  let bottom = Math.min(viewBottom, scroller.getBoundingClientRect().bottom);
+
+  /* 浮動的復原／快速跳轉那一排就浮在編輯區底部，游標停在它們底下一樣
+     看不到。它們擋住哪裡，可用的底就到哪裡。 */
+  const bar = document.querySelector(".undoredo-sticky-bar");
+  if (bar) {
+    const r = bar.getBoundingClientRect();
+    if (r.height > 0 && r.top < bottom) bottom = r.top;
+  }
+
+  const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 24;
+  const caretLineBottom = ta.getBoundingClientRect().bottom;
+
+  // 游標那一行的底，要離「可用的底」至少一行
+  const overflow = caretLineBottom - (bottom - lineHeight);
+  if (overflow > 1) scroller.scrollTop += overflow;
 }
 
 function autoGrowTextarea(el) {

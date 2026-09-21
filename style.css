@@ -661,7 +661,7 @@ main.content-workspace {
   margin: 0;
   border: 0;
   font-size: var(--fs-16);
-  line-height: 1.9;
+  line-height: var(--editor-line);
   font-family: var(--font-ui);
   letter-spacing: normal;
   white-space: pre-wrap;
@@ -2095,11 +2095,46 @@ button, input, select, textarea { color: inherit; }
      body 縮小救不到它們——它們其實一直都被鍵盤蓋著。用被蓋掉的高度
      （--kb-inset）把它們頂到鍵盤正上方，打字時才按得到復原。 */
   :root.kb-open { --fab-bottom: calc(12px + var(--kb-inset)); }
+
+  /* 文章結尾底下要留的空間 = 浮動按鈕那一排（12 + 40）＋ 兩行。
+
+     不是為了好看：捲到最底的時候，文章結尾就停在「容器底 − 這個內距」的
+     位置。內距不夠的話，就算程式想再捲一點讓游標離開按鈕也捲不動——
+     底下已經沒有東西可以捲了。要留出那一行，只能從這裡留。
+     （第一版只留了 72px，實測游標離按鈕只剩 20px，不到一行的 30.4px。） */
   :root.kb-open .editor-content-area {
-    padding-bottom: calc(var(--safe-b) + 16px + var(--icon-40) + var(--sp-16));
+    padding-bottom: calc(var(--sp-12) + var(--icon-40) + var(--editor-line) * 2);
   }
 }
 
 /* 游標不要貼著容器最底下。捲進視野時在下面留一行多的空間，
-   才看得到自己正在寫的那一行下面還有什麼。 */
+   才看得到自己正在寫的那一行下面還有什麼。
+
+   鍵盤打開時要留更多：除了那一行之外，還得閃開浮在編輯區底部的
+   復原／快速跳轉按鈕，游標停在它們底下一樣看不到。
+   （這條規則各家瀏覽器對「游標」的捲動遵守得不一致，所以
+   js/documents.js 的 ensureCaretRoom() 還有一道自己算的保險。） */
 .editor-content-area { scroll-padding-bottom: var(--sp-40); }
+:root.kb-open .editor-content-area {
+  scroll-padding-bottom: calc(var(--icon-40) + var(--sp-12) + var(--editor-line) * 2);
+}
+
+/* 連線樣式按鈕上的線條預覽。
+
+   用 border-style 畫，不要用「——」「– –」這些字元：破折號是一個一個的字，
+   字跟字之間本來就有縫，所以「實線」看起來也像虛線，三個選項擠在一起更
+   分不出來。border-style 畫出來的才是 SVG 上真正會看到的樣子。
+
+   currentColor 讓它跟著按鈕的文字顏色走，選中時一起變成強調色。 */
+.dash-preview {
+  display: inline-block;
+  width: 30px;
+  height: 0;
+  margin-right: var(--sp-8);
+  vertical-align: middle;
+  border-top-width: 2.5px;
+  border-top-color: currentColor;
+}
+.dash-preview.is-solid  { border-top-style: solid; }
+.dash-preview.is-dashed { border-top-style: dashed; }
+.dash-preview.is-dotted { border-top-style: dotted; }
