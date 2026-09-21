@@ -292,7 +292,8 @@ async function pushNow(silent) {
   /* 衝突還沒解決前不能推（會蓋掉雲端）。但也不能就這樣安靜地不做事——
      把那個問題重新擺到使用者面前，他才有機會解決它。 */
   if (pendingConflictRemote) {
-    openSyncConflictModal(pendingConflictRemote);
+    // 帶上第一次判定的原因，否則說明會退回成一般的「兩邊都有修改」
+    openSyncConflictModal(pendingConflictRemote, pendingConflictStale);
     return;
   }
 
@@ -372,9 +373,14 @@ function initSyncRecovery() {
 /* ---------- 衝突處理 ---------- */
 
 let pendingConflictRemote = null;
+/* 這次的衝突是不是「雲端比本機記錄還舊」。要記住，因為之後重新問的時候
+   （pushNow 發現衝突還沒解決）如果不帶上，說明文字會退回成一般的
+   「兩邊都有修改」，把「雲端那份比較舊、建議選這台」這個最關鍵的提示弄丟。 */
+let pendingConflictStale = false;
 
 function openSyncConflictModal(remote, remoteLooksStale) {
   pendingConflictRemote = remote;
+  pendingConflictStale = !!remoteLooksStale;
   setSyncStatus("conflict", remoteLooksStale ? "雲端回應看起來是舊的" : "偵測到衝突");
 
   const info = document.getElementById("syncConflictInfo");
@@ -423,6 +429,7 @@ async function resolveConflictUseRemote() {
   if (!pendingConflictRemote) return;
   adoptRemote(pendingConflictRemote);
   pendingConflictRemote = null;
+  pendingConflictStale = false;
   closeSyncConflictModal();
   setSyncStatus("idle", "已採用雲端版本");
 }
@@ -436,6 +443,7 @@ async function resolveConflictUseLocal() {
     setLocalDirty(false);
     lastPushedPayload = JSON.stringify(appData);
     pendingConflictRemote = null;
+    pendingConflictStale = false;
     setSyncStatus("idle", "已以本機版本覆蓋雲端");
   } catch (e) {
     setSyncStatus("error", e.message || "覆蓋失敗");
