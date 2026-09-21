@@ -169,6 +169,9 @@ function checkCss() {
 
 let pressLog = [];
 let pressCurrent = null;
+/* 合成的 mouse 事件是在 touchend 之後才來的，那時 pressCurrent 已經清掉，
+   所以另外留一個指向「最近一次按壓」的參照給它們寫。 */
+let lastPress = null;
 
 function longPressDelay() {
   return typeof LONG_PRESS_DELAY_MS === "number" ? LONG_PRESS_DELAY_MS : 480;
@@ -205,8 +208,9 @@ function setupLongPressProbe() {
      會送這個，而它正是原本把長按計時器清掉的元兇。收到它＝callout 沒擋成功。 */
   target.addEventListener("touchstart", function(e) {
     const t = e.touches[0];
-    pressCurrent = {
+    pressCurrent = lastPress = {
       t0: Date.now(), x0: t.clientX, y0: t.clientY,
+      mouse: [],
       /* 幾根手指。app 的長按只認單指（雙指是縮放），所以多指的那幾次
          本來就不該跳選單——要分開算，不然會被誤當成失敗。
          橫放握著平板時手掌很容易多碰到一點，這不是少數情況。 */
@@ -226,6 +230,24 @@ function setupLongPressProbe() {
   target.addEventListener("touchcancel", function() {
     if (pressCurrent) pressCurrent.cancelled = true;
   });
+
+  /* iOS 在觸控結束後會補一串「相容用」的 mouse 事件。長按這種被系統特別
+     對待的手勢，補出來的序列不保證完整——如果來了 mousedown 卻沒有對應的
+     mouseup，掛在 window 上的 mousemove 就會一直留著，下一次碰畫面節點就
+     跟著跑。這正是「點旁邊關掉選單，節點跳到點的位置」復發的嫌疑路徑。
+
+     這裡把整段序列記下來（含相對於按下的毫秒數），實機跑一次就知道 iOS
+     到底補了什麼。 */
+  const logMouse = function(name) {
+    return function() {
+      if (!lastPress) return;
+      lastPress.mouse.push(name + "@+" + (Date.now() - lastPress.t0) + "ms");
+    };
+  };
+  target.addEventListener("mousedown", logMouse("mousedown"));
+  window.addEventListener("mousemove", logMouse("mousemove"));
+  window.addEventListener("mouseup", logMouse("mouseup"), true);
+  target.addEventListener("click", logMouse("click"));
 
   /* 捕獲階段掛在 window 上：拖曳的收尾就是走這一階段，驗一下它真的收得到
      （長按之後 attachContextMenu 會 stopPropagation，冒泡那條路是斷的）。 */
@@ -301,7 +323,15 @@ function renderPress() {
     windowCapture: captureOk,
     windowBubble: bubbleOk,
     /* 沒按滿的那幾次如果照樣跳了選單，那才是真的有問題 */
-    menuOnShortPress: short.filter(function(r) { return r.menuShown; }).length
+    menuOnShortPress: short.filter(function(r) { return r.menuShown; }).length,
+    /* iOS 補出來的 mouse 序列。有 mousedown 卻沒有 mouseup 的那幾次，
+       就是會讓拖曳殘留下來的路徑。 */
+    mouseDownNoUp: real.filter(function(r) {
+      const seq = r.mouse || [];
+      return seq.some(function(m) { return m.indexOf("mousedown") === 0; }) &&
+             !seq.some(function(m) { return m.indexOf("mouseup") === 0; });
+    }).length,
+    mouseSample: (real.length ? (real[real.length - 1].mouse || []) : []).slice(0, 12)
   };
 
   addRow(out, "總共碰了幾次", pressLog.length + " 次", "info");
@@ -346,6 +376,16 @@ function renderPress() {
   addRow(out, "放開時 window 冒泡階段收到 touchend", bubbleOk + " / " + real.length,
          bubbleOk === 0 ? "ok" : "info",
          bubbleOk === 0 ? "被 stopPropagation 擋住了，正是預期的樣子" : "");
+
+  const dnu = diagResults.longPress.mouseDownNoUp;
+  addRow(out, "iOS 補出 mousedown 卻沒有 mouseup", dnu + " / " + real.length,
+         dnu === 0 ? "ok" : "warn",
+         dnu === 0 ? "合成的滑鼠序列是完整的"
+                   : "序列不完整 ← 拖曳會殘留在這條路上（已經有防線擋住，但這是根因）");
+  if (diagResults.longPress.mouseSample.length) {
+    addRow(out, "最後一次的滑鼠事件序列",
+           diagResults.longPress.mouseSample.join(" → "), "info", null, true);
+  }
 
   if (short.length) {
     const leaked = short.filter(function(r) { return r.menuShown; }).length;
