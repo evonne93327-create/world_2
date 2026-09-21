@@ -165,13 +165,9 @@ caretHtml +
  '</div>' +
  '</div>';
 
- const iconSpan = folderRow.querySelector('.node-icon');
- if (iconSpan) {
- iconSpan.onclick = function(ev) {
- ev.stopPropagation();
- openIconPicker('folder', folder.id);
- };
- }
+ /* 圖示刻意不掛自己的 onclick：點它就跟點這一列一樣（展開／收合資料夾）。
+    原本點圖示會直接跳出圖示選擇器，在目錄裡上下滑動時很容易誤觸。
+    要改圖示請長按（或右鍵）這一列，從選單裡選「更換圖示」。 */
 
  if (hasChildren) {
  const caretSpan = folderRow.querySelector('.folder-caret');
@@ -307,13 +303,7 @@ function createDocRowElement(doc) {
  '<div style="font-size:10px; color:var(--text-muted);">' + (doc.wordCount || 0) + '字</div>' +
  '</div>';
 
- const iconSpan = row.querySelector('.node-icon');
- if (iconSpan) {
- iconSpan.onclick = function(ev) {
- ev.stopPropagation();
- openIconPicker('doc', doc.id);
- };
- }
+ /* 同上：圖示不攔點擊，點它就是開這篇文檔。改圖示走長按的選單。 */
 
  attachContextMenu(row, function() { return buildDocMenuItems(doc); }, function() { return (doc.icon || '📄') + ' ' + (doc.title || '無標題文檔'); });
  return row;

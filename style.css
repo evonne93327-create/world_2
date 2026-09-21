@@ -2138,3 +2138,33 @@ button, input, select, textarea { color: inherit; }
 .dash-preview.is-solid  { border-top-style: solid; }
 .dash-preview.is-dashed { border-top-style: dashed; }
 .dash-preview.is-dotted { border-top-style: dotted; }
+
+/* 純顯示、不可點的徽章與圖示。
+
+   原本這幾個點下去會直接跳出圖示選擇器，但「顯示目前是什麼」跟
+   「改成別的」是兩件事，擺在同一個手勢上很容易誤觸——在目錄裡上下
+   滑動、或想看一下現在在哪個世界觀的時候都會不小心開起來。
+   改圖示統一走長按（或右鍵）的選單。 */
+.nav-world-btn.is-static,
+.doc-icon-picker-btn.is-static {
+  cursor: default;
+  user-select: none;
+}
+
+/* ---------- 白板的位置鎖 ---------- */
+
+/* 開著的時候要一眼看得出來，不然使用者只會覺得「怎麼拖不動」。 */
+.canvas-floating-btn.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+/* 鎖住時整塊白板換成 not-allowed 的游標，不用試拖了才知道。
+   平移與縮放照常，所以空白處維持可拖曳的游標。 */
+/* 用 id：那個元素的 class 是 view-panel，不是 canvas-view */
+#canvasView.is-locked .canvas-node,
+#canvasView.is-locked .canvas-note { cursor: not-allowed; }
+/* 便利貼的文字還是可以編輯、連線按鈕還是可以按，那些不受鎖影響 */
+#canvasView.is-locked .canvas-note.is-editing,
+#canvasView.is-locked .canvas-note.is-editing .canvas-note-body { cursor: text; }

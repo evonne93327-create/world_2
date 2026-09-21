@@ -102,10 +102,14 @@
     <header class="top-nav-bar">
       <div class="nav-group-left">
         <button class="nav-btn-icon" id="btnA_Hamburger" onclick="toggleSidebarMenu()" title="展開/收納目錄">☰</button>
-        <button class="nav-world-btn" id="btnB_WorldBadge" onclick="openIconPicker('world', activeWorldId)" title="當前世界觀">
+        <!-- 只是顯示「現在在哪個世界觀」，點下去不做事。
+             原本點一下會直接跳出圖示選擇器——那個位置太容易誤觸，
+             而且「顯示目前位置」跟「改圖示」是兩件事。
+             要改圖示請長按（或右鍵）左邊世界觀列上的那顆按鈕。 -->
+        <div class="nav-world-btn is-static" id="btnB_WorldBadge" title="目前的世界觀（長按左側的世界觀圖示可以更換圖示）">
           <span id="currentWorldIcon">🌐</span>
           <span id="currentWorldName">主世界觀</span>
-        </button>
+        </div>
       </div>
 
       <div class="nav-group-center">
@@ -153,7 +157,8 @@
         <div class="editor-content-area">
           <div class="meta-bottom-section">
             <div class="doc-title-line">
-              <button class="doc-icon-picker-btn" id="docIconBtn" title="更換圖示" onclick="openIconPicker('doc', activeDocId)">📄</button>
+              <!-- 顯示用，不可點。要改圖示請在目錄裡長按（或右鍵）這篇文檔。 -->
+              <span class="doc-icon-picker-btn is-static" id="docIconBtn" title="這篇文檔的圖示（在目錄裡長按這篇文檔可以更換）">📄</span>
               <input type="text" id="docTitleInput" class="doc-title-input" placeholder="文檔標題..." oninput="onTitleChange()">
             </div>
 
@@ -199,6 +204,9 @@
 
         <!-- 右下角浮動按鈕 -->
         <div class="canvas-floating-actions">
+          <!-- 鎖住之後節點與便利貼就拖不動，其餘（點開文檔、拉連線、縮放平移）照常。
+               狀態是每個世界觀各自記的，不是全域設定。 -->
+          <button class="canvas-floating-btn" id="canvasLockBtn" aria-pressed="false" onclick="toggleCanvasLock()" title="鎖住節點與便利貼的位置">🔓</button>
           <button class="canvas-floating-btn" onclick="resetCanvasView()" title="重置視圖">🎯</button>
           <button class="canvas-floating-btn" onclick="renderCanvas()" title="重整白板">🔄</button>
         </div>

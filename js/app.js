@@ -17,6 +17,7 @@ window.addEventListener("DOMContentLoaded", function() {
   setupEditorEnterIndent();
   setupHistoryNavigation();
   setupKeyboardInset();
+  setupEdgeSwipe();
   initSync();
   initSyncRecovery();
   setupModalKeyboard();

@@ -156,6 +156,8 @@ function renderCanvas() {
   const svg = document.getElementById("canvasSvg");
   if (!svg) return;
   const canvas = getCurrentWorldCanvas();
+  // 鎖定是每個世界觀各自的，切換世界觀時按鈕要跟著換樣子
+  renderCanvasLockButton();
   const nodesLayer = getCanvasNodesLayer(svg);
   nodesLayer.innerHTML = "";
 
@@ -643,6 +645,7 @@ function enableNoteDrag(el, note, fo) {
   let startX = 0, startY = 0, initX = 0, initY = 0, dragging = false;
 
   function begin(clientX, clientY) {
+    if (canvasIsLocked()) return;
     dragging = true;
     startX = clientX; startY = clientY;
     initX = note.x; initY = note.y;
@@ -868,6 +871,52 @@ function highlightCanvasNode(nodeId) {
   }, 1600);
 }
 
+/* ==========================================================
+   鎖住位置
+
+   排好的白板很容易在捲動、縮放、或單純想點開一篇文檔的時候被手指帶著
+   移動一點點——而且移動了也不會有提示，等發現的時候已經不知道原本在哪。
+   鎖起來之後節點與便利貼就釘住不動，其餘（點開文檔、拉連線、縮放平移、
+   編輯便利貼的文字）照常。
+
+   狀態存在「這個世界觀的白板」上（canvas.locked），不是全域設定：
+   有些世界觀的白板已經定稿要鎖，有些還在排。它會跟著存檔與雲端同步走。
+
+   只鎖「位置」，不鎖便利貼的大小——使用者說的是位置，而且改大小不會讓
+   東西跑掉，事後也看得出來改了什麼。
+   ========================================================== */
+
+function canvasIsLocked() {
+  const canvas = getCurrentWorldCanvas();
+  return !!(canvas && canvas.locked);
+}
+
+function toggleCanvasLock() {
+  const canvas = getCurrentWorldCanvas();
+  if (!canvas) return;
+  canvas.locked = !canvas.locked;
+  saveData();
+  renderCanvas();
+  renderCanvasLockButton();
+  showDocToolHint(canvas.locked
+    ? "已鎖住位置：節點與便利貼不會被拖動"
+    : "已解鎖：可以拖動節點與便利貼");
+}
+
+function renderCanvasLockButton() {
+  const btn = document.getElementById("canvasLockBtn");
+  if (!btn) return;
+  const locked = canvasIsLocked();
+  btn.textContent = locked ? "🔒" : "🔓";
+  btn.title = locked ? "位置已鎖住（點一下解鎖）" : "鎖住節點與便利貼的位置";
+  btn.classList.toggle("is-on", locked);
+  btn.setAttribute("aria-pressed", locked ? "true" : "false");
+
+  // 鎖住時整塊白板換成「不能拖」的游標，不用試拖了才知道
+  const view = document.getElementById("canvasView");
+  if (view) view.classList.toggle("is-locked", locked);
+}
+
 /* ---------- 節點拖曳 ---------- */
 
 function enableDualDrag(element, nodeData) {
@@ -875,12 +924,21 @@ function enableDualDrag(element, nodeData) {
   let pointerMoved = false;
 
   function beginDrag(clientX, clientY) {
+    // 鎖住時完全不進入拖曳狀態——只是不更新座標的話，放開手仍然會存檔
+    if (canvasIsLocked()) return;
     dragging = true;
     pointerMoved = false;
     startX = clientX; startY = clientY;
     initialLeft = nodeData.x; initialTop = nodeData.y;
   }
   function moveDrag(clientX, clientY) {
+    /* 沒有進入拖曳狀態就什麼都不做。
+
+       少了這一行，鎖住位置時會出事：beginDrag 被擋掉、startX / initialLeft
+       都還是 undefined，但 mousemove 照樣呼叫這裡，算出來的座標是 NaN，
+       節點的 x/y 直接被寫成 NaN——比不鎖還糟。
+       （便利貼那邊的 move() 本來就有這個檢查，所以沒事。） */
+    if (!dragging) return;
     const dx = clientX - startX;
     const dy = clientY - startY;
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) pointerMoved = true;

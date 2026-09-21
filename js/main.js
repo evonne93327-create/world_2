@@ -662,3 +662,96 @@ function setupKeyboardInset() {
 
   applyKeyboardInset();
 }
+
+/* ==========================================================
+   右滑打開目錄欄
+
+   手機上要開目錄只能點左上角那顆 ☰，單手拿著的時候拇指構不到。
+   從畫面左緣往右滑是這個位置最自然的手勢。
+
+   為什麼只認「從左緣起手」，不是整片都能右滑：
+   白板的平移、內文的選字、目錄的左右捲動本來就都是水平拖曳，整片都攔
+   的話那些全部會失效。左緣那一條窄帶沒有別的東西要用，iOS 自己的返回
+   手勢也是同一個做法。
+
+   為什麼在 touchmove 才決定要不要接手，而不是 touchstart：
+   在 touchstart 就攔掉的話，點在最左邊那一條（例如想把游標放在某一行的
+   開頭）會被吃掉。改成等第一次真的移動、而且方向是橫的，才把事件擋下來
+   ——這樣白板連一格都不會先平移，點擊也不受影響。
+   ========================================================== */
+
+const EDGE_SWIPE_ZONE_PX = 28;   // 左緣多寬算「從邊緣起手」
+const EDGE_SWIPE_MIN_PX = 56;    // 滑多遠才算數
+const EDGE_SWIPE_SLOPE = 1.2;    // 水平位移要比垂直明顯這麼多倍
+const EDGE_SWIPE_DECIDE_PX = 4;  // 移動超過這麼多才判斷方向
+
+let edgeSwipe = null;
+
+function setupEdgeSwipe() {
+  document.addEventListener("touchstart", function(e) {
+    edgeSwipe = null;
+    if (!isMobileLayout()) return;                       // 電腦版目錄欄一直都在
+    if (e.touches.length !== 1) return;                  // 雙指是縮放，不是滑開目錄
+    if (document.querySelector(".modal-overlay.active")) return;
+
+    const t = e.touches[0];
+    const open = drawerIsOpen();
+
+    if (!open) {
+      if (t.clientX > EDGE_SWIPE_ZONE_PX) return;        // 沒有從左緣起手
+    } else {
+      // 開著的時候，在抽屜或它的遮罩上往左滑可以收起來
+      if (!e.target.closest("#appSidebar, #sidebarOverlay")) return;
+    }
+
+    edgeSwipe = { x0: t.clientX, y0: t.clientY, open: open, claimed: false, done: false };
+  }, true);
+
+  document.addEventListener("touchmove", function(e) {
+    if (!edgeSwipe) return;
+
+    /* 已經接手過的手勢，剩下的移動也要一路擋到放手為止。
+
+       只擋到「抽屜打開為止」是不夠的：一次滑動會送出好幾個 touchmove，
+       抽屜在中途就開了，後面那幾個如果放行，白板會拿它們去平移——而且
+       它算的位移是從手指按下的位置起算的，所以會一口氣跳一大段
+       （實測滑 132px，白板就平移了 132px）。 */
+    if (edgeSwipe.done) {
+      e.stopPropagation();
+      if (e.cancelable) e.preventDefault();
+      return;
+    }
+
+    const t = e.touches[0];
+    const dx = t.clientX - edgeSwipe.x0;
+    const dy = t.clientY - edgeSwipe.y0;
+
+    if (!edgeSwipe.claimed) {
+      if (Math.abs(dx) < EDGE_SWIPE_DECIDE_PX && Math.abs(dy) < EDGE_SWIPE_DECIDE_PX) return;
+
+      // 方向不對（往上下捲、或往反方向）就整個放手，讓原本的行為照常
+      const wantRight = !edgeSwipe.open;
+      const horizontal = Math.abs(dx) > Math.abs(dy) * EDGE_SWIPE_SLOPE;
+      const rightDirection = wantRight ? dx > 0 : dx < 0;
+      if (!horizontal || !rightDirection) { edgeSwipe = null; return; }
+      edgeSwipe.claimed = true;
+    }
+
+    /* 接手之後這一連串事件都不要再往下傳，白板才不會同時平移。
+       preventDefault 擋掉捲動；touchmove 必須是 passive:false 才擋得掉。 */
+    e.stopPropagation();
+    if (e.cancelable) e.preventDefault();
+
+    if (Math.abs(dx) < EDGE_SWIPE_MIN_PX) return;
+    edgeSwipe.done = true;
+    if (edgeSwipe.open) closeSidebarMobile();
+    else openSidebarMenu();
+  }, { capture: true, passive: false });
+
+  const finish = function(e) {
+    if (edgeSwipe && edgeSwipe.claimed) e.stopPropagation();
+    edgeSwipe = null;
+  };
+  document.addEventListener("touchend", finish, true);
+  document.addEventListener("touchcancel", finish, true);
+}
