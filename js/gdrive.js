@@ -153,9 +153,15 @@ async function gdriveFetch(url, options) {
   const opts = options || {};
   const headers = Object.assign({ "Authorization": "Bearer " + token }, opts.headers || {});
 
+  /* cache: "no-store" —— 不讓瀏覽器的 HTTP 快取插手。
+     檔案內容（?alt=media）與 metadata 是兩次請求，只要其中一次吃到快取，
+     就會出現「版本號是新的、內容是舊的」這種對不起來的組合，而且
+     對帳會因為版本號相同而認定「已經是最新」，安靜地停在舊資料上。 */
+  const init = Object.assign({}, opts, { headers: headers, cache: "no-store" });
+
   let res;
   try {
-    res = await fetch(url, Object.assign({}, opts, { headers: headers }));
+    res = await fetch(url, init);
   } catch (e) {
     throw gdriveError("連不上 Google 雲端硬碟，請確認網路狀態");
   }
@@ -165,7 +171,7 @@ async function gdriveFetch(url, options) {
     gdriveToken = null;
     const token2 = await requestGdriveToken(false);
     headers["Authorization"] = "Bearer " + token2;
-    res = await fetch(url, Object.assign({}, opts, { headers: headers }));
+    res = await fetch(url, Object.assign({}, init, { headers: headers }));
   }
 
   if (!res.ok) {

@@ -114,7 +114,17 @@ async function supabaseFetch(path, options, useAccessToken) {
 
   let res;
   try {
-    res = await fetch(cfg.url + path, Object.assign({}, opts, { headers: headers }));
+    /* cache: "no-store" —— 同步的請求一律不碰瀏覽器的 HTTP 快取。
+
+       PostgREST 的回應沒有帶 Cache-Control，這種情況下瀏覽器會自己
+       「推測」一個保鮮期（heuristic caching），於是一次 GET 可能直接吃到
+       上一次的回應。對一般網頁那只是舊一點的畫面，對「判斷雲端現在是
+       第幾版」來說是致命的：讀到舊版會讓對帳整個走錯方向。
+       寫入也一併關掉，免得任何中間層自作聰明。 */
+    res = await fetch(cfg.url + path, Object.assign({}, opts, {
+      headers: headers,
+      cache: "no-store"
+    }));
   } catch (e) {
     // fetch 只有在網路層失敗才 reject，這裡多半是網址打錯或斷線
     throw syncApiError("連不上 Supabase，請確認 Project URL 與網路狀態");

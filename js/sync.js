@@ -127,6 +127,45 @@ function remoteWouldLoseContent(remote) {
   return remoteDocs < localDocs || remoteWorlds < localWorlds;
 }
 
+/* 雲端回來的版本比這台裝置已經記錄的還舊。
+
+   version 是只會往上加的（Supabase 由 trigger 遞增、Drive 由 Google 遞增），
+   所以「我上次同步到第 10 版，現在雲端說它是第 3 版」在正常情況下不可能發生。
+   會發生代表這一次讀到的是過期的回應——瀏覽器的 HTTP 快取、或雲端服務
+   本身寫完還沒完全生效（Google Drive 尤其會，剛 PATCH 完馬上下載有機會
+   拿到上一版的內容）。
+
+   這件事原本完全沒有防守：initSync() 只問「版本一不一樣」，不一樣就進到
+   「沒有待上傳的修改就採用雲端」那條路，於是把舊的內容蓋回本機、寫進
+   localStorage、狀態顯示「已從雲端更新」，看起來一切正常。更糟的是
+   state.version 也被改成 3，下次再存檔就會把這份舊資料當成新版推上雲端。
+
+   （version 歸 1 的情況——Supabase 那一列被刪掉重建——長得一模一樣，
+   同樣落在這裡。兩者要做的事也一樣：不要自己決定，問使用者。） */
+function remoteIsOlderThanRecord(remote) {
+  const mine = Number(loadSyncState().version);
+  const theirs = Number(remote && remote.version);
+  if (!isFinite(mine) || !isFinite(theirs)) return false;   // 比不了就不擋
+  return theirs < mine;
+}
+
+/* 過期的讀取通常是一時的，隔一下再問一次多半就對了。
+   只重試一次：再錯就不是一時的，該讓使用者知道。 */
+const STALE_REREAD_DELAY_MS = 1500;
+
+async function pullFreshEnough() {
+  const first = await P().pull();
+  if (!first || !remoteIsOlderThanRecord(first)) return { row: first, stale: false };
+
+  setSyncStatus("syncing", "雲端回應看起來是舊的，重新確認中…");
+  await new Promise(function(r) { setTimeout(r, STALE_REREAD_DELAY_MS); });
+
+  let second = null;
+  try { second = await P().pull(); } catch (e) { /* 第二次失敗就用第一次的結果去問 */ }
+  if (second && !remoteIsOlderThanRecord(second)) return { row: second, stale: false };
+  return { row: second || first, stale: true };
+}
+
 function adoptRemote(row) {
   appData = row.data;
   saveSyncState(row.version, row.at);
@@ -168,8 +207,16 @@ async function initSync() {
 
   setSyncStatus("syncing", "正在對帳…");
   try {
-    const remote = await P().pull();
+    const fresh = await pullFreshEnough();
+    const remote = fresh.row;
     const state = loadSyncState();
+
+    /* 讀到的還是比本機記錄的舊。絕對不能採用——那會把已經上傳成功的
+       東西換成舊版，而且接下來還會把舊版推回雲端。停下來問。 */
+    if (remote && fresh.stale) {
+      openSyncConflictModal(remote, true);
+      return;
+    }
 
     /* 雲端還沒有資料：把本機推上去當作第一版。
 
@@ -326,9 +373,9 @@ function initSyncRecovery() {
 
 let pendingConflictRemote = null;
 
-function openSyncConflictModal(remote) {
+function openSyncConflictModal(remote, remoteLooksStale) {
   pendingConflictRemote = remote;
-  setSyncStatus("conflict", "偵測到衝突");
+  setSyncStatus("conflict", remoteLooksStale ? "雲端回應看起來是舊的" : "偵測到衝突");
 
   const info = document.getElementById("syncConflictInfo");
   if (info) {
@@ -338,7 +385,13 @@ function openSyncConflictModal(remote) {
     const remoteDocs = remote && remote.data && Array.isArray(remote.data.docs)
       ? remote.data.docs.length : 0;
     info.innerHTML =
-      '<div style="margin-bottom:8px;">這台裝置和雲端都有未同步的修改，需要你決定要保留哪一份。</div>' +
+      (remoteLooksStale
+        ? '<div style="margin-bottom:8px;">雲端傳回來的是<b>比這台裝置上次上傳的還要舊</b>的版本' +
+          '（雲端說它是第 ' + escapeHtml(String(remote && remote.version)) + ' 版，' +
+          '這台裝置上次同步到第 ' + escapeHtml(String(loadSyncState().version)) + ' 版）。' +
+          '通常是雲端剛寫入還沒完全生效，過一下再開通常就正常了。' +
+          '<b>不確定的話請選「用這台的版本」</b>，那是比較新的那一份。</div>'
+        : '<div style="margin-bottom:8px;">這台裝置和雲端都有未同步的修改，需要你決定要保留哪一份。</div>') +
       '<div style="font-size:12px; color:var(--text-secondary); line-height:1.7;">' +
       '☁️ 雲端版本：' + remoteDocs + ' 份文檔，最後更新於 ' + escapeHtml(when) + '<br>' +
       '💻 這台裝置：' + (appData.docs ? appData.docs.length : 0) + ' 份文檔（尚未上傳）' +
@@ -505,8 +558,10 @@ async function manualPull() {
   }
   setSyncStatus("syncing", "下載中…");
   try {
-    const remote = await P().pull();
+    const fresh = await pullFreshEnough();
+    const remote = fresh.row;
     if (!remote) { setSyncStatus("idle", "雲端還沒有資料"); return; }
+    if (fresh.stale) { openSyncConflictModal(remote, true); return; }
     adoptRemote(remote);
     setSyncStatus("idle", "已從雲端更新");
   } catch (e) {
