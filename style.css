@@ -677,7 +677,11 @@ main.content-workspace {
   user-select: none;
   overflow: hidden;
 }
-.content-highlight-layer mark {
+/* 搜尋命中與「跳到某一行」用同一種外觀——使用者要的是同一件事
+   （「就是這裡」），沒有理由長得不一樣。分成兩個 class 只是為了讓程式
+   分得出哪一段是哪一種（捲動時要找的是跳轉的那一段）。 */
+.content-highlight-layer mark,
+.content-highlight-layer mark.is-jump {
   background: var(--mark-bg);
   color: transparent;
   border-radius: 2px;
@@ -1232,7 +1236,10 @@ main.content-workspace {
 .emoji-opt:hover { background: var(--bg-sunken); }
 
 .color-picker-popup {
-  position: absolute;
+  /* fixed 而不是 absolute：錨點（標籤 chip、白板節點）住在會自己捲動的
+     容器裡，用頁面座標定位的話容器一捲動選單就留在原地。視窗座標配合
+     positionAnchoredPopover() 在捲動時重算，才會真的跟著錨點走。 */
+  position: fixed;
   background: var(--bg-card);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
@@ -1984,4 +1991,41 @@ button, input, select, textarea { color: inherit; }
 .theme-opt:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
+}
+
+/* 小工具的操作結果提示。浮在底部中間，兩秒多後自己消失。
+   pointer-events:none —— 它只是說一聲，不該擋住底下任何東西。 */
+.doc-tool-hint {
+  position: fixed;
+  left: 50%;
+  /* 疊在浮動按鈕（復原／取消復原／快速跳轉）上面一排，不要蓋到它們。
+     算法跟 .docactions-panel 一樣：按鈕列的底部 + 按鈕高度 + 間距。 */
+  bottom: calc(var(--sp-28) + var(--icon-44) + var(--sp-12));
+  transform: translateX(-50%) translateY(6px);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  font-size: var(--fs-12);
+  padding: var(--sp-8) var(--sp-14);
+  border-radius: var(--radius-round);
+  z-index: 70;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease, visibility .18s;
+  max-width: calc(100vw - 32px);
+  text-align: center;
+}
+.doc-tool-hint.active {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 手機版的浮動按鈕位置不一樣（--fab-bottom 要閃開底部導覽列），
+   提示也要跟著往上。這段一定要放在 .doc-tool-hint 的基礎規則後面：
+   權重相同的情況下是後面的贏，寫在前面的媒體查詢會被蓋掉。 */
+@media (max-width: 768px), (max-height: 500px) {
+  .doc-tool-hint { bottom: calc(var(--fab-bottom) + var(--icon-40) + var(--sp-12)); }
 }

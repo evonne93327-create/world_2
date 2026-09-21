@@ -65,6 +65,29 @@ function renderActiveDocSearchPin(container, search) {
 
 let searchHighlightTerm = "";
 
+/* 「跳到某一行」也用同一個圖層標起來。
+
+   原本 jumpToLine() 是用 textarea 的原生選取（setSelectionRange）：
+   選取只有在 textarea 有焦點時才看得見，所以它得先 focus()——在手機上
+   那就等於每次跳轉都把軟體鍵盤叫出來，而且畫面被鍵盤吃掉一半，
+   跳過去的那一行未必還看得到。捲動也是用「字元位置佔全文的百分比」
+   估的，遇到長短不一的段落會偏掉。
+
+   改成跟搜尋一樣畫在圖層上：不用搶焦點、不會彈鍵盤，而且捲動可以直接量
+   那個 <mark> 的實際位置，不用推算。 */
+let jumpHighlightRange = null;   // [start, end]，字元位置
+
+function setJumpHighlight(start, end) {
+  jumpHighlightRange = [start, end];
+  renderSearchHighlight();
+}
+
+function clearJumpHighlight() {
+  if (!jumpHighlightRange) return;
+  jumpHighlightRange = null;
+  renderSearchHighlight();
+}
+
 function currentSearchTerm() {
   const el = document.getElementById("searchInput");
   return el ? el.value.trim() : "";
@@ -81,29 +104,61 @@ function clearSearchHighlight() {
   renderSearchHighlight();
 }
 
+/* 這次要標起來的所有區間，已排序且不重疊。
+
+   搜尋命中與「跳到某一行」可能同時存在（搜尋到一半又按了目錄），
+   而且會重疊——重疊的話直接照順序輸出會產生交錯的標籤，HTML 會壞掉。
+   所以先收集、排序，再把跟前一段重疊的部分切掉。 */
+function collectHighlightRanges(text) {
+  const ranges = [];
+
+  const term = searchHighlightTerm;
+  if (term) {
+    const lower = text.toLowerCase();
+    const needle = term.toLowerCase();
+    let idx = lower.indexOf(needle);
+    while (idx !== -1) {
+      ranges.push({ start: idx, end: idx + term.length, kind: "hit" });
+      idx = lower.indexOf(needle, idx + term.length);
+    }
+  }
+
+  if (jumpHighlightRange) {
+    const start = Math.max(0, Math.min(jumpHighlightRange[0], text.length));
+    const end = Math.max(start, Math.min(jumpHighlightRange[1], text.length));
+    if (end > start) ranges.push({ start: start, end: end, kind: "jump" });
+  }
+
+  ranges.sort(function(a, b) { return a.start - b.start || a.end - b.end; });
+
+  const merged = [];
+  ranges.forEach(function(r) {
+    const last = merged[merged.length - 1];
+    if (!last || r.start >= last.end) { merged.push(r); return; }
+    // 重疊：只留還沒被蓋到的那一截，蓋不到就整段丟掉
+    if (r.end > last.end) merged.push({ start: last.end, end: r.end, kind: r.kind });
+  });
+  return merged;
+}
+
 function renderSearchHighlight() {
   const layer = document.getElementById("docContentHighlight");
   const textarea = document.getElementById("docContentInput");
   if (!layer || !textarea) return;
 
   const text = textarea.value || "";
-  const term = searchHighlightTerm;
+  const ranges = collectHighlightRanges(text);
 
-  if (!term) { layer.innerHTML = ""; return; }
+  if (!ranges.length) { layer.innerHTML = ""; return; }
 
-  // 不分大小寫比對，但畫出來的要是原文
-  const lower = text.toLowerCase();
-  const needle = term.toLowerCase();
   let html = "";
   let from = 0;
-  let idx = lower.indexOf(needle);
-
-  while (idx !== -1) {
-    html += escapeHtml(text.slice(from, idx));
-    html += "<mark>" + escapeHtml(text.slice(idx, idx + term.length)) + "</mark>";
-    from = idx + term.length;
-    idx = lower.indexOf(needle, from);
-  }
+  ranges.forEach(function(r) {
+    html += escapeHtml(text.slice(from, r.start));
+    html += '<mark class="' + (r.kind === "jump" ? "is-jump" : "is-hit") + '">' +
+            escapeHtml(text.slice(r.start, r.end)) + "</mark>";
+    from = r.end;
+  });
   html += escapeHtml(text.slice(from));
 
   // 結尾的換行在 pre-wrap 下不會產生最後一個空行，補一個字元讓兩層等高
@@ -112,12 +167,12 @@ function renderSearchHighlight() {
 
 /* 捲到第一個命中的地方。位置直接量圖層裡第一個 <mark>，
    不用自己推算行號與折行——圖層跟 textarea 排版一致，量到的就是對的。 */
-function scrollToFirstSearchHit() {
+function scrollToFirstSearchHit(selector) {
   const layer = document.getElementById("docContentHighlight");
   const scroller = document.querySelector(".editor-content-area");
   if (!layer || !scroller) return;
 
-  const mark = layer.querySelector("mark");
+  const mark = layer.querySelector(selector || "mark");
   if (!mark) return;
 
   const markRect = mark.getBoundingClientRect();

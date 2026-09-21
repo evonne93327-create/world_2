@@ -111,7 +111,7 @@
       <div class="nav-group-center">
         <div class="tab-switch-box" id="btnC_TabSwitch">
           <button class="tab-btn active" id="tabEditorBtn" onclick="switchView('editor')">📝 文檔</button>
-          <button class="tab-btn" id="tabCanvasBtn" onclick="switchView('canvas')">🕸️ 白板</button>
+          <button class="tab-btn" id="tabCanvasBtn" onclick="switchView('canvas')">🪧 白板</button>
         </div>
       </div>
 
@@ -135,6 +135,7 @@
                 <button class="action-pill-btn meta-fab-btn" id="btnDocActions" title="文件操作" onclick="toggleDocActionsPanel()">⋯ <span class="lbl">更多操作</span></button>
                 <div class="docactions-panel" id="docActionsPanel">
                   <button class="docactions-item" onclick="closeDocActionsPanel(); addCurrentDocToCanvas();">📌 <span>投射白板</span></button>
+                  <button class="docactions-item" onclick="indentCurrentDocParagraphs();">⇥ <span>段首空兩格</span></button>
                   <label class="docactions-item" title="插入圖片">
                     🖼️ <span>放圖片</span>
                     <input type="file" id="imgUploadInput" accept="image/*" style="display:none;" onchange="closeDocActionsPanel(); handleImageUpload(event);">
@@ -524,6 +525,9 @@
       </div>
     </div>
   </div>
+
+  <!-- 小工具按下去之後的短暫提示。用浮出而不是 alert：不用再點一次關掉 -->
+  <div class="doc-tool-hint" id="docToolHint" role="status" aria-live="polite"></div>
 
   <!-- 標籤顏色快捷 Popover -->
   <div class="color-picker-popup" id="colorPickerPopover"></div>
