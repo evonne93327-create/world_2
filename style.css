@@ -661,7 +661,7 @@ main.content-workspace {
   margin: 0;
   border: 0;
   font-size: var(--fs-16);
-  line-height: 1.9;
+  line-height: var(--editor-line);
   font-family: var(--font-ui);
   letter-spacing: normal;
   white-space: pre-wrap;
@@ -2056,4 +2056,150 @@ button, input, select, textarea { color: inherit; }
   width: 1.4em;
   text-align: center;
   line-height: 1;
+}
+
+/* ==========================================================
+   軟體鍵盤打開時的版面高度
+
+   由 js/main.js 的 applyKeyboardInset() 在 <html> 上掛 .kb-open 並寫入
+   --kb-h（visualViewport 量到的、真正看得見的高度）。
+
+   只在 .kb-open 在的時候覆蓋，沒有鍵盤時完全走原本的 100dvh 規則——
+   這樣既有的版面一行都不用動，出問題也只要拿掉這個 class 就回得去。
+
+   原因見 js/main.js 那一段的註解：iOS 的 dvh 不扣鍵盤。
+   ========================================================== */
+:root.kb-open body { height: var(--kb-h); }
+:root.kb-open aside.sidebar-directory { height: var(--kb-h); }
+:root.kb-open .app-main-layout { height: var(--kb-h); }
+
+@media (max-width: 768px), (max-height: 500px) {
+  /* 鍵盤打開時把底部的世界觀列收起來。
+
+     它在手機版是一條橫的底部導覽列，鍵盤升起之後會被頂到鍵盤正上方——
+     正好卡在「正在打的那一行」與鍵盤之間，把本來就不多的可視高度再吃掉
+     56px，而且打字的時候也不會想切換世界觀。
+
+     收起來之後主結構就吃滿整個可視高度，不用再扣那 56px。
+     （桌面版的世界觀列是左邊那條直的，不擋打字，所以不收。） */
+  :root.kb-open aside.world-rail { display: none; }
+  :root.kb-open .app-main-layout { height: var(--kb-h); }
+
+  /* 底部導覽列收起來之後，原本為了閃開它而留的空間就白佔著——
+     而鍵盤打開的時候高度正是最缺的。浮動按鈕（復原／快速跳轉）與編輯區
+     的下緣內距都跟著往下移 56px，多換回一行看得見的文字。
+
+     --fab-bottom 是所有浮動按鈕共用的基準，改這一個就全部一起動，
+     不會有哪一顆忘了跟上。 */
+  /* 浮動按鈕是 position:fixed，貼的是延伸到鍵盤後面的版面視窗，
+     body 縮小救不到它們——它們其實一直都被鍵盤蓋著。用被蓋掉的高度
+     （--kb-inset）把它們頂到鍵盤正上方，打字時才按得到復原。 */
+  :root.kb-open { --fab-bottom: calc(12px + var(--kb-inset)); }
+
+  /* 文章結尾底下要留的空間 = 浮動按鈕那一排（12 + 40）＋ 兩行。
+
+     不是為了好看：捲到最底的時候，文章結尾就停在「容器底 − 這個內距」的
+     位置。內距不夠的話，就算程式想再捲一點讓游標離開按鈕也捲不動——
+     底下已經沒有東西可以捲了。要留出那一行，只能從這裡留。
+     （第一版只留了 72px，實測游標離按鈕只剩 20px，不到一行的 30.4px。） */
+  :root.kb-open .editor-content-area {
+    padding-bottom: calc(var(--sp-12) + var(--icon-40) + var(--editor-line) * 2);
+  }
+}
+
+/* 游標不要貼著容器最底下。捲進視野時在下面留一行多的空間，
+   才看得到自己正在寫的那一行下面還有什麼。
+
+   鍵盤打開時要留更多：除了那一行之外，還得閃開浮在編輯區底部的
+   復原／快速跳轉按鈕，游標停在它們底下一樣看不到。
+   （這條規則各家瀏覽器對「游標」的捲動遵守得不一致，所以
+   js/documents.js 的 ensureCaretRoom() 還有一道自己算的保險。） */
+.editor-content-area { scroll-padding-bottom: var(--sp-40); }
+:root.kb-open .editor-content-area {
+  scroll-padding-bottom: calc(var(--icon-40) + var(--sp-12) + var(--editor-line) * 2);
+}
+
+/* 連線樣式按鈕上的線條預覽。
+
+   用 border-style 畫，不要用「——」「– –」這些字元：破折號是一個一個的字，
+   字跟字之間本來就有縫，所以「實線」看起來也像虛線，三個選項擠在一起更
+   分不出來。border-style 畫出來的才是 SVG 上真正會看到的樣子。
+
+   currentColor 讓它跟著按鈕的文字顏色走，選中時一起變成強調色。 */
+.dash-preview {
+  display: inline-block;
+  width: 30px;
+  height: 0;
+  margin-right: var(--sp-8);
+  vertical-align: middle;
+  border-top-width: 2.5px;
+  border-top-color: currentColor;
+}
+.dash-preview.is-solid  { border-top-style: solid; }
+.dash-preview.is-dashed { border-top-style: dashed; }
+.dash-preview.is-dotted { border-top-style: dotted; }
+
+/* 純顯示、不可點的徽章與圖示。
+
+   原本這幾個點下去會直接跳出圖示選擇器，但「顯示目前是什麼」跟
+   「改成別的」是兩件事，擺在同一個手勢上很容易誤觸——在目錄裡上下
+   滑動、或想看一下現在在哪個世界觀的時候都會不小心開起來。
+   改圖示統一走長按（或右鍵）的選單。 */
+.nav-world-btn.is-static,
+.doc-icon-picker-btn.is-static {
+  cursor: default;
+  user-select: none;
+}
+
+/* ---------- 單一節點／便利貼的位置鎖 ---------- */
+
+/* 鎖住的那一個要看得出來，不然使用者只會覺得「這個怎麼拖不動」。 */
+.canvas-node.is-locked,
+.canvas-note.is-locked { cursor: not-allowed; }
+
+/* 便利貼的文字還是可以編輯、大小還是可以調，那些不受位置鎖影響 */
+.canvas-note.is-locked.is-editing,
+.canvas-note.is-locked .canvas-note-body,
+.canvas-note.is-locked .canvas-note-resize { cursor: auto; }
+
+/* 便條紙底下那一列：左邊放小鎖，右邊是調整大小的把手。
+
+   包這一層是為了讓小鎖不用 position:absolute 就能定位——節點與便條紙
+   都住在 SVG 的 foreignObject 裡，WebKit 會把裡面「有定位」的內容畫在
+   沒有縮放的螢幕座標上（iPad 上便條紙黏在螢幕同一個位置的舊 bug）。 */
+.canvas-note-foot {
+  display: flex;
+  align-items: flex-end;
+  flex: none;
+  /* 把手本來就用負外距貼齊右下角，這一列不能把它裁掉 */
+  overflow: visible;
+}
+/* 把手一律靠右，用 margin-left:auto 而不是 justify-content:space-between
+   ——沒鎖的時候這一列只有把手一個子元素，space-between 會把它推到左邊
+   （實測沒鎖時把手離右緣 151px，鎖住時才 1px）。 */
+.canvas-note-foot .canvas-note-resize { margin-left: auto; }
+
+/* 小鎖。pointer-events:none 是必要的：不擋掉的話它會吃掉點擊與長按，
+   鎖住之後反而連選單都叫不出來，就沒辦法解鎖了。 */
+.canvas-lock-badge {
+  font-size: var(--fs-10);
+  line-height: 1;
+  flex: none;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.75;
+}
+/* 節點底下那一列：小鎖在左，字數靠右。跟便條紙的底列同一個做法。 */
+.canvas-node-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+/* 用 margin-left:auto 而不是 justify-content:space-between——沒鎖的時候
+   這一列只有字數一個子元素，space-between 會把它推到左邊。
+   （便條紙的把手踩過同一個坑。） */
+.canvas-node-words {
+  margin-left: auto;
+  font-size: var(--fs-10);
+  color: var(--text-muted);
 }

@@ -16,6 +16,8 @@ window.addEventListener("DOMContentLoaded", function() {
   setupGlobalKeyboardShortcuts();
   setupEditorEnterIndent();
   setupHistoryNavigation();
+  setupKeyboardInset();
+  setupEdgeSwipe();
   initSync();
   initSyncRecovery();
   setupModalKeyboard();

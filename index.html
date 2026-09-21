@@ -102,10 +102,14 @@
     <header class="top-nav-bar">
       <div class="nav-group-left">
         <button class="nav-btn-icon" id="btnA_Hamburger" onclick="toggleSidebarMenu()" title="展開/收納目錄">☰</button>
-        <button class="nav-world-btn" id="btnB_WorldBadge" onclick="openIconPicker('world', activeWorldId)" title="當前世界觀">
+        <!-- 只是顯示「現在在哪個世界觀」，點下去不做事。
+             原本點一下會直接跳出圖示選擇器——那個位置太容易誤觸，
+             而且「顯示目前位置」跟「改圖示」是兩件事。
+             要改圖示請長按（或右鍵）左邊世界觀列上的那顆按鈕。 -->
+        <div class="nav-world-btn is-static" id="btnB_WorldBadge" title="目前的世界觀（長按左側的世界觀圖示可以更換圖示）">
           <span id="currentWorldIcon">🌐</span>
           <span id="currentWorldName">主世界觀</span>
-        </button>
+        </div>
       </div>
 
       <div class="nav-group-center">
@@ -153,7 +157,8 @@
         <div class="editor-content-area">
           <div class="meta-bottom-section">
             <div class="doc-title-line">
-              <button class="doc-icon-picker-btn" id="docIconBtn" title="更換圖示" onclick="openIconPicker('doc', activeDocId)">📄</button>
+              <!-- 顯示用，不可點。要改圖示請在目錄裡長按（或右鍵）這篇文檔。 -->
+              <span class="doc-icon-picker-btn is-static" id="docIconBtn" title="這篇文檔的圖示（在目錄裡長按這篇文檔可以更換）">📄</span>
               <input type="text" id="docTitleInput" class="doc-title-input" placeholder="文檔標題..." oninput="onTitleChange()">
             </div>
 
@@ -456,9 +461,13 @@
 
         <label style="font-size:12px; color:var(--text-secondary); margin-top:6px;">線條樣式：</label>
         <div class="edge-style-row" id="edgeStyleRow">
-          <button type="button" class="edge-opt-btn" data-dash="solid">—— 實線</button>
-          <button type="button" class="edge-opt-btn" data-dash="dashed">– – 虛線</button>
-          <button type="button" class="edge-opt-btn" data-dash="dotted">· · 點線</button>
+          <!-- 預覽用 CSS 的 border-style 畫真正的線，不要用「——」「– –」這些字。
+               破折號是一個一個的字，字跟字之間本來就有縫，所以「實線」看起來
+               也像虛線，三個選項擠在一起更分不出來。border-style 畫出來的
+               就是 SVG 上會看到的那個樣子。 -->
+          <button type="button" class="edge-opt-btn" data-dash="solid"><span class="dash-preview is-solid"></span>實線</button>
+          <button type="button" class="edge-opt-btn" data-dash="dashed"><span class="dash-preview is-dashed"></span>虛線</button>
+          <button type="button" class="edge-opt-btn" data-dash="dotted"><span class="dash-preview is-dotted"></span>點線</button>
         </div>
 
         <label style="font-size:12px; color:var(--text-secondary); margin-top:6px;">箭頭方向：</label>
