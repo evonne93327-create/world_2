@@ -241,7 +241,13 @@ function onDataSaved() {
 
 async function pushNow(silent) {
   if (!syncIsActive()) return;
-  if (syncStatus === "conflict") return; // 衝突還沒解決前不要再推
+
+  /* 衝突還沒解決前不能推（會蓋掉雲端）。但也不能就這樣安靜地不做事——
+     把那個問題重新擺到使用者面前，他才有機會解決它。 */
+  if (pendingConflictRemote) {
+    openSyncConflictModal(pendingConflictRemote);
+    return;
+  }
 
   const payload = JSON.stringify(appData);
   if (payload === lastPushedPayload && !isLocalDirty()) {
@@ -271,6 +277,51 @@ async function pushNow(silent) {
   }
 }
 
+/* 把還在等 debounce 的那次上傳立刻送出去。
+
+   上傳是「存檔後 2.5 秒」才送的（連打字的人不要每個字都打一次 API）。
+   問題是在手機上，切到別的 app、鎖螢幕、或把分頁滑掉的時候，系統會把
+   這個頁面凍結——那 2.5 秒的計時器就再也不會跑完，剛剛打的東西沒上傳，
+   而且完全沒有徵兆。下次在別台裝置打開，看到的就是舊的版本。
+
+   所以在「頁面要離開前景」的那一刻先把它送掉。visibilitychange 的
+   hidden 在 iOS 上是唯一可靠的那個事件（beforeunload 在 iOS 的 PWA
+   幾乎不觸發）。 */
+function flushPendingPush() {
+  if (!syncPushTimer) return;
+  clearTimeout(syncPushTimer);
+  syncPushTimer = null;
+  pushNow(true);
+}
+
+/* 上傳失敗（斷線、權杖過期、伺服器出錯）之後要自己再試。
+
+   原本失敗只是把狀態設成 error，註解寫「下次還會再試」——但「下次」只有
+   在使用者又改了東西的時候才會來。在捷運上改完一段、失敗、然後就沒再打字，
+   那份修改可以一直躺著不上去。
+
+   三個時機重試：網路恢復、頁面回到前景、以及每分鐘定時掃一次。
+   條件是「本機真的有還沒推上去的東西」，沒有的話什麼都不做。 */
+const SYNC_RETRY_INTERVAL_MS = 60 * 1000;
+
+function retryPushIfNeeded() {
+  if (!syncIsActive()) return;
+  if (pendingConflictRemote) return;       // 等使用者決定，不要自己亂推
+  if (syncStatus === "syncing") return;
+  if (!isLocalDirty()) return;
+  pushNow(true);
+}
+
+function initSyncRecovery() {
+  document.addEventListener("visibilitychange", function() {
+    if (document.visibilityState === "hidden") flushPendingPush();
+    else retryPushIfNeeded();
+  });
+  window.addEventListener("pagehide", flushPendingPush);
+  window.addEventListener("online", retryPushIfNeeded);
+  setInterval(retryPushIfNeeded, SYNC_RETRY_INTERVAL_MS);
+}
+
 /* ---------- 衝突處理 ---------- */
 
 let pendingConflictRemote = null;
@@ -297,9 +348,22 @@ function openSyncConflictModal(remote) {
   if (modal) modal.classList.add("active");
 }
 
+/* 「稍後再決定」把彈窗收起來，但衝突還在。
+
+   原本收起來之後 syncStatus 就一直停在 "conflict"，而 pushNow() 開頭
+   有一行 `if (syncStatus === "conflict") return;`——於是從那一刻起，
+   這個分頁再也不會上傳任何東西，畫面上卻一切正常。使用者的感受就是
+   「我明明登入了，它就是不上傳」，而且看不出為什麼。
+
+   改成：收起來時記著衝突還沒解決，下一次要推送時把彈窗叫回來重問，
+   而不是安靜地什麼都不做。使用者可以一直按「稍後再決定」，但每次有新的
+   修改要上傳時都會再看到它一次——不會忘記，也不會被默默關掉。 */
 function closeSyncConflictModal() {
   const modal = document.getElementById("syncConflictModal");
   if (modal) modal.classList.remove("active");
+  if (pendingConflictRemote) {
+    setSyncStatus("conflict", "尚未決定要保留哪一份，資料暫時不會上傳");
+  }
 }
 
 async function resolveConflictUseRemote() {
@@ -460,16 +524,23 @@ function renderSyncIndicator() {
     error: "⚠️",
     conflict: "❗"
   };
-  const account = P().account();
-  const needsAttention = (syncStatus === "error" || syncStatus === "conflict");
+  const p = P();
+  const account = p.account();
+
+  /* 「設定過這個後端、卻沒有帳號」＝授權掉了（Google 的權杖一小時就過期，
+     而且刻意不存在本機，重開 app 時要靠靜默授權要回來；Google 不給的時候
+     就會落到這裡）。使用者記得自己登入過，所以不會主動去看設定——不點個
+     紅點出來，他只會發現「東西沒上去」而不知道是為什麼。 */
+  const needsSignIn = p.isConfigured() && !account;
+  const needsAttention = (syncStatus === "error" || syncStatus === "conflict" || needsSignIn);
 
   const icon = document.getElementById("syncRowIcon");
   if (icon) icon.textContent = marks[syncStatus] || "☁️";
 
   const status = document.getElementById("syncRowStatus");
   if (status) {
-    status.textContent = P().label +
-      (account ? "（" + account + "）" : "（未登入）") +
+    status.textContent = p.label +
+      (account ? "（" + account + "）" : needsSignIn ? "（授權已過期，需要重新登入）" : "（未登入）") +
       (syncStatusDetail ? " — " + syncStatusDetail : "");
     status.classList.toggle("is-alert", needsAttention);
   }

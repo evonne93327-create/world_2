@@ -1566,7 +1566,8 @@ function openEdgeEditModal(edgeId) {
   document.getElementById("edgeEditModal").classList.add("active");
   setTimeout(function() {
     const input = document.getElementById("edgeEditLabelInput");
-    if (input && !isMobileLayout()) { input.focus(); input.select(); }
+    // 觸控裝置不自動聚焦：一打開就跳軟體鍵盤，把彈窗擠掉半個畫面
+    if (input && !isMobileLayout() && !isTouchPrimary()) { input.focus(); input.select(); }
   }, 50);
 }
 
