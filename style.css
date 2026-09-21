@@ -32,6 +32,22 @@ input:focus, textarea:focus, select:focus {
   border-color: var(--border-focus) !important;
 }
 
+/* 彈窗的卡片被加上 tabindex="-1" 是為了讓「打開彈窗」時焦點有地方可放
+   （Tab 才會從彈窗裡面開始走，而不是從頁面最上面）。它永遠只會被程式
+   聚焦，使用者按 Tab 到不了它——所以不該畫焦點框。
+
+   不關掉的話：瀏覽器的預設 outline:auto 會在整張卡片外圍畫一圈，在深色
+   主題下 Chromium 畫的是一圈金黃色，看起來就像那個彈窗的外框跟別人不一樣。
+   而且只有「裡面沒有輸入框」的彈窗才會這樣（有輸入框的話焦點落在輸入框
+   上），所以同一批彈窗長成兩種樣子。
+
+   真正需要焦點框的是裡面的按鈕與輸入框，上面那條 :focus-visible 規則
+   已經在管了，這裡關掉不影響鍵盤操作。 */
+.modal-card:focus,
+.modal-card:focus-visible {
+  outline: none;
+}
+
 .content-textarea:focus,
 .content-textarea:focus-visible,
 .doc-title-input:focus,
