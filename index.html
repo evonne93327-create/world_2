@@ -135,7 +135,7 @@
                 <button class="action-pill-btn meta-fab-btn" id="btnDocActions" title="文件操作" onclick="toggleDocActionsPanel()">⋯ <span class="lbl">更多操作</span></button>
                 <div class="docactions-panel" id="docActionsPanel">
                   <button class="docactions-item" onclick="closeDocActionsPanel(); addCurrentDocToCanvas();">📌 <span>投射白板</span></button>
-                  <button class="docactions-item" onclick="indentCurrentDocParagraphs();">⇥ <span>段首空兩格</span></button>
+                  <button class="docactions-item" onclick="toggleParagraphIndent();">⇥ <span>段首空兩格</span><span class="docactions-flag" id="indentFlag">關</span></button>
                   <label class="docactions-item" title="插入圖片">
                     🖼️ <span>放圖片</span>
                     <input type="file" id="imgUploadInput" accept="image/*" style="display:none;" onchange="closeDocActionsPanel(); handleImageUpload(event);">

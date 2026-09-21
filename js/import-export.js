@@ -251,6 +251,8 @@ function normalizeImportedDoc(d) {
       ? d.manualTags.filter(function(t) { return typeof t === "string"; }) : [],
     images: sanitizeImageList(d.images),
     wordCount: 0,
+    // 「段首空兩格」是文檔自己的設定，不帶過來的話匯入之後按 Enter 就不會再縮排
+    autoIndent: !!d.autoIndent,
     updatedAt: str(d.updatedAt, formatTime(new Date()))
   };
   if (d.createdAt) doc.createdAt = d.createdAt;

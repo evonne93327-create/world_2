@@ -14,6 +14,8 @@ function toggleDocActionsPanel() {
 function openDocActionsPanel() {
  // 兩個浮動面板在手機版是並排的底部按鈕，同時開著會疊在一起
  closeQuickJumpPanel();
+ // 「段首空兩格」是每篇文檔各自的開關，打開面板時才知道現在這篇是開還是關
+ if (typeof renderDocToolsState === "function") renderDocToolsState();
  document.getElementById("docActionsPanel").classList.add("active");
 }
 

@@ -2045,3 +2045,20 @@ button, input, select, textarea { color: inherit; }
 @media (max-width: 768px), (max-height: 500px) {
   .doc-tool-hint { bottom: calc(var(--fab-bottom) + var(--icon-40) + var(--sp-12)); }
 }
+
+/* 小工具面板上的開關狀態。靠右、比本文小一級，一眼看得出現在是開還是關。 */
+.docactions-flag {
+  margin-left: auto;
+  font-size: var(--fs-10);
+  font-weight: 700;
+  padding: 1px var(--sp-6);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.docactions-flag.is-on {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
