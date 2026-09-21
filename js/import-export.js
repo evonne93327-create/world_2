@@ -279,9 +279,9 @@ function normalizeImportedWorld(w) {
     canvas: {
       nodes: Array.isArray(c.nodes) ? c.nodes : [],
       edges: Array.isArray(c.edges) ? c.edges : [],
-      notes: Array.isArray(c.notes) ? c.notes : [],
-      // 位置鎖是這個白板自己的設定，不帶過來的話匯入之後就自己解鎖了
-      locked: !!c.locked
+      /* 位置鎖是掛在每個節點／便利貼上的（node.locked / note.locked），
+         這兩個陣列是整包帶過來的，所以不用另外處理。 */
+      notes: Array.isArray(c.notes) ? c.notes : []
     }
   });
 }

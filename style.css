@@ -2151,20 +2151,43 @@ button, input, select, textarea { color: inherit; }
   user-select: none;
 }
 
-/* ---------- 白板的位置鎖 ---------- */
+/* ---------- 單一節點／便利貼的位置鎖 ---------- */
 
-/* 開著的時候要一眼看得出來，不然使用者只會覺得「怎麼拖不動」。 */
-.canvas-floating-btn.is-on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+/* 鎖住的那一個要看得出來，不然使用者只會覺得「這個怎麼拖不動」。 */
+.canvas-node.is-locked,
+.canvas-note.is-locked { cursor: not-allowed; }
+
+/* 便利貼的文字還是可以編輯、大小還是可以調，那些不受位置鎖影響 */
+.canvas-note.is-locked.is-editing,
+.canvas-note.is-locked .canvas-note-body,
+.canvas-note.is-locked .canvas-note-resize { cursor: auto; }
+
+/* 便條紙底下那一列：左邊放小鎖，右邊是調整大小的把手。
+
+   包這一層是為了讓小鎖不用 position:absolute 就能定位——節點與便條紙
+   都住在 SVG 的 foreignObject 裡，WebKit 會把裡面「有定位」的內容畫在
+   沒有縮放的螢幕座標上（iPad 上便條紙黏在螢幕同一個位置的舊 bug）。 */
+.canvas-note-foot {
+  display: flex;
+  align-items: flex-end;
+  flex: none;
+  /* 把手本來就用負外距貼齊右下角，這一列不能把它裁掉 */
+  overflow: visible;
 }
+/* 把手一律靠右，用 margin-left:auto 而不是 justify-content:space-between
+   ——沒鎖的時候這一列只有把手一個子元素，space-between 會把它推到左邊
+   （實測沒鎖時把手離右緣 151px，鎖住時才 1px）。 */
+.canvas-note-foot .canvas-note-resize { margin-left: auto; }
 
-/* 鎖住時整塊白板換成 not-allowed 的游標，不用試拖了才知道。
-   平移與縮放照常，所以空白處維持可拖曳的游標。 */
-/* 用 id：那個元素的 class 是 view-panel，不是 canvas-view */
-#canvasView.is-locked .canvas-node,
-#canvasView.is-locked .canvas-note { cursor: not-allowed; }
-/* 便利貼的文字還是可以編輯、連線按鈕還是可以按，那些不受鎖影響 */
-#canvasView.is-locked .canvas-note.is-editing,
-#canvasView.is-locked .canvas-note.is-editing .canvas-note-body { cursor: text; }
+/* 小鎖。pointer-events:none 是必要的：不擋掉的話它會吃掉點擊與長按，
+   鎖住之後反而連選單都叫不出來，就沒辦法解鎖了。 */
+.canvas-lock-badge {
+  font-size: var(--fs-10);
+  line-height: 1;
+  flex: none;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.75;
+}
+/* 節點的小鎖排在標題那一列（space-between）的右邊，跟標題隔開一點 */
+.canvas-node .canvas-lock-badge { margin-left: var(--sp-6); }

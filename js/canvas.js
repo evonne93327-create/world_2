@@ -156,8 +156,6 @@ function renderCanvas() {
   const svg = document.getElementById("canvasSvg");
   if (!svg) return;
   const canvas = getCurrentWorldCanvas();
-  // 鎖定是每個世界觀各自的，切換世界觀時按鈕要跟著換樣子
-  renderCanvasLockButton();
   const nodesLayer = getCanvasNodesLayer(svg);
   nodesLayer.innerHTML = "";
 
@@ -214,6 +212,9 @@ function renderCanvas() {
       loadDocToEditor(doc.id);
       switchView('editor');
     };
+
+    // 鎖住的話在標題那一列右邊放一個小鎖（那一列是 space-between）
+    applyCanvasLockBadge(el, node, el.firstElementChild);
 
     attachContextMenu(
       el,
@@ -586,8 +587,15 @@ function renderCanvasNotes() {
     handle.className = "canvas-note-resize";
     handle.setAttribute("title", "拖曳調整大小");
 
+    /* 底下那一列同時放小鎖與調整大小的把手。包一層橫排是為了讓小鎖
+       不用定位就能靠左、把手靠右——理由見 applyCanvasLockBadge 的註解。 */
+    const footer = document.createElementNS(XHTML_NS, "div");
+    footer.className = "canvas-note-foot";
+
     el.appendChild(body);
-    el.appendChild(handle);
+    footer.appendChild(handle);
+    el.appendChild(footer);
+    applyCanvasLockBadge(el, note, footer, true);
     fo.appendChild(el);
     layer.appendChild(fo);
 
@@ -632,6 +640,9 @@ function renderCanvasNotes() {
 function buildCanvasNoteMenuItems(note) {
   return [
     { icon: "✏️", label: "編輯文字", action: function() { startEditCanvasNote(note.id); } },
+    { icon: canvasItemLocked(note) ? "🔓" : "🔒",
+      label: canvasItemLocked(note) ? "解除位置鎖定" : "鎖住位置",
+      action: function() { toggleCanvasItemLock(note, "這張便條紙"); } },
     { type: "divider" },
     { icon: "🗑️", label: "刪除便條紙", danger: true, action: function() {
         deleteCanvasNote(note.id);
@@ -645,7 +656,7 @@ function enableNoteDrag(el, note, fo) {
   let startX = 0, startY = 0, initX = 0, initY = 0, dragging = false;
 
   function begin(clientX, clientY) {
-    if (canvasIsLocked()) return;
+    if (canvasItemLocked(note)) return;
     dragging = true;
     startX = clientX; startY = clientY;
     initX = note.x; initY = note.y;
@@ -872,52 +883,63 @@ function highlightCanvasNode(nodeId) {
 }
 
 /* ==========================================================
-   鎖住位置
+   鎖住位置（每個節點、每張便利貼各自鎖）
 
    排好的白板很容易在捲動、縮放、或單純想點開一篇文檔的時候被手指帶著
-   移動一點點——而且移動了也不會有提示，等發現的時候已經不知道原本在哪。
-   鎖起來之後節點與便利貼就釘住不動，其餘（點開文檔、拉連線、縮放平移、
-   編輯便利貼的文字）照常。
+   移動一點點——而且移動了不會有提示，等發現時已經不知道原本在哪。
 
-   狀態存在「這個世界觀的白板」上（canvas.locked），不是全域設定：
-   有些世界觀的白板已經定稿要鎖，有些還在排。它會跟著存檔與雲端同步走。
+   鎖是掛在「那一個物件」上（node.locked / note.locked），不是整塊白板：
+   實際在用的時候多半是「這幾個定位好了不要再動，其他的還在排」。
+   從長按（或右鍵）的選單開關，鎖住的物件上會出現一個小鎖。
 
-   只鎖「位置」，不鎖便利貼的大小——使用者說的是位置，而且改大小不會讓
-   東西跑掉，事後也看得出來改了什麼。
+   只鎖「位置」：點開文檔、拉連線、改底色、編輯便利貼的文字、調整便利貼
+   的大小都照常——那些不會讓東西跑掉，事後也看得出來改了什麼。
    ========================================================== */
 
-function canvasIsLocked() {
-  const canvas = getCurrentWorldCanvas();
-  return !!(canvas && canvas.locked);
+function canvasItemLocked(item) {
+  return !!(item && item.locked);
 }
 
-function toggleCanvasLock() {
-  const canvas = getCurrentWorldCanvas();
-  if (!canvas) return;
-  canvas.locked = !canvas.locked;
+/* 節點與便利貼共用同一套切換，差別只在存檔後要重畫哪一塊。 */
+function toggleCanvasItemLock(item, label) {
+  if (!item) return;
+  item.locked = !item.locked;
   saveData();
   renderCanvas();
-  renderCanvasLockButton();
-  showDocToolHint(canvas.locked
-    ? "已鎖住位置：節點與便利貼不會被拖動"
-    : "已解鎖：可以拖動節點與便利貼");
+  showDocToolHint(item.locked
+    ? label + "已鎖住位置（長按可以解鎖）"
+    : label + "已解鎖，可以拖動了");
 }
 
-function renderCanvasLockButton() {
-  const btn = document.getElementById("canvasLockBtn");
-  if (!btn) return;
-  const locked = canvasIsLocked();
-  btn.textContent = locked ? "🔒" : "🔓";
-  btn.title = locked ? "位置已鎖住（點一下解鎖）" : "鎖住節點與便利貼的位置";
-  btn.classList.toggle("is-on", locked);
-  btn.setAttribute("aria-pressed", locked ? "true" : "false");
+/* 鎖住的物件要看得出來，不然使用者只會覺得「這個怎麼拖不動」。
 
-  // 鎖住時整塊白板換成「不能拖」的游標，不用試拖了才知道
-  const view = document.getElementById("canvasView");
-  if (view) view.classList.toggle("is-locked", locked);
+   小鎖刻意排在「正常流」裡，不用 position:absolute 疊上去——節點與
+   便條紙都住在 SVG 的 foreignObject 裡，而 WebKit 會把 foreignObject
+   裡「有定位」的內容畫在沒有縮放的螢幕座標上（之前 iPad 上便條紙不管
+   怎麼縮放都黏在螢幕同一個位置，就是這個原因）。所以這裡只把它當成
+   一般的行內元素塞進既有的那一列。
+
+   節點：標題那一列本來就是 space-between，直接接在後面就會靠右。
+   便條紙：接在調整大小的把手那一列前面，不會多佔一行。 */
+function applyCanvasLockBadge(el, item, slot, prepend) {
+  const old = el.querySelector(".canvas-lock-badge");
+  if (old) old.remove();
+  el.classList.toggle("is-locked", canvasItemLocked(item));
+  if (!canvasItemLocked(item)) return;
+
+  const badge = document.createElementNS(XHTML_NS, "span");
+  badge.className = "canvas-lock-badge";
+  badge.textContent = "🔒";
+  badge.setAttribute("title", "位置已鎖住（長按可以解鎖）");
+
+  const target = slot || el;
+  /* 便條紙要插在最前面：那一列是 space-between，而調整大小的把手靠負的
+     外距貼齊右下角，被擠到左邊就跑掉了。節點則是接在標題後面靠右。 */
+  if (prepend && target.firstChild) target.insertBefore(badge, target.firstChild);
+  else target.appendChild(badge);
 }
 
-/* ---------- 節點拖曳 ---------- */
+/* ---------- 節點拖曳 ---------- *//* ---------- 節點拖曳 ---------- */
 
 function enableDualDrag(element, nodeData) {
   let startX, startY, initialLeft, initialTop, dragging = false;
@@ -925,7 +947,7 @@ function enableDualDrag(element, nodeData) {
 
   function beginDrag(clientX, clientY) {
     // 鎖住時完全不進入拖曳狀態——只是不更新座標的話，放開手仍然會存檔
-    if (canvasIsLocked()) return;
+    if (canvasItemLocked(nodeData)) return;
     dragging = true;
     pointerMoved = false;
     startX = clientX; startY = clientY;
@@ -1826,6 +1848,9 @@ function buildCanvasNodeMenuItems(node, doc) {
     { icon: "🎨", label: "節點底色", action: function() {
         openNodeColorPicker(node);
     }},
+    { icon: canvasItemLocked(node) ? "🔓" : "🔒",
+      label: canvasItemLocked(node) ? "解除位置鎖定" : "鎖住位置",
+      action: function() { toggleCanvasItemLock(node, "這個節點"); } },
     { type: "divider" },
     { icon: "🗑️", label: "從白板移除", danger: true, action: function() {
         trashCanvasNode(node.id);
