@@ -1,0 +1,12 @@
+# 開發過程中在專案根目錄產生的截圖。
+
+# 這些是用瀏覽器抓畫面來比對版面時留下的中間產物，不是網站的一部分。
+# 已經被 git add -A 誤掃進去兩次（chip_hover.png、chip_idle.png、
+# update_modal.png，合計 212KB），而且這個專案是直接部署到 GitHub Pages 的，
+# 掃進來就等於連同垃圾一起上線。
+
+# 只擋根目錄那一層：icons/ 底下的 PWA 圖示是網站要用的，不受影響。
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
