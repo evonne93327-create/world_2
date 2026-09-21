@@ -695,7 +695,11 @@ function enableNoteDrag(el, note, fo) {
     e.stopPropagation();
     e.preventDefault();
     begin(e.clientX, e.clientY);
-    function onMove(m) { move(m.clientX, m.clientY); }
+    function onMove(m) {
+      // 理由見 enableDualDrag 前面那段
+      if (m.buttons === 0) { detach(); end(); return; }
+      move(m.clientX, m.clientY);
+    }
     function detach() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp, true);
@@ -711,9 +715,12 @@ function enableNoteDrag(el, note, fo) {
   el.addEventListener("touchstart", function(e) {
     if (e.touches.length !== 1 || blocked(e)) return;
     e.stopPropagation();
+    const touchId = e.touches[0].identifier;
     begin(e.touches[0].clientX, e.touches[0].clientY);
     function onMove(m) {
       if (m.touches.length !== 1) return;
+      // 理由見 enableDualDrag 前面那段
+      if (m.touches[0].identifier !== touchId) { detach(); end(); return; }
       m.preventDefault();
       move(m.touches[0].clientX, m.touches[0].clientY);
     }
@@ -990,6 +997,26 @@ function cancelCanvasDragForMenu() {
   if (handle) handle.cancel();
 }
 
+/* 一次拖曳只屬於「開始它的那一根手指／那一次按住」。
+
+   為什麼需要這道防線：選單跳出來時我們已經會主動取消拖曳，收尾也改走捕獲
+   階段了，但 iPad 上「長按叫出選單 → 點旁邊關掉 → 節點跳到點的位置」還是
+   復發。那代表拖曳是在取消之後才又活過來的——iOS 在觸控結束後會補一串
+   合成的 mouse 事件，而且長按這種被系統特別對待的手勢，補出來的序列不保證
+   完整（可能有 mousedown 沒有 mouseup）。
+
+   與其一條一條去堵那些路徑，不如從根本上問：「現在這個移動事件，跟當初
+   開始拖曳的那一次，是同一次互動嗎？」不是的話就收掉。
+
+   觸控看 identifier：每一根手指有自己的編號，新的一次點擊必定是不同的編號。
+   滑鼠看 buttons：沒有按著任何鍵卻在移動，那就不可能是拖曳。
+
+   這兩個判斷都不依賴「是誰讓拖曳殘留下來的」，所以不管之後又冒出哪一條
+   沒想到的路徑，節點都不會再跟著亂跑。
+
+   發現不對的時候是收掉（end）不是倒回去（cancel）：在那之前的移動是使用者
+   真的拖出來的，要留著存檔。倒回去只用在「選單跳出來」那一種情形——那裡
+   要抹掉的是長按時手指的抖動，不是一次真的拖曳。 */
 function enableDualDrag(element, nodeData) {
   let startX, startY, initialLeft, initialTop, dragging = false;
   let pointerMoved = false;
@@ -1047,7 +1074,11 @@ function enableDualDrag(element, nodeData) {
     e.stopPropagation();
     beginDrag(e.clientX, e.clientY);
 
-    function onMouseMove(m) { moveDrag(m.clientX, m.clientY); }
+    function onMouseMove(m) {
+      // 沒有按著任何鍵卻在移動 → 這不是拖曳，是殘留下來的監聽器
+      if (m.buttons === 0) { detach(); endDrag(); return; }
+      moveDrag(m.clientX, m.clientY);
+    }
     function detach() {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp, true);
@@ -1065,10 +1096,13 @@ function enableDualDrag(element, nodeData) {
     if (e.touches.length !== 1) return;
     e.stopPropagation();
     const touch = e.touches[0];
+    const touchId = touch.identifier;
     beginDrag(touch.clientX, touch.clientY);
 
     function onTouchMove(t) {
       if (t.touches.length !== 1) return;
+      // 換了一根手指 → 這是新的一次互動，不是同一次拖曳
+      if (t.touches[0].identifier !== touchId) { detach(); endDrag(); return; }
       t.preventDefault();
       moveDrag(t.touches[0].clientX, t.touches[0].clientY);
     }

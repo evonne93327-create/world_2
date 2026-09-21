@@ -558,6 +558,12 @@ function closeContextMenu() {
    取消並還原位置（cancelCanvasDragForMenu），兩件事是一組的。 */
 const LONG_PRESS_SLOP_PX = 18;
 
+/* 按多久才算長按。抽成有名字的常數不只是為了好看——diag.html 那一頁要用
+   同一個數字判斷「這一次按夠久了沒」。寫死兩份的話，門檻一改，診斷頁就會
+   開始報出對不上的結果（實測發生過：診斷頁用 300ms 當門檻，把按在
+   300～480ms 之間、本來就不該跳選單的那幾次，算成了「長按失敗」）。 */
+const LONG_PRESS_DELAY_MS = 480;
+
 /* 選單跳出來的瞬間該做的事：取消白板上正在進行的拖曳。
 
    白板不一定載入（這個函式在目錄那邊也用），所以要先看在不在。 */
@@ -590,7 +596,7 @@ function attachContextMenu(element, itemsFn, titleFn) {
  if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) {} }
  cancelDragBeforeMenu();
  showContextMenu(e, itemsFn(), titleFn ? titleFn() : null);
- }, 480);
+ }, LONG_PRESS_DELAY_MS);
  }, { passive: true });
 
  element.addEventListener("touchmove", function(e) {
