@@ -2074,8 +2074,30 @@ button, input, select, textarea { color: inherit; }
 :root.kb-open .app-main-layout { height: var(--kb-h); }
 
 @media (max-width: 768px), (max-height: 500px) {
-  /* 手機版的主結構要再扣掉底部導覽列，跟原本那條同一個算法 */
-  :root.kb-open .app-main-layout { height: calc(var(--kb-h) - 56px - var(--safe-b)); }
+  /* 鍵盤打開時把底部的世界觀列收起來。
+
+     它在手機版是一條橫的底部導覽列，鍵盤升起之後會被頂到鍵盤正上方——
+     正好卡在「正在打的那一行」與鍵盤之間，把本來就不多的可視高度再吃掉
+     56px，而且打字的時候也不會想切換世界觀。
+
+     收起來之後主結構就吃滿整個可視高度，不用再扣那 56px。
+     （桌面版的世界觀列是左邊那條直的，不擋打字，所以不收。） */
+  :root.kb-open aside.world-rail { display: none; }
+  :root.kb-open .app-main-layout { height: var(--kb-h); }
+
+  /* 底部導覽列收起來之後，原本為了閃開它而留的空間就白佔著——
+     而鍵盤打開的時候高度正是最缺的。浮動按鈕（復原／快速跳轉）與編輯區
+     的下緣內距都跟著往下移 56px，多換回一行看得見的文字。
+
+     --fab-bottom 是所有浮動按鈕共用的基準，改這一個就全部一起動，
+     不會有哪一顆忘了跟上。 */
+  /* 浮動按鈕是 position:fixed，貼的是延伸到鍵盤後面的版面視窗，
+     body 縮小救不到它們——它們其實一直都被鍵盤蓋著。用被蓋掉的高度
+     （--kb-inset）把它們頂到鍵盤正上方，打字時才按得到復原。 */
+  :root.kb-open { --fab-bottom: calc(12px + var(--kb-inset)); }
+  :root.kb-open .editor-content-area {
+    padding-bottom: calc(var(--safe-b) + 16px + var(--icon-40) + var(--sp-16));
+  }
 }
 
 /* 游標不要貼著容器最底下。捲進視野時在下面留一行多的空間，

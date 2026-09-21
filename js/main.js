@@ -597,6 +597,11 @@ function setupAnchoredPopoverFollow() {
 
    縮的方式是在 <html> 加一個 class，CSS 只在那個 class 在的時候覆蓋高度。
    沒有鍵盤時完全走原本的規則，不會動到既有的版面。
+
+   有一類東西縮 body 救不到：position:fixed 的元素貼的是「版面視窗」，
+   而那個視窗在 iOS 上本來就延伸到鍵盤後面，body 變矮它們不會跟著動。
+   浮動的復原／快速跳轉按鈕就是這種——它們其實一直都被鍵盤蓋著。
+   所以另外給一個 --kb-inset（被鍵盤蓋掉的高度），讓它們自己往上讓。
    ========================================================== */
 
 /* 少於這個就不是鍵盤——網址列收合、分頁列變化都只有幾十 px */
@@ -605,16 +610,18 @@ const KB_MIN_INSET = 80;
 /* 把判斷抽成純函式，才測得到（visualViewport 沒辦法在測試裡偽造）。
    vv 傳 { height, scale }，innerH 傳 window.innerHeight。 */
 function keyboardInsetState(vv, innerH) {
-  if (!vv) return { open: false, height: 0 };
+  if (!vv) return { open: false, height: 0, inset: 0 };
 
   /* 使用者雙指放大時 visualViewport 也會變小，那不是鍵盤。
      我們是刻意拿掉 user-scalable=no 讓他可以放大的，所以這個情況一定要
      排除——否則一放大整個版面就縮掉，比原本的問題更糟。 */
-  if (vv.scale > 1.05) return { open: false, height: 0 };
+  if (vv.scale > 1.05) return { open: false, height: 0, inset: 0 };
 
   const hidden = innerH - vv.height;
-  if (hidden <= KB_MIN_INSET) return { open: false, height: 0 };
-  return { open: true, height: vv.height };
+  if (hidden <= KB_MIN_INSET) return { open: false, height: 0, inset: 0 };
+  /* height＝看得見的高度（給在正常文件流裡的東西縮用）
+     inset＝被鍵盤蓋掉的高度（給 position:fixed 的東西閃用，見下面） */
+  return { open: true, height: vv.height, inset: hidden };
 }
 
 function applyKeyboardInset() {
@@ -625,10 +632,12 @@ function applyKeyboardInset() {
 
   if (state.open) {
     root.style.setProperty("--kb-h", state.height + "px");
+    root.style.setProperty("--kb-inset", state.inset + "px");
     root.classList.add("kb-open");
   } else {
     root.classList.remove("kb-open");
     root.style.removeProperty("--kb-h");
+    root.style.removeProperty("--kb-inset");
   }
 }
 
