@@ -81,8 +81,12 @@ function repaintThemedContent() {
    工具欄、目錄欄底部與頂部導覽列的四個入口都收到這裡來。
 
    點進子視窗時會先把設定關掉，不讓兩個彈窗疊著——它們的 z-index 一樣，
-   疊起來只是靠 DOM 順序分勝負，很脆。外觀子視窗關掉會回到設定，
-   因為那是唯一一個「改完還想看一眼總表」的。
+   疊起來只是靠 DOM 順序分勝負，很脆。
+
+   子視窗關掉之後一律回到設定總表。從總表點進去的人心裡是「進了一層」，
+   關掉那一層應該退回上一層，而不是整個關光回到主畫面——尤其是垃圾桶、
+   匯出這種「處理完還想順手調別的」的地方。原本只有外觀會回來，其他四個
+   關掉就直接掉回主畫面，同一個位置點進去的東西行為卻不一樣。
    ------------------------------------------------------------- */
 
 function openSettingsModal() {
@@ -91,12 +95,49 @@ function openSettingsModal() {
 }
 
 function closeSettingsModal() {
+  settingsChildModalId = null;   // 是使用者自己關掉總表，不要再回來
   document.getElementById("settingsModal").classList.remove("active");
 }
 
+/* 從設定點進去的那個子視窗的 id。只記一個：設定一次只會開出一層。 */
+let settingsChildModalId = null;
+
 function settingsGoTo(open) {
   closeSettingsModal();
-  if (typeof open === "function") open();
+  if (typeof open !== "function") return;
+  open();
+
+  /* 哪一個彈窗被打開了，由「開完之後誰是 active」決定，不用在每個
+     settingsGoTo(...) 的呼叫點各自寫死 id——那種東西一定會有人漏掉。
+     匯入是叫出檔案選擇器、根本沒開彈窗，這時候就什麼都不記。 */
+  const opened = document.querySelectorAll(".modal-overlay.active");
+  settingsChildModalId = opened.length ? opened[opened.length - 1].id : null;
+  if (settingsChildModalId) watchSettingsChild(settingsChildModalId);
+}
+
+/* 子視窗關掉時把設定叫回來。
+
+   用 MutationObserver 而不是去改每個 closeXxxModal()：那些關閉函式有五個，
+   而且有些（垃圾桶）還會從別的入口打開，在裡面寫死「關掉就開設定」會讓
+   從別處進來的人莫名其妙跳出設定。這裡只認「這一次是從設定點進去的」。 */
+const settingsChildWatched = {};
+
+function watchSettingsChild(id) {
+  if (settingsChildWatched[id]) return;
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  settingsChildWatched[id] = true;
+
+  new MutationObserver(function() {
+    if (modal.classList.contains("active")) return;
+    if (settingsChildModalId !== id) return;
+    settingsChildModalId = null;
+
+    /* 子視窗自己又開了別的彈窗（垃圾桶裡的「確定永久刪除？」）時不要插隊，
+       等那一層也收掉了再回來——否則設定會蓋在確認視窗底下。 */
+    if (document.querySelector(".modal-overlay.active")) return;
+    openSettingsModal();
+  }).observe(modal, { attributes: true, attributeFilter: ["class"] });
 }
 
 function renderSettingsRows() {
@@ -109,12 +150,17 @@ function renderSettingsRows() {
 }
 
 function openAppearanceModal() {
+  /* 自己也把設定收起來，不倚賴呼叫端先做。settingsGoTo() 已經關過一次，
+     重複關是無害的；但從別處直接呼叫這個函式時，少了這一行就會兩層疊著。 */
   closeSettingsModal();
   renderThemeChoice();
   document.getElementById("appearanceModal").classList.add("active");
 }
 
 function closeAppearanceModal() {
+  /* 外觀視窗只有設定總表一個入口，所以在這裡直接回去就好，不用等監看器。
+     從 settingsGoTo() 進來的情況也不會開兩次：監看器看到「已經有彈窗
+     開著」就不會再動作。 */
   document.getElementById("appearanceModal").classList.remove("active");
   openSettingsModal();
 }

@@ -127,6 +127,45 @@ function remoteWouldLoseContent(remote) {
   return remoteDocs < localDocs || remoteWorlds < localWorlds;
 }
 
+/* 雲端回來的版本比這台裝置已經記錄的還舊。
+
+   version 是只會往上加的（Supabase 由 trigger 遞增、Drive 由 Google 遞增），
+   所以「我上次同步到第 10 版，現在雲端說它是第 3 版」在正常情況下不可能發生。
+   會發生代表這一次讀到的是過期的回應——瀏覽器的 HTTP 快取、或雲端服務
+   本身寫完還沒完全生效（Google Drive 尤其會，剛 PATCH 完馬上下載有機會
+   拿到上一版的內容）。
+
+   這件事原本完全沒有防守：initSync() 只問「版本一不一樣」，不一樣就進到
+   「沒有待上傳的修改就採用雲端」那條路，於是把舊的內容蓋回本機、寫進
+   localStorage、狀態顯示「已從雲端更新」，看起來一切正常。更糟的是
+   state.version 也被改成 3，下次再存檔就會把這份舊資料當成新版推上雲端。
+
+   （version 歸 1 的情況——Supabase 那一列被刪掉重建——長得一模一樣，
+   同樣落在這裡。兩者要做的事也一樣：不要自己決定，問使用者。） */
+function remoteIsOlderThanRecord(remote) {
+  const mine = Number(loadSyncState().version);
+  const theirs = Number(remote && remote.version);
+  if (!isFinite(mine) || !isFinite(theirs)) return false;   // 比不了就不擋
+  return theirs < mine;
+}
+
+/* 過期的讀取通常是一時的，隔一下再問一次多半就對了。
+   只重試一次：再錯就不是一時的，該讓使用者知道。 */
+const STALE_REREAD_DELAY_MS = 1500;
+
+async function pullFreshEnough() {
+  const first = await P().pull();
+  if (!first || !remoteIsOlderThanRecord(first)) return { row: first, stale: false };
+
+  setSyncStatus("syncing", "雲端回應看起來是舊的，重新確認中…");
+  await new Promise(function(r) { setTimeout(r, STALE_REREAD_DELAY_MS); });
+
+  let second = null;
+  try { second = await P().pull(); } catch (e) { /* 第二次失敗就用第一次的結果去問 */ }
+  if (second && !remoteIsOlderThanRecord(second)) return { row: second, stale: false };
+  return { row: second || first, stale: true };
+}
+
 function adoptRemote(row) {
   appData = row.data;
   saveSyncState(row.version, row.at);
@@ -168,8 +207,16 @@ async function initSync() {
 
   setSyncStatus("syncing", "正在對帳…");
   try {
-    const remote = await P().pull();
+    const fresh = await pullFreshEnough();
+    const remote = fresh.row;
     const state = loadSyncState();
+
+    /* 讀到的還是比本機記錄的舊。絕對不能採用——那會把已經上傳成功的
+       東西換成舊版，而且接下來還會把舊版推回雲端。停下來問。 */
+    if (remote && fresh.stale) {
+      openSyncConflictModal(remote, true);
+      return;
+    }
 
     /* 雲端還沒有資料：把本機推上去當作第一版。
 
@@ -241,7 +288,14 @@ function onDataSaved() {
 
 async function pushNow(silent) {
   if (!syncIsActive()) return;
-  if (syncStatus === "conflict") return; // 衝突還沒解決前不要再推
+
+  /* 衝突還沒解決前不能推（會蓋掉雲端）。但也不能就這樣安靜地不做事——
+     把那個問題重新擺到使用者面前，他才有機會解決它。 */
+  if (pendingConflictRemote) {
+    // 帶上第一次判定的原因，否則說明會退回成一般的「兩邊都有修改」
+    openSyncConflictModal(pendingConflictRemote, pendingConflictStale);
+    return;
+  }
 
   const payload = JSON.stringify(appData);
   if (payload === lastPushedPayload && !isLocalDirty()) {
@@ -271,13 +325,63 @@ async function pushNow(silent) {
   }
 }
 
+/* 把還在等 debounce 的那次上傳立刻送出去。
+
+   上傳是「存檔後 2.5 秒」才送的（連打字的人不要每個字都打一次 API）。
+   問題是在手機上，切到別的 app、鎖螢幕、或把分頁滑掉的時候，系統會把
+   這個頁面凍結——那 2.5 秒的計時器就再也不會跑完，剛剛打的東西沒上傳，
+   而且完全沒有徵兆。下次在別台裝置打開，看到的就是舊的版本。
+
+   所以在「頁面要離開前景」的那一刻先把它送掉。visibilitychange 的
+   hidden 在 iOS 上是唯一可靠的那個事件（beforeunload 在 iOS 的 PWA
+   幾乎不觸發）。 */
+function flushPendingPush() {
+  if (!syncPushTimer) return;
+  clearTimeout(syncPushTimer);
+  syncPushTimer = null;
+  pushNow(true);
+}
+
+/* 上傳失敗（斷線、權杖過期、伺服器出錯）之後要自己再試。
+
+   原本失敗只是把狀態設成 error，註解寫「下次還會再試」——但「下次」只有
+   在使用者又改了東西的時候才會來。在捷運上改完一段、失敗、然後就沒再打字，
+   那份修改可以一直躺著不上去。
+
+   三個時機重試：網路恢復、頁面回到前景、以及每分鐘定時掃一次。
+   條件是「本機真的有還沒推上去的東西」，沒有的話什麼都不做。 */
+const SYNC_RETRY_INTERVAL_MS = 60 * 1000;
+
+function retryPushIfNeeded() {
+  if (!syncIsActive()) return;
+  if (pendingConflictRemote) return;       // 等使用者決定，不要自己亂推
+  if (syncStatus === "syncing") return;
+  if (!isLocalDirty()) return;
+  pushNow(true);
+}
+
+function initSyncRecovery() {
+  document.addEventListener("visibilitychange", function() {
+    if (document.visibilityState === "hidden") flushPendingPush();
+    else retryPushIfNeeded();
+  });
+  window.addEventListener("pagehide", flushPendingPush);
+  window.addEventListener("online", retryPushIfNeeded);
+  setInterval(retryPushIfNeeded, SYNC_RETRY_INTERVAL_MS);
+}
+
 /* ---------- 衝突處理 ---------- */
 
 let pendingConflictRemote = null;
+/* 這次的衝突是不是「雲端比本機記錄還舊」。要記住，因為之後重新問的時候
+   （pushNow 發現衝突還沒解決）如果不帶上，說明文字會退回成一般的
+   「兩邊都有修改」，把「雲端那份比較舊、建議選這台」這個最關鍵的提示弄丟。 */
+let pendingConflictStale = false;
 
-function openSyncConflictModal(remote) {
+function openSyncConflictModal(remote, remoteLooksStale) {
   pendingConflictRemote = remote;
-  setSyncStatus("conflict", "偵測到衝突");
+  pendingConflictStale = !!remoteLooksStale;
+  setSyncStatus("conflict", remoteLooksStale ? "雲端回應看起來是舊的" : "偵測到衝突");
 
   const info = document.getElementById("syncConflictInfo");
   if (info) {
@@ -287,7 +391,13 @@ function openSyncConflictModal(remote) {
     const remoteDocs = remote && remote.data && Array.isArray(remote.data.docs)
       ? remote.data.docs.length : 0;
     info.innerHTML =
-      '<div style="margin-bottom:8px;">這台裝置和雲端都有未同步的修改，需要你決定要保留哪一份。</div>' +
+      (remoteLooksStale
+        ? '<div style="margin-bottom:8px;">雲端傳回來的是<b>比這台裝置上次上傳的還要舊</b>的版本' +
+          '（雲端說它是第 ' + escapeHtml(String(remote && remote.version)) + ' 版，' +
+          '這台裝置上次同步到第 ' + escapeHtml(String(loadSyncState().version)) + ' 版）。' +
+          '通常是雲端剛寫入還沒完全生效，過一下再開通常就正常了。' +
+          '<b>不確定的話請選「用這台的版本」</b>，那是比較新的那一份。</div>'
+        : '<div style="margin-bottom:8px;">這台裝置和雲端都有未同步的修改，需要你決定要保留哪一份。</div>') +
       '<div style="font-size:12px; color:var(--text-secondary); line-height:1.7;">' +
       '☁️ 雲端版本：' + remoteDocs + ' 份文檔，最後更新於 ' + escapeHtml(when) + '<br>' +
       '💻 這台裝置：' + (appData.docs ? appData.docs.length : 0) + ' 份文檔（尚未上傳）' +
@@ -297,15 +407,29 @@ function openSyncConflictModal(remote) {
   if (modal) modal.classList.add("active");
 }
 
+/* 「稍後再決定」把彈窗收起來，但衝突還在。
+
+   原本收起來之後 syncStatus 就一直停在 "conflict"，而 pushNow() 開頭
+   有一行 `if (syncStatus === "conflict") return;`——於是從那一刻起，
+   這個分頁再也不會上傳任何東西，畫面上卻一切正常。使用者的感受就是
+   「我明明登入了，它就是不上傳」，而且看不出為什麼。
+
+   改成：收起來時記著衝突還沒解決，下一次要推送時把彈窗叫回來重問，
+   而不是安靜地什麼都不做。使用者可以一直按「稍後再決定」，但每次有新的
+   修改要上傳時都會再看到它一次——不會忘記，也不會被默默關掉。 */
 function closeSyncConflictModal() {
   const modal = document.getElementById("syncConflictModal");
   if (modal) modal.classList.remove("active");
+  if (pendingConflictRemote) {
+    setSyncStatus("conflict", "尚未決定要保留哪一份，資料暫時不會上傳");
+  }
 }
 
 async function resolveConflictUseRemote() {
   if (!pendingConflictRemote) return;
   adoptRemote(pendingConflictRemote);
   pendingConflictRemote = null;
+  pendingConflictStale = false;
   closeSyncConflictModal();
   setSyncStatus("idle", "已採用雲端版本");
 }
@@ -319,6 +443,7 @@ async function resolveConflictUseLocal() {
     setLocalDirty(false);
     lastPushedPayload = JSON.stringify(appData);
     pendingConflictRemote = null;
+    pendingConflictStale = false;
     setSyncStatus("idle", "已以本機版本覆蓋雲端");
   } catch (e) {
     setSyncStatus("error", e.message || "覆蓋失敗");
@@ -441,8 +566,10 @@ async function manualPull() {
   }
   setSyncStatus("syncing", "下載中…");
   try {
-    const remote = await P().pull();
+    const fresh = await pullFreshEnough();
+    const remote = fresh.row;
     if (!remote) { setSyncStatus("idle", "雲端還沒有資料"); return; }
+    if (fresh.stale) { openSyncConflictModal(remote, true); return; }
     adoptRemote(remote);
     setSyncStatus("idle", "已從雲端更新");
   } catch (e) {
@@ -460,16 +587,23 @@ function renderSyncIndicator() {
     error: "⚠️",
     conflict: "❗"
   };
-  const account = P().account();
-  const needsAttention = (syncStatus === "error" || syncStatus === "conflict");
+  const p = P();
+  const account = p.account();
+
+  /* 「設定過這個後端、卻沒有帳號」＝授權掉了（Google 的權杖一小時就過期，
+     而且刻意不存在本機，重開 app 時要靠靜默授權要回來；Google 不給的時候
+     就會落到這裡）。使用者記得自己登入過，所以不會主動去看設定——不點個
+     紅點出來，他只會發現「東西沒上去」而不知道是為什麼。 */
+  const needsSignIn = p.isConfigured() && !account;
+  const needsAttention = (syncStatus === "error" || syncStatus === "conflict" || needsSignIn);
 
   const icon = document.getElementById("syncRowIcon");
   if (icon) icon.textContent = marks[syncStatus] || "☁️";
 
   const status = document.getElementById("syncRowStatus");
   if (status) {
-    status.textContent = P().label +
-      (account ? "（" + account + "）" : "（未登入）") +
+    status.textContent = p.label +
+      (account ? "（" + account + "）" : needsSignIn ? "（授權已過期，需要重新登入）" : "（未登入）") +
       (syncStatusDetail ? " — " + syncStatusDetail : "");
     status.classList.toggle("is-alert", needsAttention);
   }

@@ -23,6 +23,19 @@ function isMobileLayout() {
   return window.innerWidth <= 768 || window.innerHeight <= 500;
 }
 
+/* 這台裝置主要是用手指操作的嗎。
+
+   跟 isMobileLayout() 不是同一件事：iPad 橫放時寬度超過 768，版面算桌機，
+   但它還是沒有實體鍵盤——自動聚焦輸入框一樣會把軟體鍵盤叫出來。凡是
+   「會不會吵到使用者」的判斷都要看這個，不要看寬度。 */
+function isTouchPrimary() {
+  try {
+    return window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+  } catch (e) {
+    return "ontouchstart" in window;
+  }
+}
+
 /* 圖片來源只接受 app 自己產生的 base64 資料 URI。
 
    這些字串會被放進 <img src>。匯入的 JSON 可以在 images 欄位塞任何東西，
@@ -66,10 +79,13 @@ function switchView(view, pushHistory = true) {
  if (view !== 'editor') closeQuickJumpPanel();
  if (view === 'canvas') {
  renderCanvas();
- if (pushHistory) history.pushState({ view: 'canvas' }, "");
  } else {
  autoGrowTextarea(document.getElementById("docContentInput"));
  }
+ /* 歷史紀錄由 scheduleUiHistorySync() 統一對齊。原本這裡自己推一筆，
+    但切回編輯器時沒有人把它收回來——按「編輯」分頁離開白板之後，
+    那一筆就永遠留在歷史裡，變成一次不會有任何反應的返回鍵。 */
+ if (pushHistory) scheduleUiHistorySync();
 }
 
 // 4. 側邊欄開關控制
@@ -85,7 +101,6 @@ function toggleSidebarMenu() {
  } else {
  sidebar.classList.add("drawer-open");
  overlay.classList.add("active");
- history.pushState({ drawer: true }, "");
  }
  } else {
  sidebar.classList.toggle("collapsed");
@@ -103,7 +118,6 @@ function openSidebarMenu() {
  if (!sidebar.classList.contains("drawer-open")) {
  sidebar.classList.add("drawer-open");
  overlay.classList.add("active");
- history.pushState({ drawer: true }, "");
  }
  } else {
  sidebar.classList.remove("collapsed");
@@ -155,32 +169,13 @@ function handleBreadcrumbDblClick(e) {
  openSidebarMenu();
 }
 
-// 5. 瀏覽器歷史紀錄整合（支援手機版手勢返回）
+// 5. 瀏覽器歷史紀錄整合（支援手機版手勢返回）— 實作在檔案最下方的
+//    「手機的返回鍵」一節，這裡只留進入點
 function setupHistoryNavigation() {
  if (!history.state) {
- history.replaceState({ view: 'editor', drawer: false }, "");
+ history.replaceState({ wbBase: true }, "");
  }
-
- window.addEventListener("popstate", function(e) {
- const sidebar = document.getElementById("appSidebar");
- const isDrawerOpen = sidebar && sidebar.classList.contains("drawer-open");
-
- if (isDrawerOpen) {
- closeSidebarMobile();
- return;
- }
-
- if (activeView === 'canvas') {
- switchView('editor', false);
- return;
- }
-
- const activeModal = document.querySelector(".modal-overlay.active");
- if (activeModal) {
- activeModal.classList.remove("active");
- return;
- }
- });
+ setupUiBackButton();
 }
 
 // 6. 快捷鍵設定
@@ -349,8 +344,17 @@ function setupModalKeyboard() {
 
       const targets = focusablesIn(card);
       /* 優先聚焦輸入框——彈窗多半是要你填點什麼。沒有輸入框就聚焦卡片
-         本身，讓 Tab 從這裡開始往下走，而不是從頁面最上面。 */
-      const input = targets.find(function(n) { return /^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName); });
+         本身，讓 Tab 從這裡開始往下走，而不是從頁面最上面。
+
+         但觸控裝置不能這樣做：聚焦輸入框會把軟體鍵盤叫出來，鍵盤又會把
+         彈窗往上擠掉半個畫面。像「編輯人物關係」這種一打開就先想看內容、
+         未必要改字的彈窗，鍵盤是純粹的干擾——手機上沒有 Tab 鍵要導航，
+         聚焦本來就沒有它在桌機上的價值。所以這裡只在有實體鍵盤的裝置
+         才自動聚焦輸入框；觸控裝置一律聚焦卡片本身，使用者真的要打字時
+         自己點那個欄位。 */
+      const input = isTouchPrimary()
+        ? null
+        : targets.find(function(n) { return /^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName); });
       (input || card).focus();
     }).observe(modal, { attributes: true, attributeFilter: ["class"] });
   });
@@ -389,4 +393,116 @@ function setupModalKeyboard() {
     }
     focusBeforeModal = null;
   }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["class"] });
+}
+
+/* ==========================================================
+   手機的返回鍵
+
+   在手機上，看到一個蓋住畫面的東西，第一個反射動作就是按返回鍵。原本
+   按下去會直接離開這個 app——彈窗還開著、正在編輯的東西就這樣丟了。
+
+   （原本是有一段程式想做這件事的：切到白板、拉開抽屜時各自推一筆歷史，
+   popstate 時關掉最上層。但關掉的那一路完全沒有人把推出去的那一筆收回來，
+   於是按「編輯」分頁離開白板、按 ✕ 關掉抽屜之後，歷史裡就留著一筆空的
+   紀錄，變成一次「按了沒反應」的返回鍵，按三四次才真的退出去。彈窗更是
+   從頭到尾沒推過任何一筆，所以在彈窗上按返回鍵一律直接離開 app。）
+
+   這裡改成單一的模型：算出「現在有幾層東西是返回鍵該收掉的」，然後讓
+   瀏覽器的歷史深度跟這個數字對齊。誰開的、怎麼開的都不用管——不管是
+   點 ✕、點遮罩、按 Esc 還是程式自己關掉，層數一變就會自動對齊。
+
+   由外而內三層：白板檢視 → 側邊抽屜 → 彈窗（可以疊很多層）。
+   返回鍵一次只收掉最內層的那一個。
+   ========================================================== */
+
+function openModalCount() {
+  return document.querySelectorAll(".modal-overlay.active").length;
+}
+
+function drawerIsOpen() {
+  const sidebar = document.getElementById("appSidebar");
+  return !!sidebar && sidebar.classList.contains("drawer-open");
+}
+
+/* 現在疊了幾層。歷史深度要跟這個數字一樣。 */
+function uiLayerDepth() {
+  return (activeView === "canvas" ? 1 : 0) +
+         (drawerIsOpen() ? 1 : 0) +
+         openModalCount();
+}
+
+/* 收掉最內層的那一層。回傳有沒有真的收掉東西。 */
+function closeTopUiLayer() {
+  const modal = topMostModal();
+  if (modal) {
+    dismissModal(modal);
+    return true;
+  }
+  if (drawerIsOpen()) {
+    closeSidebarMobile();
+    return true;
+  }
+  if (activeView === "canvas") {
+    switchView("editor", false);
+    return true;
+  }
+  return false;
+}
+
+let uiHistoryDepth = 0;    // 我們往歷史推了幾筆
+let uiHistoryPending = 0;  // 還有幾次 popstate 是 history.go() 自己的回音
+let uiHistorySyncTimer = null;
+
+function syncUiHistory() {
+  const n = uiLayerDepth();
+  if (n === uiHistoryDepth) return;
+
+  if (n > uiHistoryDepth) {
+    for (let i = uiHistoryDepth; i < n; i++) {
+      // 不給 URL：網址不變，重新整理還是回到同一頁
+      history.pushState({ wbLayer: i + 1 }, "");
+    }
+    uiHistoryDepth = n;
+    return;
+  }
+
+  /* 層數變少了（使用者自己按 ✕ 關掉的）。把多出來的歷史吐回去，
+     否則會越積越多——按了三次返回鍵都沒反應，第四次才真的離開。
+     history.go() 會觸發 popstate，先記下「接下來這幾次不是使用者按的」。 */
+  const diff = uiHistoryDepth - n;
+  uiHistoryDepth = n;
+  uiHistoryPending += diff;
+  history.go(-diff);
+}
+
+/* 一次操作可能連續改好幾層（關掉設定、同時開啟子視窗），
+   等這一輪跑完再一次對齊，不要中間每一步都去動歷史。 */
+function scheduleUiHistorySync() {
+  if (uiHistorySyncTimer) return;
+  uiHistorySyncTimer = setTimeout(function() {
+    uiHistorySyncTimer = null;
+    syncUiHistory();
+  }, 0);
+}
+
+function setupUiBackButton() {
+  /* 彈窗與抽屜的開關都是加減 class，統一用一個觀察器接住，
+     不用去每個開啟／關閉函式裡各補一行（那種一定會有人漏掉）。 */
+  new MutationObserver(scheduleUiHistorySync)
+    .observe(document.body, { subtree: true, attributes: true, attributeFilter: ["class"] });
+
+  window.addEventListener("popstate", function() {
+    if (uiHistoryPending > 0) { uiHistoryPending--; return; }
+
+    /* 先把計數減掉：瀏覽器已經幫我們吐掉那一筆了，
+       這裡再去 history.go() 會多退一步，直接跳出 app。 */
+    if (uiHistoryDepth > 0) uiHistoryDepth--;
+
+    // 沒東西可收就讓它正常往回走（真的離開 app）
+    if (!closeTopUiLayer()) return;
+
+    /* 收尾。關不掉的（同步衝突那種一定要做選擇的）會被補回一筆；
+       關掉之後又開了別的（設定的子視窗關掉會回到設定總表）也在這裡對齊。 */
+    scheduleUiHistorySync();
+  });
 }

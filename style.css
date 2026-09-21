@@ -183,13 +183,31 @@ aside.sidebar-directory.collapsed {
   padding: var(--sp-8) var(--sp-12);
   border-bottom: 1px solid var(--bg-sidebar);
 }
+/* 🏷️ 按鈕要跟搜尋框一樣高、而且是正方形。
+
+   原本是 flex + align-items:center，按鈕維持自己的固定尺寸（手機斷點裡
+   只有 24×24），旁邊的搜尋框卻因為字級和內距而有四十幾 px——一大一小
+   併排，上下還各留一截空白，看起來就是沒對齊。
+
+   改用 grid 而不是 flex：兩者的 stretch 看起來一樣，但只有 grid 會把
+   拉伸後的高度當成「確定的尺寸」交給 aspect-ratio 去反推寬度。實測
+   （Chromium）flex item 在同樣的寫法下寬度只會長到內容大小，還是長方形。 */
 .search-row {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 1fr auto;   /* 搜尋框吃滿，按鈕自己算寬度 */
+  align-items: stretch;
   gap: var(--sp-6);
 }
-.search-row .search-box-inner { flex: 1; min-width: 0; }
-.hashtag-filter-btn { flex-shrink: 0; border: 1px solid var(--border); }
+.search-row .search-box-inner { min-width: 0; }
+/* 兩個 class 的權重，蓋得過 .icon-sm-btn 在手機斷點裡的固定寬高 */
+.search-row .hashtag-filter-btn {
+  border: 1px solid var(--border);
+  height: auto;
+  width: auto;
+  aspect-ratio: 1 / 1;
+  /* 萬一哪個瀏覽器算不出 aspect-ratio，至少還是齊高、只是沒那麼方 */
+  min-width: var(--icon-28);
+}
 .search-box-inner {
   display: flex;
   align-items: center;
