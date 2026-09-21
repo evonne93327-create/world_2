@@ -743,14 +743,17 @@ function toggleParagraphIndent() {
         : "已關閉：按 Enter 不再自動空兩格"));
 }
 
-/* 小工具面板上那顆按鈕要看得出現在是開還是關 */
+/* 按鈕直接寫「按下去會發生什麼事」，而不是另外掛一個「開／關」的狀態標籤。
+
+   狀態標籤要看的人多想一步（現在是開的 → 所以按下去會變成關的），而且
+   「段首空兩格　開」跟「段首空兩格　關」這兩種寫法，第一眼很容易讀成
+   「按這個會開啟」。直接寫「取消空兩格」就沒有這個歧義，順便也把現在的
+   狀態講出來了——會出現「取消」兩個字，就代表現在是空著的。 */
 function renderDocToolsState() {
-  const flag = document.getElementById("indentFlag");
-  if (!flag) return;
+  const label = document.getElementById("indentLabel");
+  if (!label) return;
   const doc = appData.docs.find(d => d.id === activeDocId);
-  const on = docAutoIndentOn(doc);
-  flag.textContent = on ? "開" : "關";
-  flag.classList.toggle("is-on", on);
+  label.textContent = docAutoIndentOn(doc) ? "取消空兩格" : "段首空兩格";
 }
 
 /* ==========================================================
