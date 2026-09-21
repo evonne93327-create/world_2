@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>平板／手機實機檢查 · 世界觀架構工作台</title>
+
+<!-- 沒有這幾行，瀏覽器會去網域根目錄要 /favicon.ico 然後吃一個 404 -->
+<link rel="icon" type="image/png" sizes="48x48" href="icons/favicon-48.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+
+<!--
+  這一頁是給 iPad／iPhone 用的實機檢查。
+
+  為什麼需要它：開發環境裡只裝得起 Chromium，裝不了 WebKit（下載站被
+  網路政策擋掉），而 Safari 沒有 Linux 版。偏偏出問題的那幾件事正好都在
+  Chromium 量不到的地方——iOS 長按文字會跳出的放大鏡／callout、軟體鍵盤
+  對可視範圍的影響、iPadOS 上 hover/pointer 這兩個 media query 到底回什麼。
+  那些只能讓真的那台機器自己跑一遍。
+
+  它刻意「不」載入 storage.js：那支在載入時就會讀寫 localStorage（含清掉
+  過期垃圾桶）。這一頁跟正式 app 同源，碰 localStorage 等於碰使用者的真實
+  資料，不能冒這個險。這裡只載 main.js 與 modal.js，兩支都只有定義、沒有
+  載入時的動作，而且全程不呼叫任何會存檔的函式。
+-->
+
+<link rel="stylesheet" href="ui-tokens.css">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* style.css 把 body 設成 app 的外殼：display:flex、height:100dvh、
+     overflow:hidden。這一頁只是一張長長的報告，照單全收的話版面會被排成
+     橫向的 flex 欄（實測往右溢出 221px），而且整頁捲不動。
+     全部覆蓋掉——這一頁需要的是最普通的文件流。 */
+  body {
+    display: block;
+    flex-direction: initial;
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+    margin: 0;
+    padding: 16px;
+    padding-bottom: 64px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif;
+    background: var(--bg-page, #f7f5f2);
+    color: var(--text-primary, #2a2420);
+    -webkit-text-size-adjust: 100%;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { font-size: 13px; color: var(--text-secondary, #6b625a); margin: 0 0 20px; line-height: 1.6; }
+  section {
+    background: var(--bg-card, #fff);
+    border: 1px solid var(--border, #e3ddd6);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  h2 { font-size: 15px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  .hint { font-size: 12px; color: var(--text-secondary, #6b625a); margin: 0 0 10px; line-height: 1.6; }
+  .row {
+    display: flex; gap: 8px; align-items: baseline;
+    padding: 6px 0; border-top: 1px solid var(--bg-sunken, #f0ebe5);
+    font-size: 13px; line-height: 1.5;
+  }
+  .row:first-of-type { border-top: none; }
+  .row .k { flex: 1; min-width: 0; }
+  .row .v { font-family: ui-monospace, Menlo, monospace; font-size: 12px; text-align: right; word-break: break-all; }
+  /* 很長的值（例如 User-Agent）跟標籤擠在同一行會疊在一起，改成換行放下面 */
+  .row.stack { flex-wrap: wrap; }
+  .row.stack .k { flex: 1 0 100%; }
+  .row.stack .v { flex: 1 0 100%; text-align: left; margin-top: 4px; }
+  .mark { flex-shrink: 0; width: 1.4em; }
+  .ok   { color: #2e7d32; }
+  .bad  { color: #c62828; }
+  .warn { color: #ef6c00; }
+  .info { color: var(--text-muted, #9a9089); }
+  button {
+    font: inherit; font-size: 14px; padding: 10px 16px;
+    border-radius: 10px; border: 1px solid var(--border, #e3ddd6);
+    background: var(--bg-card, #fff); color: inherit; cursor: pointer;
+  }
+  button.primary { background: var(--accent, #8a6f52); color: #fff; border-color: transparent; }
+  .pad {
+    height: 132px; border: 2px dashed var(--border, #e3ddd6); border-radius: 12px;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    font-size: 13px; color: var(--text-secondary, #6b625a); margin: 10px 0;
+    padding: 0 12px;
+  }
+  #longPressTarget { width: 190px; margin: 12px auto; }
+  #kbInput {
+    width: 100%; box-sizing: border-box; font: inherit; font-size: 16px;
+    padding: 10px; border-radius: 10px; border: 1px solid var(--border, #e3ddd6);
+    background: var(--bg-card, #fff); color: inherit;
+  }
+  #report {
+    width: 100%; box-sizing: border-box; height: 200px; font-size: 11px;
+    font-family: ui-monospace, Menlo, monospace; padding: 10px;
+    border-radius: 10px; border: 1px solid var(--border, #e3ddd6);
+    background: var(--bg-sunken, #f0ebe5); color: inherit;
+  }
+  .verdict { font-size: 13px; font-weight: 600; margin-top: 10px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<h1>實機檢查</h1>
+<p class="sub">
+  這一頁會在你這台機器上跑一遍開發環境驗不到的東西。<br>
+  有「請操作」的段落要動手指，其他會自己跑完。最後把報告複製給我就行。
+</p>
+
+<section>
+  <h2>0. 版本</h2>
+  <p class="hint">
+    先確認你打開的是新版。如果這裡顯示的版本比預期舊，代表 service worker
+    還停在舊版——重新整理一兩次，或把加到主畫面的 app 關掉再開。
+  </p>
+  <div id="versionOut"></div>
+</section>
+
+<section>
+  <h2>1. 裝置判斷</h2>
+  <p class="hint">
+    右滑打開目錄欄這個手勢，是靠 <code>isTouchPrimary()</code> 決定要不要啟用的。
+    它問的是「<code>hover: none</code> 而且 <code>pointer: coarse</code>」。
+    如果你這台接了鍵盤保護殼或觸控板，這兩個有可能不成立——那手勢就不會啟用。
+    這一段就是要問出你這台到底回什麼。
+  </p>
+  <div id="deviceOut"></div>
+</section>
+
+<section>
+  <h2>2. CSS：長按會不會跳出放大鏡</h2>
+  <p class="hint">
+    節點與便條紙裡有文字。iOS Safari 長按文字會啟動它自己的選取／放大鏡／
+    callout。關掉它要同時寫 <code>-webkit-user-select: none</code> 與
+    <code>-webkit-touch-callout: none</code>（沒有前綴的那個要 Safari 16.4
+    以後才認，不能只寫那一個）。這裡直接讀你這台算出來的值。
+  </p>
+  <div id="cssOut"></div>
+</section>
+
+<section>
+  <h2>3. 長按實測 <span class="info" style="font-weight:400;font-size:12px">請操作</span></h2>
+  <p class="hint">
+    在下面這個方塊上<b>長按</b>（像平常叫選單那樣按住不放約一秒），放開。
+    重複幾次，自然一點就好，手指有點晃是正常的——本來就是要測那個。<br>
+    方塊用的是真的 <code>.canvas-node</code> 樣式與真的長按程式，不是模擬的。
+  </p>
+  <div class="canvas-node" id="longPressTarget">
+    <div style="font-weight:700;margin-bottom:4px">長按我</div>
+    <div style="font-size:12px;opacity:.7">按住約一秒再放開</div>
+  </div>
+  <div id="pressOut"></div>
+  <div style="text-align:center;margin-top:8px">
+    <button onclick="resetPress()">清掉重來</button>
+  </div>
+</section>
+
+<section>
+  <h2>4. 右滑手勢 <span class="info" style="font-weight:400;font-size:12px">請操作</span></h2>
+  <p class="hint">
+    從<b>螢幕最左邊</b>往右滑，滑過這個框。會告訴你起手點落在不落得進判定的
+    窄帶裡、方向算不算橫的、距離夠不夠。
+  </p>
+  <div class="pad" id="swipePad">從螢幕最左緣往右滑過來</div>
+  <div id="swipeOut"></div>
+</section>
+
+<section>
+  <h2>5. 軟體鍵盤 <span class="info" style="font-weight:400;font-size:12px">請操作</span></h2>
+  <p class="hint">
+    點下面的輸入框把鍵盤叫出來，數字會即時跳動。重點是
+    <code>inset</code>（被鍵盤蓋掉的高度）有沒有被算出來——
+    iOS 的 <code>dvh</code> 不會扣掉鍵盤，全靠 <code>visualViewport</code>。
+  </p>
+  <input id="kbInput" type="text" placeholder="點這裡叫出鍵盤" autocomplete="off">
+  <div id="kbOut" style="margin-top:10px"></div>
+</section>
+
+<section>
+  <h2>報告</h2>
+  <p class="hint">按一下按鈕，整份結果會出現在下面，長按框內文字全選複製給我。</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <button class="primary" onclick="buildReport()">產生報告</button>
+    <button onclick="copyReport()">複製</button>
+  </div>
+  <textarea id="report" readonly style="margin-top:10px" placeholder="按「產生報告」"></textarea>
+  <div id="copyNote" class="hint" style="margin-top:6px"></div>
+</section>
+
+<!-- showContextMenu() 要用到這兩個，從 index.html 原樣搬過來 -->
+<div class="ctx-menu-overlay" id="ctxMenuOverlay"></div>
+<div class="ctx-menu" id="customContextMenu"></div>
+
+<!-- edgeSwipeZoneRight() 會量這一欄的寬度，要有它量起來才對 -->
+<aside class="world-rail" id="appWorldRail" style="position:fixed;left:0;top:0;visibility:hidden;pointer-events:none"></aside>
+
+<script src="js/main.js"></script>
+<script src="js/modal.js"></script>
+<script src="js/diag.js"></script>
+</body>
+</html>

@@ -13,7 +13,10 @@
 const VERSION = 'v48';
 const CACHE = 'worldbuilder-' + VERSION;
 
-// 離線時要能完整開起來所需的檔案
+// 離線時要能完整開起來所需的檔案。
+// diag.html / js/diag.js 刻意不放進來：那一頁的工作是回報「現在線上到底是
+// 哪一版、這台機器實際算出什麼」，快取一份離線版只會讓它報出過期的答案。
+// 策略本來就是網路優先，所以沒進 SHELL 也照樣打得開。
 const SHELL = [
   './',
   './index.html',
