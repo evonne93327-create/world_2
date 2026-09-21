@@ -48,6 +48,9 @@ function loadDocToEditor(docId) {
   renderDocImages(doc.images || []);
   renderSidebarTree();
   closeQuickJumpPanel();
+  // 「段首空兩格」是每篇各自的開關，換文檔要跟著換
+  if (typeof renderDocToolsState === "function") renderDocToolsState();
+
   // 換了一篇文檔，上一篇的標示不該留著。
   // 從搜尋結果點進來的那條路徑會在這之後自己加回去。
   if (typeof clearSearchHighlight === "function") clearSearchHighlight();
@@ -619,21 +622,24 @@ function deleteDocImage(index) {
 /* ==========================================================
    段首空兩格
 
-   中文排版的習慣是每一段開頭空兩個全形字。手動打的話每寫一段就要補一次，
-   而且從別處貼進來的文字通常沒有。這裡一次整理整篇。
+   中文排版的習慣是每一段開頭空兩個全形字。這是一個「開關」，不是一次性的
+   動作：打開時把整篇現有的段落補上縮排，並且從那之後每按一次 Enter 就自動
+   幫新的一段空兩格；關掉時把縮排拿掉，Enter 也恢復原狀。
 
-   刻意跳過的幾種行：
+   狀態存在文檔上（doc.autoIndent），不是全域設定——同一個世界觀裡，正文
+   章節要縮排，角色設定那種條列式的不該縮，兩種文檔會並存。
+
+   套用縮排時刻意跳過的幾種行：
    - 空行：段落之間的分隔，縮排它只會留下兩個看不見的空白。
-   - 已經有縮排的：再加一次就變四格，按第二次就會越縮越裡面。
-     所以這個動作是可以重複按的，按幾次結果都一樣。
-   - 標題行（「# 第一章」「第1章」）：那是結構不是內文，縮排會讓它
-     看起來像段落，而且目錄那邊是照行首比對的。
+   - 已經有縮排的：再加一次就變四格。
+   - 標題行（「# 第一章」「第1章」「Chapter 3」）：那是結構不是內文，
+     縮排會讓它看起來像段落，而且目錄那邊是照行首比對的。
    - 整行只有標籤的（「#問題 #0921問題」）：那是給系統看的中繼資料。
 
-   走 pushHistorySnapshot()，所以按錯了可以直接按復原。
+   兩個方向都走 pushHistorySnapshot()，所以按錯了可以直接按復原。
    ========================================================== */
 
-const PARAGRAPH_INDENT = "　　";   // 兩個全形空格
+const PARAGRAPH_INDENT = "\u3000\u3000";   // 兩個全形空格
 
 /* 這一行是不是「整行都是標籤」。用 extractHashtagsFromText 判斷太鬆
    （內文裡夾一個標籤也會中），所以自己切開來看每一段是不是都以 # 開頭。 */
@@ -644,7 +650,7 @@ function isTagOnlyLine(line) {
 
 function shouldIndentLine(line) {
   if (!line.trim()) return false;                       // 空行
-  if (/^[\s　]/.test(line)) return false;           // 已經有縮排了
+  if (/^[\s\u3000]/.test(line)) return false;           // 已經有縮排了
   if (MARKDOWN_HEADING_REGEX.test(line)) return false;  // 「# 第一章 啟程」
   if (CHAPTER_LINE_REGEX.test(line)) return false;      // 「第1章」「Chapter 3」
   if (isTagOnlyLine(line)) return false;                // 整行都是標籤
@@ -662,7 +668,31 @@ function indentParagraphsInText(text) {
   return { text: out.join("\n"), changed: changed };
 }
 
-function indentCurrentDocParagraphs() {
+/* 關掉時把縮排拿掉：開頭剛好是那兩個全形空格的就砍掉。
+
+   這裡有一個刻意的取捨：如果使用者在打開這個開關之前就自己手打過縮排，
+   關掉的時候那些也會被一起拿掉。要做到完全可逆就得記住「哪幾行是我加的」，
+   但那份紀錄在使用者接著編輯（插入、刪除、搬動段落）之後就對不上了，
+   會變成更難解釋的錯誤。
+
+   所以這個開關的語意就定義成「這篇文檔要不要有段首縮排」，關＝一個都沒有。
+   這一步也有進復原紀錄，覺得不對按一下就回得來。 */
+function unindentParagraphsInText(text) {
+  const lines = (text || "").split("\n");
+  let changed = 0;
+  const out = lines.map(function(line) {
+    if (line.indexOf(PARAGRAPH_INDENT) !== 0) return line;
+    changed++;
+    return line.slice(PARAGRAPH_INDENT.length);
+  });
+  return { text: out.join("\n"), changed: changed };
+}
+
+function docAutoIndentOn(doc) {
+  return !!(doc && doc.autoIndent);
+}
+
+function toggleParagraphIndent() {
   closeDocActionsPanel();
 
   const doc = appData.docs.find(d => d.id === activeDocId);
@@ -670,36 +700,136 @@ function indentCurrentDocParagraphs() {
   if (!doc || !textarea) return;
 
   /* 先把還在等 debounce 的那一筆寫進去再動手，否則稍後那筆會拿著
-     縮排之前的舊內容蓋回來，等於白做。 */
+     動手之前的舊內容蓋回來，等於白做。 */
   flushPendingContentPersist();
 
-  const result = indentParagraphsInText(textarea.value);
-  if (!result.changed) {
-    showDocToolHint("每一段開頭都已經空兩格了");
-    return;
-  }
+  const turningOn = !docAutoIndentOn(doc);
+  const result = turningOn
+    ? indentParagraphsInText(textarea.value)
+    : unindentParagraphsInText(textarea.value);
 
   ensureDocHistory(doc.id, doc.content || "");
-  pushHistorySnapshot(doc.id, textarea.value);   // 動手前的樣子，按復原回得來
+  if (result.changed) {
+    pushHistorySnapshot(doc.id, textarea.value);   // 動手前的樣子，按復原回得來
 
-  textarea.value = result.text;
-  doc.content = result.text;
-  doc.updatedAt = formatTime(new Date());
-  autoGrowTextarea(textarea);
+    textarea.value = result.text;
+    doc.content = result.text;
+    doc.updatedAt = formatTime(new Date());
+    autoGrowTextarea(textarea);
+    pushHistorySnapshot(doc.id, result.text);
+  }
 
-  pushHistorySnapshot(doc.id, result.text);
+  doc.autoIndent = turningOn;
 
   // 字數、標籤、目錄、側欄那一列都要跟著更新，走平常那條路就好
   scheduleDerivedUi(doc.id);
   flushDerivedUi();
   saveData();
   renderSidebarTree();
+  renderDocToolsState();
 
   // 整篇換過了，原本標示的位置已經不對
-  if (typeof clearSearchHighlight === "function") clearSearchHighlight();
-  if (typeof clearJumpHighlight === "function") clearJumpHighlight();
+  if (result.changed) {
+    if (typeof clearSearchHighlight === "function") clearSearchHighlight();
+    if (typeof clearJumpHighlight === "function") clearJumpHighlight();
+  }
 
-  showDocToolHint("已在 " + result.changed + " 個段落前空兩格（可按復原還原）");
+  showDocToolHint(turningOn
+    ? (result.changed
+        ? "已在 " + result.changed + " 個段落前空兩格；之後按 Enter 也會自動空（可按復原還原）"
+        : "已開啟：之後按 Enter 會自動空兩格")
+    : (result.changed
+        ? "已取消 " + result.changed + " 個段落的縮排；按 Enter 不再自動空（可按復原還原）"
+        : "已關閉：按 Enter 不再自動空兩格"));
+}
+
+/* 按鈕直接寫「按下去會發生什麼事」，而不是另外掛一個「開／關」的狀態標籤。
+
+   狀態標籤要看的人多想一步（現在是開的 → 所以按下去會變成關的），而且
+   「段首空兩格　開」跟「段首空兩格　關」這兩種寫法，第一眼很容易讀成
+   「按這個會開啟」。直接寫「取消空兩格」就沒有這個歧義，順便也把現在的
+   狀態講出來了——會出現「取消」兩個字，就代表現在是空著的。 */
+function renderDocToolsState() {
+  const label = document.getElementById("indentLabel");
+  if (!label) return;
+  const doc = appData.docs.find(d => d.id === activeDocId);
+  label.textContent = docAutoIndentOn(doc) ? "取消空兩格" : "段首空兩格";
+}
+
+/* ==========================================================
+   按 Enter 自動空兩格
+
+   只在這篇文檔的開關是開著的時候才作用。
+
+   幾個一定要處理的情況：
+   - 輸入法組字中（e.isComposing）不能攔：中文輸入時 Enter 是「確認候選字」，
+     攔下來會讓選字直接變成換行，完全沒辦法打字。
+   - Shift+Enter 不縮排：沿用一般編輯器的慣例，那是「同一段裡換行」。
+   - 游標後面已經有縮排或空白（在段落開頭按 Enter 把整段往下推）時不再加，
+     否則會變成四格。
+   - 停在一個只有縮排、沒有字的行上按 Enter（想空一行分段）時，把那兩個
+     全形空格清掉再換行——否則會留下一行看不見的空白，而且那一行在匯出
+     或字數統計上都是雜訊。
+
+   插入一律用 execCommand("insertText")：雖然是舊 API，但所有瀏覽器都還
+   支援，而且它會保留 textarea 自己的復原堆疊，也會照常送出 input 事件
+   （字數、標籤那些就不用自己補呼叫）。不支援時退回手動拼字串。
+   ========================================================== */
+
+function insertAtCaret(textarea, text, replaceFrom) {
+  if (typeof replaceFrom === "number") {
+    textarea.setSelectionRange(replaceFrom, textarea.selectionEnd);
+  }
+  let done = false;
+  try {
+    done = document.execCommand("insertText", false, text);
+  } catch (e) { done = false; }
+
+  if (!done) {
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const v = textarea.value;
+    textarea.value = v.slice(0, start) + text + v.slice(end);
+    const caret = start + text.length;
+    textarea.setSelectionRange(caret, caret);
+    if (typeof onContentChange === "function") onContentChange();
+  }
+}
+
+function handleEditorEnterKey(e) {
+  if (e.key !== "Enter") return;
+  if (e.isComposing || e.keyCode === 229) return;   // 輸入法組字中
+  if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+
+  const doc = appData.docs.find(d => d.id === activeDocId);
+  if (!docAutoIndentOn(doc)) return;
+
+  const ta = e.target;
+  const v = ta.value;
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+
+  const lineStart = v.lastIndexOf("\n", start - 1) + 1;
+  let lineEnd = v.indexOf("\n", end);
+  if (lineEnd === -1) lineEnd = v.length;
+
+  const lineText = v.slice(lineStart, lineEnd);
+  const after = v.slice(end, lineEnd);   // 換行之後會變成新一行開頭的那段字
+
+  e.preventDefault();
+
+  // 新的一行本來就有縮排／空白了，不要再加
+  if (after && /^[\s\u3000]/.test(after)) { insertAtCaret(ta, "\n"); return; }
+
+  // 停在只有縮排、沒有字的行上 → 把那截空白一起換成換行，不留看不見的殘渣
+  if (!lineText.trim()) { insertAtCaret(ta, "\n", lineStart); return; }
+
+  insertAtCaret(ta, "\n" + PARAGRAPH_INDENT);
+}
+
+function setupEditorEnterIndent() {
+  const ta = document.getElementById("docContentInput");
+  if (ta) ta.addEventListener("keydown", handleEditorEnterKey);
 }
 
 /* 小工具的操作結果要說一聲，不然使用者按下去什麼都沒看到，會以為壞了。

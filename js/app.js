@@ -14,6 +14,7 @@ window.addEventListener("DOMContentLoaded", function() {
   setupDirectoryContextMenu();
   setupDeleteKeyShortcut();
   setupGlobalKeyboardShortcuts();
+  setupEditorEnterIndent();
   setupHistoryNavigation();
   initSync();
   initSyncRecovery();
