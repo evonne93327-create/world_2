@@ -2045,3 +2045,15 @@ button, input, select, textarea { color: inherit; }
 @media (max-width: 768px), (max-height: 500px) {
   .doc-tool-hint { bottom: calc(var(--fab-bottom) + var(--icon-40) + var(--sp-12)); }
 }
+
+/* 小工具面板的圖示欄。固定寬度、置中，讓每一列的文字都從同一個位置開始。
+
+   不加這個的話，📌 🖼️ 🗑️ 這些 emoji 與 ⇥ 這種符號的字身寬度不一樣
+   （emoji 大約一個全形寬，⇥ 只有半形多一點），文字就會一列比一列歪。
+   flex-shrink:0 是因為外層是 flex，不釘住的話長標籤會把圖示擠扁。 */
+.docactions-icon {
+  flex: 0 0 auto;
+  width: 1.4em;
+  text-align: center;
+  line-height: 1;
+}
