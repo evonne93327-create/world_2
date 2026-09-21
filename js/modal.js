@@ -476,6 +476,52 @@ function removeHashtagFromDoc(tag) {
  }
 }
 
+/* ---------- 長按選單與 iOS 合成滑鼠事件 ----------
+
+   選單是在手指還按著的時候跳出來的（長按 480ms，那時手指還沒放開）。
+
+   那根手指放開時，iOS 會補一串「相容用」的 mouse 事件，目標是手指底下那個
+   節點——不是選單。setupGlobalClickDismiss() 掛在 document 上的 mousedown /
+   click 處理器看到「目標不在選單裡」，就把剛跳出來的選單關掉了。使用者看到
+   的就是「長按看到清單，鬆手之後它就不見了」。
+
+   （同一串合成事件也是白板節點會亂跑的元凶——那邊是用「這個移動事件跟開始
+   拖曳的是不是同一次互動」擋掉的。這裡擋的是同一個東西的另一個出口。）
+
+   做法：從長按叫出選單，到那根手指放開後的一小段時間為止，不接受「點到
+   外面」的關閉。使用者真的想關的時候會有一次新的 touchstart，那時立刻解除，
+   所以點旁邊關選單完全不受影響。
+
+   為什麼不用單純的「開啟後 N 毫秒內不關」：手指可以按著不放兩秒再鬆手，
+   合成事件是在「鬆手」時才來的，用開啟時間當基準擋不到。 */
+
+const CTX_TOUCH_ECHO_MS = 700;   // 合成事件跟在 touchend 後面多久內會到
+let ctxMenuHeldByTouch = false;  // 叫出選單的那根手指還按著嗎
+let ctxMenuGuardUntil = 0;       // 放開之後還要再擋到什麼時候
+
+/* 長按叫出選單時呼叫：手指還按著，先無限期擋著 */
+function guardContextMenuFromTouchEcho() {
+  ctxMenuHeldByTouch = true;
+  ctxMenuGuardUntil = 0;
+}
+
+/* 那根手指放開了：再擋一小段時間，讓合成事件過完 */
+function releaseContextMenuTouchGuard() {
+  if (!ctxMenuHeldByTouch) return;
+  ctxMenuHeldByTouch = false;
+  ctxMenuGuardUntil = Date.now() + CTX_TOUCH_ECHO_MS;
+}
+
+/* 新的一次觸碰，或選單已經關了：那之後的事件都是使用者真的動作 */
+function clearContextMenuTouchGuard() {
+  ctxMenuHeldByTouch = false;
+  ctxMenuGuardUntil = 0;
+}
+
+function contextMenuGuardActive() {
+  return ctxMenuHeldByTouch || Date.now() < ctxMenuGuardUntil;
+}
+
 function showContextMenu(e, items, title) {
  if (e && e.preventDefault) e.preventDefault();
  if (e && e.stopPropagation) e.stopPropagation();
@@ -542,6 +588,7 @@ function showContextMenu(e, items, title) {
 }
 
 function closeContextMenu() {
+ clearContextMenuTouchGuard();
  const menu = document.getElementById("customContextMenu");
  const overlay = document.getElementById("ctxMenuOverlay");
  if (menu) menu.classList.remove("active");
@@ -597,6 +644,8 @@ function attachContextMenu(element, itemsFn, titleFn) {
  if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) {} }
  cancelDragBeforeMenu();
  showContextMenu(e, itemsFn(), titleFn ? titleFn() : null);
+ /* 一定要在 showContextMenu 之後：它會先 clearContextMenuTouchGuard() */
+ guardContextMenuFromTouchEcho();
  }, LONG_PRESS_DELAY_MS);
  }, { passive: true });
 
@@ -640,7 +689,17 @@ function setupDirectoryContextMenu() {
  if (e.key === "Escape") closeContextMenu();
  });
  window.addEventListener("resize", closeContextMenu);
- document.addEventListener("scroll", closeContextMenu, true);
+ /* 捲動也擋：在 iOS 上鬆手常常會帶出一下回彈捲動，那跟合成滑鼠事件
+    一樣不是使用者想關選單的意思。 */
+ document.addEventListener("scroll", function() {
+ if (contextMenuGuardActive()) return;
+ closeContextMenu();
+ }, true);
+
+ /* 新的一次觸碰＝使用者真的動作，解除防護（點旁邊關選單因此不受影響） */
+ document.addEventListener("touchstart", clearContextMenuTouchGuard, true);
+ document.addEventListener("touchend", releaseContextMenuTouchGuard, true);
+ document.addEventListener("touchcancel", releaseContextMenuTouchGuard, true);
 }
 
 function buildWorldMenuItems(world) {

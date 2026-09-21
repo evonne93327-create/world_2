@@ -283,10 +283,16 @@ function setupGlobalClickDismiss() {
  }
  }
  
- // 關閉自訂右鍵選單 (世界觀、資料夾等)
+ /* 關閉自訂右鍵選單 (世界觀、資料夾等)
+
+    平板／手機上有一個例外：長按叫出選單之後放開手指，iOS 會補一串合成的
+    mouse 事件，目標是手指底下那個元素——不是選單。沒有這個例外的話，選單
+    會在鬆手的瞬間自己關掉（使用者回報過「長按看到清單，鬆手之後就不見了」）。
+    理由詳見 js/modal.js 裡 guardContextMenuFromTouchEcho() 前面的說明。 */
  const ctxMenu = document.getElementById("customContextMenu");
  if (ctxMenu && ctxMenu.classList.contains("active") && !ctxMenu.contains(e.target)) {
- if (typeof closeContextMenu === 'function') {
+ const guarded = typeof contextMenuGuardActive === 'function' && contextMenuGuardActive();
+ if (!guarded && typeof closeContextMenu === 'function') {
  closeContextMenu();
  }
  }
