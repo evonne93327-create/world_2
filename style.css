@@ -813,7 +813,20 @@ main.content-workspace {
   box-shadow: var(--shadow-sm);
   padding: var(--sp-10);
   cursor: grab;
+  /* 這三行在 iPad 上是功能性的，不是裝飾。
+
+     節點裡有文字（標題、摘要、字數）。iOS Safari 長按文字會啟動它自己的
+     選取／放大鏡／callout，那會送出 touchcancel，把我們用來判斷長按的
+     計時器清掉——結果就是在 iPad 上長按節點永遠叫不出選單，整個節點選單
+     （鎖住位置、節點底色、從此節點連線、從白板移除）都構不到。
+
+     unprefixed 的 user-select 要 Safari 16.4 以後才認，所以 -webkit- 那一行
+     不能省；-webkit-touch-callout 則要明確關掉，它的預設值是 default。
+     （連線是 SVG 的 <g>，裡面沒有文字，所以長按一直都是好的——這也是
+     為什麼「編輯人物關係」叫得出來、節點的選單卻叫不出來。） */
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   pointer-events: auto;
 }
 .canvas-node.connecting {
@@ -837,6 +850,11 @@ main.content-workspace {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* 跟節點同樣的理由：iOS 長按文字會啟動選取並送出 touchcancel，
+     把長按計時器清掉，選單就叫不出來。 */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   /* 這裡不能有 position: relative。便條紙住在 SVG 的 foreignObject 裡，
      WebKit（iPad Safari）遇到被定位的 foreignObject 內容時，版面算得對、
      卻把它畫在完全無視 viewBox 縮放的位置上——便條紙因此釘死在螢幕某一點，
@@ -854,7 +872,11 @@ main.content-workspace {
   white-space: pre-wrap;
   word-break: break-word;
   outline: none;
-  user-select: none;          /* 非編輯狀態要能整張拖曳，不要選到字 */
+  /* 非編輯狀態要能整張拖曳，不要選到字。-webkit- 那兩行是給 iOS 的，
+     少了它們長按會變成選字，連帶把長按選單卡掉（見 .canvas-node 的註解）。 */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 .canvas-note.is-editing .canvas-note-body {
   user-select: text;
