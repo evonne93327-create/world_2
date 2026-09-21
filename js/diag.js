@@ -170,6 +170,13 @@ function checkCss() {
 let pressLog = [];
 let pressCurrent = null;
 
+function longPressDelay() {
+  return typeof LONG_PRESS_DELAY_MS === "number" ? LONG_PRESS_DELAY_MS : 480;
+}
+function longPressSlop() {
+  return typeof LONG_PRESS_SLOP_PX === "number" ? LONG_PRESS_SLOP_PX : 18;
+}
+
 function resetPress() {
   pressLog = [];
   renderPress();
@@ -200,6 +207,10 @@ function setupLongPressProbe() {
     const t = e.touches[0];
     pressCurrent = {
       t0: Date.now(), x0: t.clientX, y0: t.clientY,
+      /* 幾根手指。app 的長按只認單指（雙指是縮放），所以多指的那幾次
+         本來就不該跳選單——要分開算，不然會被誤當成失敗。
+         橫放握著平板時手掌很容易多碰到一點，這不是少數情況。 */
+      touchesAtStart: e.touches.length,
       maxMove: 0, cancelled: false, moves: 0
     };
   }, { passive: true });
@@ -236,8 +247,14 @@ function setupLongPressProbe() {
     /* 不要馬上關掉——使用者是來看「選單有沒有出現」的，關太快等於沒出現過。
        留一下下再收，下一次長按才不會被它擋著。 */
     setTimeout(closeContextMenu, 900);
-    // 太短的那種是一般點擊，不算長按，不要混進統計
-    if (rec.heldMs < 300) { rec.tooShort = true; }
+
+    /* 門檻用 app 真正在用的那個數字，不要自己訂一個。
+
+       這裡原本寫死 300ms，比實際的 480ms 還小——按在中間那一段的，會被
+       算成「長按了但沒跳選單」，看起來像失敗，其實是本來就不該跳。
+       實機報告因此出現過 13/17 這種嚇人的數字，查下去兩邊都沒問題。 */
+    rec.tooShort = rec.heldMs < longPressDelay();
+    rec.multiTouch = rec.touchesAtStart > 1;
     pressLog.push(rec);
     renderPress();
   });
@@ -245,10 +262,20 @@ function setupLongPressProbe() {
 
 function renderPress() {
   const out = section("pressOut");
-  const real = pressLog.filter(function(r) { return !r.tooShort; });
+  const delay = longPressDelay();
+  const slop = longPressSlop();
+
+  /* 三類分開算，不要混在一起：
+     - 多指：app 的長按只認單指，本來就不該跳選單
+     - 沒按滿：沒到 480ms，本來就不該跳選單
+     剩下的才是「應該要跳而且我們在意它有沒有跳」的那一類。 */
+  const multi = pressLog.filter(function(r) { return r.multiTouch; });
+  const short = pressLog.filter(function(r) { return !r.multiTouch && r.tooShort; });
+  const real = pressLog.filter(function(r) { return !r.multiTouch && !r.tooShort; });
 
   if (!pressLog.length) {
-    addRow(out, "還沒有記錄到長按", "—", "info", "在上面的方塊按住約一秒再放開");
+    addRow(out, "還沒有記錄到長按", "—", "info",
+           "在上面的方塊按住約一秒再放開（要滿 " + delay + " 毫秒才算）");
     diagResults.longPress = null;
     return;
   }
@@ -258,39 +285,74 @@ function renderPress() {
   const maxMove = real.reduce(function(a, r) { return Math.max(a, r.maxMove); }, 0);
   const captureOk = real.filter(function(r) { return r.windowCaptureGotEnd; }).length;
   const bubbleOk = real.filter(function(r) { return r.windowBubbleGotEnd; }).length;
+  const helds = real.map(function(r) { return r.heldMs; });
 
   diagResults.longPress = {
-    attempts: real.length, menuShown: shown, touchcancel: cancelled,
-    maxMovePx: maxMove, windowCapture: captureOk, windowBubble: bubbleOk,
-    slop: typeof LONG_PRESS_SLOP_PX === "number" ? LONG_PRESS_SLOP_PX : null,
-    tooShort: pressLog.length - real.length
+    delayMs: delay, slopPx: slop,
+    totalTouches: pressLog.length,
+    counted: real.length,
+    skippedTooShort: short.length,
+    skippedMultiTouch: multi.length,
+    menuShown: shown,
+    touchcancel: cancelled,
+    maxMovePx: maxMove,
+    heldMsMin: helds.length ? Math.min.apply(null, helds) : null,
+    heldMsMax: helds.length ? Math.max.apply(null, helds) : null,
+    windowCapture: captureOk,
+    windowBubble: bubbleOk,
+    /* 沒按滿的那幾次如果照樣跳了選單，那才是真的有問題 */
+    menuOnShortPress: short.filter(function(r) { return r.menuShown; }).length
   };
 
-  addRow(out, "長按次數（按滿 0.3 秒才算）", real.length + " 次", "info",
-         pressLog.length - real.length > 0 ? "另外有 " + (pressLog.length - real.length) + " 次太短，不列入" : "");
+  addRow(out, "總共碰了幾次", pressLog.length + " 次", "info");
+  addRow(out, "沒按滿 " + delay + " 毫秒，不列入", short.length + " 次", "info",
+         short.length ? "這幾次本來就不該跳選單，不算失敗" : "");
+  addRow(out, "不只一根手指，不列入", multi.length + " 次", "info",
+         multi.length ? "app 的長按只認單指（雙指是縮放），不算失敗" : "");
 
-  if (!real.length) return;
+  if (!real.length) {
+    addRow(out, "算得上長按的次數", "0 次", "warn",
+           "按住久一點：要滿 " + delay + " 毫秒（大約一秒比較保險），而且只用一根手指");
+    return;
+  }
 
-  addRow(out, "叫得出選單", shown + " / " + real.length,
+  addRow(out, "算得上長按的次數", real.length + " 次", "info",
+         "按住 " + Math.min.apply(null, helds) + "～" + Math.max.apply(null, helds) + " 毫秒");
+
+  addRow(out, "其中叫得出選單", shown + " / " + real.length,
          shown === real.length ? "ok" : "bad",
-         shown === real.length ? "" : "還是有失敗");
+         shown === real.length ? "" : "真的有失敗 ← 這個要查");
 
   addRow(out, "收到 touchcancel（放大鏡的信號）", cancelled + " / " + real.length,
          cancelled === 0 ? "ok" : "bad",
          cancelled === 0 ? "系統沒有搶走這個手勢，callout 有擋成功"
                          : "系統搶走了手勢 ← 放大鏡／選字還沒被擋掉");
 
-  addRow(out, "手指最大晃動", maxMove + " px",
-         maxMove <= (typeof LONG_PRESS_SLOP_PX === "number" ? LONG_PRESS_SLOP_PX : 18) ? "ok" : "warn",
-         "容忍範圍是 " + (typeof LONG_PRESS_SLOP_PX === "number" ? LONG_PRESS_SLOP_PX : "?") +
-         " px，超過就會被判成拖曳");
+  /* 只看「整段觸控」的最大位移會誤導：選單在 480ms 就跳出來了，那之後
+     再怎麼晃都不影響。所以超過容忍範圍但選單全都有跳，代表晃動發生在
+     跳出來之後——那不是問題。 */
+  const moveStatus = maxMove <= slop ? "ok" : (shown === real.length ? "info" : "warn");
+  addRow(out, "手指最大晃動（整段觸控）", maxMove + " px", moveStatus,
+         maxMove <= slop
+           ? "容忍範圍是 " + slop + " px"
+           : (shown === real.length
+                ? "超過 " + slop + " px 但選單全都有跳 → 晃動發生在選單跳出來之後，不影響"
+                : "超過 " + slop + " px，可能就是失敗的原因"));
 
   addRow(out, "放開時 window 捕獲階段收到 touchend", captureOk + " / " + real.length,
          captureOk === real.length ? "ok" : "bad",
          "拖曳的收尾靠這一條");
 
-  addRow(out, "放開時 window 冒泡階段收到 touchend", bubbleOk + " / " + real.length, "info",
-         "叫出選單的那幾次這裡應該是 0（被 stopPropagation 擋住了，正常）");
+  addRow(out, "放開時 window 冒泡階段收到 touchend", bubbleOk + " / " + real.length,
+         bubbleOk === 0 ? "ok" : "info",
+         bubbleOk === 0 ? "被 stopPropagation 擋住了，正是預期的樣子" : "");
+
+  if (short.length) {
+    const leaked = short.filter(function(r) { return r.menuShown; }).length;
+    addRow(out, "沒按滿卻跳出選單", leaked + " / " + short.length,
+           leaked === 0 ? "ok" : "bad",
+           leaked === 0 ? "短按不會誤觸選單，正確" : "短按也跳選單了 ← 這才是問題");
+  }
 }
 
 /* ---------- 4. 右滑 ---------- */
