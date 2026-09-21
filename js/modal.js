@@ -548,12 +548,30 @@ function closeContextMenu() {
  if (overlay) overlay.classList.remove("active");
 }
 
+/* 長按時手指可以晃動多少還算「按著不動」。
+
+   原本是 10px。實際用起來在平板上有機率叫不出選單——手拿著一台一公斤的
+   機器，按住半秒手指晃十幾像素是常態，超過就被判成拖曳，計時器被清掉。
+   放寬到 18px 之後才穩。
+
+   放寬之後那十幾像素已經把節點拖走了，所以選單跳出來的同時要把拖曳
+   取消並還原位置（cancelCanvasDragForMenu），兩件事是一組的。 */
+const LONG_PRESS_SLOP_PX = 18;
+
+/* 選單跳出來的瞬間該做的事：取消白板上正在進行的拖曳。
+
+   白板不一定載入（這個函式在目錄那邊也用），所以要先看在不在。 */
+function cancelDragBeforeMenu() {
+ if (typeof cancelCanvasDragForMenu === "function") cancelCanvasDragForMenu();
+}
+
 function attachContextMenu(element, itemsFn, titleFn) {
  if (!element) return;
 
  element.addEventListener("contextmenu", function(e) {
  e.preventDefault();
  e.stopPropagation();
+ cancelDragBeforeMenu();
  showContextMenu(e, itemsFn(), titleFn ? titleFn() : null);
  });
 
@@ -570,6 +588,7 @@ function attachContextMenu(element, itemsFn, titleFn) {
  pressTimer = setTimeout(function() {
  longPressTriggered = true;
  if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) {} }
+ cancelDragBeforeMenu();
  showContextMenu(e, itemsFn(), titleFn ? titleFn() : null);
  }, 480);
  }, { passive: true });
@@ -578,7 +597,7 @@ function attachContextMenu(element, itemsFn, titleFn) {
  if (!pressTimer) return;
  const dx = Math.abs(e.touches[0].clientX - startX);
  const dy = Math.abs(e.touches[0].clientY - startY);
- if (dx > 10 || dy > 10) {
+ if (dx > LONG_PRESS_SLOP_PX || dy > LONG_PRESS_SLOP_PX) {
  clearTimeout(pressTimer);
  pressTimer = null;
  }

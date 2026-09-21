@@ -675,6 +675,16 @@ function enableNoteDrag(el, note, fo) {
     dragging = false;
     saveData();
   }
+  /* 取消：座標倒回去，而且不存檔。長按叫出選單時用——理由見
+     cancelCanvasDragForMenu()。 */
+  function cancel() {
+    if (!dragging) return;
+    dragging = false;
+    note.x = initX;
+    note.y = initY;
+    fo.setAttribute("x", note.x);
+    fo.setAttribute("y", note.y);
+  }
   function blocked(e) {
     return el.classList.contains("is-editing") ||
            (e.target.closest && e.target.closest(".canvas-note-resize"));
@@ -686,13 +696,16 @@ function enableNoteDrag(el, note, fo) {
     e.preventDefault();
     begin(e.clientX, e.clientY);
     function onMove(m) { move(m.clientX, m.clientY); }
-    function onUp() {
-      end();
+    function detach() {
       window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("mouseup", onUp, true);
+      clearActiveCanvasDrag(handle);
     }
+    function onUp() { detach(); end(); }
+    const handle = { cancel: function() { detach(); cancel(); } };
     window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    window.addEventListener("mouseup", onUp, true);
+    setActiveCanvasDrag(handle);
   });
 
   el.addEventListener("touchstart", function(e) {
@@ -704,15 +717,19 @@ function enableNoteDrag(el, note, fo) {
       m.preventDefault();
       move(m.touches[0].clientX, m.touches[0].clientY);
     }
-    function onEnd() {
-      end();
+    function detach() {
       window.removeEventListener("touchmove", onMove);
-      window.removeEventListener("touchend", onEnd);
-      window.removeEventListener("touchcancel", onEnd);
+      window.removeEventListener("touchend", onEnd, true);
+      window.removeEventListener("touchcancel", onEnd, true);
+      clearActiveCanvasDrag(handle);
     }
+    function onEnd() { detach(); end(); }
+    const handle = { cancel: function() { detach(); cancel(); } };
     window.addEventListener("touchmove", onMove, { passive: false });
-    window.addEventListener("touchend", onEnd);
-    window.addEventListener("touchcancel", onEnd);
+    // 捕獲階段：理由跟節點那邊一樣，見 enableDualDrag 裡的註解
+    window.addEventListener("touchend", onEnd, true);
+    window.addEventListener("touchcancel", onEnd, true);
+    setActiveCanvasDrag(handle);
   }, { passive: true });
 }
 
@@ -940,7 +957,38 @@ function applyCanvasLockBadge(el, item, slot, prepend) {
   else target.appendChild(badge);
 }
 
-/* ---------- 節點拖曳 ---------- *//* ---------- 節點拖曳 ---------- */
+/* ---------- 節點拖曳 ---------- */
+
+/* 目前正在進行的那一次拖曳。只會有一個——白板上同時只有一隻手指
+   在搬東西。 */
+let activeCanvasDrag = null;
+
+function setActiveCanvasDrag(handle) { activeCanvasDrag = handle; }
+function clearActiveCanvasDrag(handle) {
+  if (activeCanvasDrag === handle) activeCanvasDrag = null;
+}
+
+/* 長按（或右鍵）叫出選單的那一刻，把正在進行的拖曳整個收掉，
+   並且把位置還原成按下去之前的樣子。
+
+   兩件實際回報的災情都是少了這一步：
+
+   1. 「點旁邊關掉選單的時候，節點會移動到點的位置。」
+      長按叫出選單之後手指還按在節點上，放開時 attachContextMenu 會
+      stopPropagation()（它要擋掉長按後那個假的 click），於是負責結束
+      拖曳的監聽器收不到 touchend——拖曳就一直掛在那裡。下一次碰畫面，
+      那一連串 touchmove 還是會被算成同一次拖曳，而位移是從最初按下的
+      位置起算的，所以節點會一口氣跳到新的手指位置。
+      （iPad 上才看得到：Chromium 自己的長按會補一個 touchcancel 把拖曳
+      收掉，iOS 因為我們關掉了 callout，那個 touchcancel 不會來。）
+
+   2. 長按的容忍範圍放寬到手指抖得動之後，那十幾像素已經把節點拖走了。
+      還原位置才能「叫得出選單」與「節點不要跑掉」兩者兼得。 */
+function cancelCanvasDragForMenu() {
+  const handle = activeCanvasDrag;
+  activeCanvasDrag = null;
+  if (handle) handle.cancel();
+}
 
 function enableDualDrag(element, nodeData) {
   let startX, startY, initialLeft, initialTop, dragging = false;
@@ -979,6 +1027,19 @@ function enableDualDrag(element, nodeData) {
     dragging = false;
     saveData();
   }
+  /* 取消：跟 endDrag 不同，這裡把座標倒回去，而且不存檔。 */
+  function cancelDrag() {
+    if (!dragging) return;
+    dragging = false;
+    nodeData.x = initialLeft;
+    nodeData.y = initialTop;
+    const fo = element.parentNode;
+    if (fo && fo.setAttribute) {
+      fo.setAttribute("x", nodeData.x);
+      fo.setAttribute("y", nodeData.y);
+    }
+    renderCanvasLines();
+  }
 
   element.addEventListener("mousedown", function(e) {
     if (e.button !== 0) return;
@@ -987,13 +1048,17 @@ function enableDualDrag(element, nodeData) {
     beginDrag(e.clientX, e.clientY);
 
     function onMouseMove(m) { moveDrag(m.clientX, m.clientY); }
-    function onMouseUp() {
+    function detach() {
       window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-      endDrag();
+      window.removeEventListener("mouseup", onMouseUp, true);
+      clearActiveCanvasDrag(handle);
     }
+    function onMouseUp() { detach(); endDrag(); }
+    const handle = { cancel: function() { detach(); cancelDrag(); } };
+
     window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("mouseup", onMouseUp, true);
+    setActiveCanvasDrag(handle);
   });
 
   element.addEventListener("touchstart", function(e) {
@@ -1007,15 +1072,25 @@ function enableDualDrag(element, nodeData) {
       t.preventDefault();
       moveDrag(t.touches[0].clientX, t.touches[0].clientY);
     }
-    function onTouchEnd() {
+    function detach() {
       window.removeEventListener("touchmove", onTouchMove);
-      window.removeEventListener("touchend", onTouchEnd);
-      window.removeEventListener("touchcancel", onTouchEnd);
-      endDrag();
+      window.removeEventListener("touchend", onTouchEnd, true);
+      window.removeEventListener("touchcancel", onTouchEnd, true);
+      clearActiveCanvasDrag(handle);
     }
+    function onTouchEnd() { detach(); endDrag(); }
+    const handle = { cancel: function() { detach(); cancelDrag(); } };
+
     window.addEventListener("touchmove", onTouchMove, { passive: false });
-    window.addEventListener("touchend", onTouchEnd);
-    window.addEventListener("touchcancel", onTouchEnd);
+    /* 收尾的兩個走「捕獲」階段，不能走冒泡。
+
+       長按叫出選單之後，attachContextMenu 的 touchend 會 stopPropagation()
+       ——它要擋掉長按後那個假的 click。冒泡階段掛在 window 上的監聽器排在
+       它後面，於是永遠收不到 touchend，拖曳就一直掛著沒有結束。捕獲階段在
+       目標元素之前，擋不掉。 */
+    window.addEventListener("touchend", onTouchEnd, true);
+    window.addEventListener("touchcancel", onTouchEnd, true);
+    setActiveCanvasDrag(handle);
   }, { passive: true });
 
   element.addEventListener("click", function(e) {
