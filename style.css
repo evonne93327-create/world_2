@@ -1687,7 +1687,7 @@ main.content-workspace {
 .quickjump-fab {
   position: fixed;
   right: var(--sp-28);
-  bottom: var(--sp-28);
+  bottom: var(--fab-bottom);
   width: var(--icon-44);
   height: var(--icon-44);
   border-radius: var(--radius-full);
@@ -1709,7 +1709,7 @@ main.content-workspace {
 .undoredo-sticky-bar {
   position: fixed;
   right: calc(var(--sp-28) + var(--icon-44) + var(--sp-16));
-  bottom: var(--sp-28);
+  bottom: var(--fab-bottom);
   width: fit-content;
   display: flex;
   gap: var(--sp-10);
@@ -1815,6 +1815,9 @@ main.content-workspace {
    390，目錄欄吃掉一半寬度之後幾乎沒有地方可以寫東西。只看寬度會漏掉
    這種情況。 */
 @media (max-width: 768px), (max-height: 500px) {
+  /* 手機版底下有一條世界觀導覽列，浮動按鈕要閃開它 */
+  :root { --fab-bottom: calc(56px + var(--safe-b) + 16px); }
+
   .quickjump-fab { bottom: var(--fab-bottom); right: 16px; width: var(--icon-40); height: var(--icon-40); font-size: var(--fs-18); }
   .undoredo-sticky-bar { bottom: var(--fab-bottom); right: calc(16px + var(--icon-40) + var(--sp-12)); }
   .undoredo-fab-btn { width: var(--icon-40); height: var(--icon-40); font-size: var(--fs-16); }
@@ -2038,7 +2041,7 @@ button, input, select, textarea { color: inherit; }
   left: 50%;
   /* 疊在浮動按鈕（復原／取消復原／快速跳轉）上面一排，不要蓋到它們。
      算法跟 .docactions-panel 一樣：按鈕列的底部 + 按鈕高度 + 間距。 */
-  bottom: calc(var(--sp-28) + var(--icon-44) + var(--sp-12));
+  bottom: calc(var(--fab-bottom) + var(--icon-44) + var(--sp-12));
   transform: translateX(-50%) translateY(6px);
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -2107,26 +2110,33 @@ button, input, select, textarea { color: inherit; }
   :root.kb-open aside.world-rail { display: none; }
   :root.kb-open .app-main-layout { height: var(--kb-h); }
 
-  /* 底部導覽列收起來之後，原本為了閃開它而留的空間就白佔著——
-     而鍵盤打開的時候高度正是最缺的。浮動按鈕（復原／快速跳轉）與編輯區
-     的下緣內距都跟著往下移 56px，多換回一行看得見的文字。
+}
 
-     --fab-bottom 是所有浮動按鈕共用的基準，改這一個就全部一起動，
-     不會有哪一顆忘了跟上。 */
-  /* 浮動按鈕是 position:fixed，貼的是延伸到鍵盤後面的版面視窗，
-     body 縮小救不到它們——它們其實一直都被鍵盤蓋著。用被蓋掉的高度
-     （--kb-inset）把它們頂到鍵盤正上方，打字時才按得到復原。 */
-  :root.kb-open { --fab-bottom: calc(12px + var(--kb-inset)); }
+/* 鍵盤打開時，浮動按鈕要頂到鍵盤正上方。
 
-  /* 文章結尾底下要留的空間 = 浮動按鈕那一排（12 + 40）＋ 兩行。
+   它們是 position:fixed，貼的是延伸到鍵盤後面的版面視窗，body 縮小救不到
+   它們——沒有這一行的話它們一直被鍵盤蓋著。用被蓋掉的高度（--kb-inset）
+   把它們抬起來。
 
-     不是為了好看：捲到最底的時候，文章結尾就停在「容器底 − 這個內距」的
-     位置。內距不夠的話，就算程式想再捲一點讓游標離開按鈕也捲不動——
-     底下已經沒有東西可以捲了。要留出那一行，只能從這裡留。
-     （第一版只留了 72px，實測游標離按鈕只剩 20px，不到一行的 30.4px。） */
-  :root.kb-open .editor-content-area {
-    padding-bottom: calc(var(--sp-12) + var(--icon-40) + var(--editor-line) * 2);
-  }
+   這一條不能關在手機版的媒體查詢裡。iPad 直放是 820 寬，版面算桌機版，
+   但它一樣是軟體鍵盤——關在裡面的話平板上永遠不會生效（實際發生過：
+   使用者回報「右下角的按鈕還是不會升上來」，原因就是這個）。
+   「有沒有鍵盤」跟「版面寬不寬」是兩件事。
+
+   --fab-bottom 是所有浮動元素共用的基準，改這一個就全部一起動，
+   不會有哪一顆忘了跟上。 */
+:root.kb-open { --fab-bottom: calc(12px + var(--kb-inset)); }
+
+/* 文章結尾底下要留的空間 = 浮動按鈕那一排（12 + 按鈕高）＋ 兩行。
+
+   不是為了好看：捲到最底的時候，文章結尾就停在「容器底 − 這個內距」的
+   位置。內距不夠的話，就算程式想再捲一點讓游標離開按鈕也捲不動——
+   底下已經沒有東西可以捲了。要留出那一行，只能從這裡留。
+   （第一版只留了 72px，實測游標離按鈕只剩 20px，不到一行的 30.4px。）
+
+   按鈕高度取桌機的 44：兩種版面共用一條規則，取大的那個才不會不夠。 */
+:root.kb-open .editor-content-area {
+  padding-bottom: calc(var(--sp-12) + var(--icon-44) + var(--editor-line) * 2);
 }
 
 /* 游標不要貼著容器最底下。捲進視野時在下面留一行多的空間，
