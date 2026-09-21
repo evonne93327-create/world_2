@@ -132,6 +132,30 @@ function closeSidebarMobile() {
  scheduleCanvasViewBoxAfterLayoutShift();
 }
 
+/* 不管哪一種版面，目錄欄現在是開著的嗎。
+
+   兩種版面用的是完全不同的機制：手機版是抽屜（drawer-open），電腦／平板
+   版是把寬度收成 0（collapsed）。右滑手勢兩邊都要用，所以需要一個問得到
+   「現在到底開著沒有」的地方，不要在手勢那裡自己判斷版面。
+
+   （uiLayerDepth() 仍然只看 drawerIsOpen()：返回鍵要收的是「蓋在畫面上的
+   那一層」，平板的目錄欄是版面的一部分，不是疊上去的一層。） */
+function sidebarIsOpen() {
+ const sidebar = document.getElementById("appSidebar");
+ if (!sidebar) return false;
+ return isMobileLayout() ? sidebar.classList.contains("drawer-open")
+                         : !sidebar.classList.contains("collapsed");
+}
+
+/* 收起目錄欄，兩種版面都適用。 */
+function closeSidebarMenu() {
+ if (isMobileLayout()) { closeSidebarMobile(); return; }
+ const sidebar = document.getElementById("appSidebar");
+ if (sidebar) sidebar.classList.add("collapsed");
+ scheduleAutoGrowAfterLayoutShift();
+ scheduleCanvasViewBoxAfterLayoutShift();
+}
+
 function scheduleAutoGrowAfterLayoutShift() {
  setTimeout(function() {
  autoGrowTextarea(document.getElementById("docContentInput"));
@@ -687,20 +711,56 @@ const EDGE_SWIPE_DECIDE_PX = 4;  // 移動超過這麼多才判斷方向
 
 let edgeSwipe = null;
 
+/* 左緣那一條窄帶到哪裡為止。
+
+   手機版世界觀那一欄會轉成底部橫列，畫面最左邊就是內容，所以從 0 算起。
+   平板／電腦版它是最左邊的直欄（62px），從螢幕邊緣起手的手指一定先碰到
+   它——窄帶要從它的右緣再往右算，不然平板上永遠滑不開。 */
+function edgeSwipeZoneRight() {
+  if (isMobileLayout()) return EDGE_SWIPE_ZONE_PX;
+  const rail = document.getElementById("appWorldRail");
+  const w = rail ? rail.getBoundingClientRect().width : 0;
+  return w + EDGE_SWIPE_ZONE_PX;
+}
+
+/* 手勢結束之後，把瀏覽器可能補上的那一下 click 吃掉。
+
+   平板上這條窄帶蓋在世界觀直欄上，起手點常常正好落在某顆世界觀按鈕上。
+   沒有這一段的話，滑開目錄的同時會順手切換世界觀。
+
+   只吃一下、而且 400ms 後自動拆掉，免得之後的正常點擊被牽連。 */
+function swallowNextClick() {
+  let timer = null;
+  const kill = function(ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    cleanup();
+  };
+  const cleanup = function() {
+    clearTimeout(timer);
+    document.removeEventListener("click", kill, true);
+  };
+  document.addEventListener("click", kill, true);
+  timer = setTimeout(cleanup, 400);
+}
+
 function setupEdgeSwipe() {
   document.addEventListener("touchstart", function(e) {
     edgeSwipe = null;
-    if (!isMobileLayout()) return;                       // 電腦版目錄欄一直都在
+    /* 用手指操作的裝置才要這個手勢。原本寫的是 !isMobileLayout() 就跳出，
+       於是 iPad（1024×768、820×1180）永遠不算——它的版面是桌機版。
+       「有沒有手指」跟「版面寬不寬」是兩件事。 */
+    if (!isMobileLayout() && !isTouchPrimary()) return;
     if (e.touches.length !== 1) return;                  // 雙指是縮放，不是滑開目錄
     if (document.querySelector(".modal-overlay.active")) return;
 
     const t = e.touches[0];
-    const open = drawerIsOpen();
+    const open = sidebarIsOpen();
 
     if (!open) {
-      if (t.clientX > EDGE_SWIPE_ZONE_PX) return;        // 沒有從左緣起手
+      if (t.clientX > edgeSwipeZoneRight()) return;      // 沒有從左緣起手
     } else {
-      // 開著的時候，在抽屜或它的遮罩上往左滑可以收起來
+      // 開著的時候，在目錄欄或它的遮罩上往左滑可以收起來
       if (!e.target.closest("#appSidebar, #sidebarOverlay")) return;
     }
 
@@ -744,12 +804,15 @@ function setupEdgeSwipe() {
 
     if (Math.abs(dx) < EDGE_SWIPE_MIN_PX) return;
     edgeSwipe.done = true;
-    if (edgeSwipe.open) closeSidebarMobile();
+    if (edgeSwipe.open) closeSidebarMenu();
     else openSidebarMenu();
   }, { capture: true, passive: false });
 
   const finish = function(e) {
-    if (edgeSwipe && edgeSwipe.claimed) e.stopPropagation();
+    if (edgeSwipe && edgeSwipe.claimed) {
+      e.stopPropagation();
+      swallowNextClick();
+    }
     edgeSwipe = null;
   };
   document.addEventListener("touchend", finish, true);
