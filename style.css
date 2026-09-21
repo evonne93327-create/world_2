@@ -2057,3 +2057,27 @@ button, input, select, textarea { color: inherit; }
   text-align: center;
   line-height: 1;
 }
+
+/* ==========================================================
+   軟體鍵盤打開時的版面高度
+
+   由 js/main.js 的 applyKeyboardInset() 在 <html> 上掛 .kb-open 並寫入
+   --kb-h（visualViewport 量到的、真正看得見的高度）。
+
+   只在 .kb-open 在的時候覆蓋，沒有鍵盤時完全走原本的 100dvh 規則——
+   這樣既有的版面一行都不用動，出問題也只要拿掉這個 class 就回得去。
+
+   原因見 js/main.js 那一段的註解：iOS 的 dvh 不扣鍵盤。
+   ========================================================== */
+:root.kb-open body { height: var(--kb-h); }
+:root.kb-open aside.sidebar-directory { height: var(--kb-h); }
+:root.kb-open .app-main-layout { height: var(--kb-h); }
+
+@media (max-width: 768px), (max-height: 500px) {
+  /* 手機版的主結構要再扣掉底部導覽列，跟原本那條同一個算法 */
+  :root.kb-open .app-main-layout { height: calc(var(--kb-h) - 56px - var(--safe-b)); }
+}
+
+/* 游標不要貼著容器最底下。捲進視野時在下面留一行多的空間，
+   才看得到自己正在寫的那一行下面還有什麼。 */
+.editor-content-area { scroll-padding-bottom: var(--sp-40); }

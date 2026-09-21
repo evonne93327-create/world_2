@@ -575,3 +575,77 @@ function setupAnchoredPopoverFollow() {
   document.addEventListener("scroll", positionAnchoredPopover, true);
   window.addEventListener("resize", positionAnchoredPopover);
 }
+
+/* ==========================================================
+   軟體鍵盤打開時把版面縮到看得見的高度
+
+   問題：在 iOS Safari 上連按幾次 Enter，游標就跑到鍵盤底下看不見了。
+
+   原因不在捲動，在版面高度。body 是 height:100dvh，而 iOS 的 dvh
+   只扣掉瀏覽器自己的網址列，不扣掉軟體鍵盤——鍵盤是「蓋」在畫面上的。
+   （viewport 的 interactive-widget=resizes-content 只有 Chrome/Android
+   看得懂，iOS 直接忽略。）
+
+   於是 .editor-content-area 這個捲動容器的下半截其實藏在鍵盤後面，
+   而瀏覽器「把游標捲進視野」的視野指的就是那個容器的框——它以為游標
+   已經看得到了，實際上被鍵盤遮住。
+
+   解法是把根本原因修掉：鍵盤打開時，用 visualViewport 量出真正看得見的
+   高度，把版面縮到那個高度。瀏覽器原本的捲動行為就會落在對的範圍裡，
+   不需要自己算游標位置（實測在一萬行的文檔上算一次游標要 106ms，
+   每按一次 Enter 都卡那麼久是不能接受的）。
+
+   縮的方式是在 <html> 加一個 class，CSS 只在那個 class 在的時候覆蓋高度。
+   沒有鍵盤時完全走原本的規則，不會動到既有的版面。
+   ========================================================== */
+
+/* 少於這個就不是鍵盤——網址列收合、分頁列變化都只有幾十 px */
+const KB_MIN_INSET = 80;
+
+/* 把判斷抽成純函式，才測得到（visualViewport 沒辦法在測試裡偽造）。
+   vv 傳 { height, scale }，innerH 傳 window.innerHeight。 */
+function keyboardInsetState(vv, innerH) {
+  if (!vv) return { open: false, height: 0 };
+
+  /* 使用者雙指放大時 visualViewport 也會變小，那不是鍵盤。
+     我們是刻意拿掉 user-scalable=no 讓他可以放大的，所以這個情況一定要
+     排除——否則一放大整個版面就縮掉，比原本的問題更糟。 */
+  if (vv.scale > 1.05) return { open: false, height: 0 };
+
+  const hidden = innerH - vv.height;
+  if (hidden <= KB_MIN_INSET) return { open: false, height: 0 };
+  return { open: true, height: vv.height };
+}
+
+function applyKeyboardInset() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const root = document.documentElement;
+  const state = keyboardInsetState(vv, window.innerHeight);
+
+  if (state.open) {
+    root.style.setProperty("--kb-h", state.height + "px");
+    root.classList.add("kb-open");
+  } else {
+    root.classList.remove("kb-open");
+    root.style.removeProperty("--kb-h");
+  }
+}
+
+function setupKeyboardInset() {
+  const vv = window.visualViewport;
+  if (!vv) return;   // 沒有這個 API 的瀏覽器維持原本的行為
+
+  vv.addEventListener("resize", applyKeyboardInset);
+  window.addEventListener("orientationchange", function() {
+    setTimeout(applyKeyboardInset, 250);
+  });
+
+  /* iOS 的鍵盤是動畫升上來的，resize 有時候在動畫跑完之前就先發了一次，
+     那一次量到的高度是中途的值。延遲再對一次，收斂到最後的狀態。 */
+  vv.addEventListener("resize", function() {
+    setTimeout(applyKeyboardInset, 300);
+  });
+
+  applyKeyboardInset();
+}
