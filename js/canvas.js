@@ -194,7 +194,9 @@ function renderCanvas() {
       '</div>' +
       imgHtml +
       '<div style="font-size:11px; color:var(--text-secondary); line-height:1.4; max-height:32px; overflow:hidden; margin-bottom:4px;">' + escapeHtml(preview) + '</div>' +
-      '<div style="font-size:10px; color:var(--text-muted); text-align:right;">' + (doc.wordCount || 0) + ' 字</div>';
+      /* 最後這一列同時放小鎖（左）與字數（右）。包成橫排是為了讓小鎖
+         不用定位就能靠左下角——理由見 applyCanvasLockBadge 的註解。 */
+      '<div class="canvas-node-foot"><span class="canvas-node-words">' + (doc.wordCount || 0) + ' 字</span></div>';
 
     if (thumbSrc) {
       const holder = el.querySelector(".canvas-node-thumb");
@@ -213,8 +215,8 @@ function renderCanvas() {
       switchView('editor');
     };
 
-    // 鎖住的話在標題那一列右邊放一個小鎖（那一列是 space-between）
-    applyCanvasLockBadge(el, node, el.firstElementChild);
+    // 鎖住的話在左下角放一個小鎖，跟便條紙同一個位置
+    applyCanvasLockBadge(el, node, el.querySelector(".canvas-node-foot"), true);
 
     attachContextMenu(
       el,
@@ -919,8 +921,8 @@ function toggleCanvasItemLock(item, label) {
    怎麼縮放都黏在螢幕同一個位置，就是這個原因）。所以這裡只把它當成
    一般的行內元素塞進既有的那一列。
 
-   節點：標題那一列本來就是 space-between，直接接在後面就會靠右。
-   便條紙：接在調整大小的把手那一列前面，不會多佔一行。 */
+   兩種都放在左下角，位置一致：節點是字數那一列的左邊，便條紙是調整
+   大小把手那一列的左邊——兩列本來就存在，所以不會多佔一行高度。 */
 function applyCanvasLockBadge(el, item, slot, prepend) {
   const old = el.querySelector(".canvas-lock-badge");
   if (old) old.remove();
@@ -933,8 +935,7 @@ function applyCanvasLockBadge(el, item, slot, prepend) {
   badge.setAttribute("title", "位置已鎖住（長按可以解鎖）");
 
   const target = slot || el;
-  /* 便條紙要插在最前面：那一列是 space-between，而調整大小的把手靠負的
-     外距貼齊右下角，被擠到左邊就跑掉了。節點則是接在標題後面靠右。 */
+  // 插在最前面才會在左邊；那一列的另一個東西用 margin-left:auto 靠右
   if (prepend && target.firstChild) target.insertBefore(badge, target.firstChild);
   else target.appendChild(badge);
 }

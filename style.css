@@ -2189,5 +2189,17 @@ button, input, select, textarea { color: inherit; }
   user-select: none;
   opacity: 0.75;
 }
-/* 節點的小鎖排在標題那一列（space-between）的右邊，跟標題隔開一點 */
-.canvas-node .canvas-lock-badge { margin-left: var(--sp-6); }
+/* 節點底下那一列：小鎖在左，字數靠右。跟便條紙的底列同一個做法。 */
+.canvas-node-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+/* 用 margin-left:auto 而不是 justify-content:space-between——沒鎖的時候
+   這一列只有字數一個子元素，space-between 會把它推到左邊。
+   （便條紙的把手踩過同一個坑。） */
+.canvas-node-words {
+  margin-left: auto;
+  font-size: var(--fs-10);
+  color: var(--text-muted);
+}
