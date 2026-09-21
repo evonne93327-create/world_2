@@ -1,5 +1,7 @@
 # 世界觀架構工作台 — WorldBuilder Canvas
 
+> 改這個專案之前請先看 [`NOTES.md`](NOTES.md)：那裡寫了踩過的坑、不能退回去的規則，以及還沒做完的事。
+
 給小說、劇本、TRPG 用的世界觀整理工具。左邊是資料夾式的文檔目錄，右邊可以在白板上把角色、勢力、地點拉出來連線，標註彼此的關係。
 
 線上版：https://evonne93327-create.github.io/world_2/
