@@ -146,19 +146,47 @@ test("kb-* 的 class：JS 掛上去的與 CSS 用到的要對得上", function()
   });
 });
 
-test("kb-pending 的底部空間要跟 kb-open 一模一樣", function() {
-  /* 晚一步給等於沒給：最需要這塊空間的就是鍵盤升起前的那一刻（要捲走的
-     量最大，而那時 kb-open 還沒掛上）。值不一樣的話，聚焦當下先捲的那一下
-     會用錯的可捲範圍算，捲完鍵盤一上來又得重算。 */
-  ["padding-bottom", "scroll-padding-bottom"].forEach(function(prop) {
-    const open = valueOf(":root.kb-open .editor-content-area", prop);
-    const pending = valueOf(":root.kb-pending .editor-content-area", prop);
+test("兩者的底部空間剛好差一個 --kb-reserve", function() {
+  /* 鍵盤升起之後，主結構已經縮成可視高度——容器少了一個鍵盤的高度、內容沒變，
+     可捲範圍自己就多出一個鍵盤的高度。所以 kb-open 只需要留「按鈕那一排 ＋
+     兩行」；要自己補 --kb-reserve 的是「聚焦了、鍵盤還沒升起」那一段，那時
+     容器還是全高。
 
-    assert.strictEqual(open.length, 1, ":root.kb-open 的 " + prop + " 應該只有一條");
-    assert.strictEqual(pending.length, 1, ":root.kb-pending 的 " + prop + " 應該只有一條");
-    assert.strictEqual(pending[0], open[0],
-      prop + " 兩邊不一樣：kb-open=" + open[0] + "，kb-pending=" + pending[0]);
-  });
+     差距必須剛好是 --kb-reserve：kb-open 生效的同一刻容器也縮掉同樣的高度，
+     一加一減可捲範圍不變，切換的瞬間才不會把捲動位置夾回去、畫面才不會跳。 */
+  const open = valueOf(":root.kb-open .editor-content-area", "padding-bottom");
+  const pending = valueOf(":root.kb-pending .editor-content-area", "padding-bottom");
+  assert.strictEqual(open.length, 1, ":root.kb-open 的 padding-bottom 應該只有一條");
+  assert.strictEqual(pending.length, 1, ":root.kb-pending 的應該只有一條");
+
+  assert.match(pending[0], /var\(--kb-reserve, 0px\)/,
+    "kb-pending 要補上記得的鍵盤高度 —— 那時候容器還沒縮，空間得自己加出來。" +
+    "而且 0px 的 fallback 不能省：第一次還沒量過時 var() 取不到值會讓整條宣告" +
+    "被丟掉，連按鈕那一排的讓位都沒有");
+  assert.ok(!/--kb-reserve/.test(open[0]),
+    "kb-open 不該再補 —— 容器縮掉的那一段已經是同樣的高度，再補就是多的，" +
+    "使用者會捲到一大片空白（Android 上尤其明顯）");
+
+  /* 把 kb-pending 多出來的那一項拿掉，剩下的要跟 kb-open 一模一樣。
+     比之前先把空白全部去掉——calc() 裡面怎麼換行、怎麼縮排都不影響值，
+     拿原字串比會被排版差異絆倒（第一次就是這樣紅的）。 */
+  const bare = function(v) { return v.replace(/\s+/g, ""); };
+  const tail = bare(pending[0]).replace("var(--kb-reserve,0px)+", "");
+  assert.strictEqual(tail, bare(open[0]),
+    "除了 --kb-reserve 之外，兩邊必須完全一樣。差別多一分，切換的那一刻就會" +
+    "把捲動位置夾掉一分");
+});
+
+test("kb-open 的規則要排在 kb-pending 後面", function() {
+  /* 鍵盤升起後兩個 class 會同時掛在 <html> 上，而兩條規則的權重相同
+     （:root.kb-x .editor-content-area），靠的是順序決勝。排錯的話 kb-open
+     那條永遠不生效，那一大塊空白就一直在。 */
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const pendingAt = stripped.indexOf(":root.kb-pending .editor-content-area {\n  padding-bottom");
+  const openAt = stripped.indexOf(":root.kb-open .editor-content-area {\n  padding-bottom");
+  assert.ok(pendingAt !== -1 && openAt !== -1, "兩條規則都要在");
+  assert.ok(pendingAt < openAt,
+    "kb-open 要寫在 kb-pending 後面 —— 權重一樣，先寫的會被後寫的蓋掉");
 });
 
 test("kb-pending 只管編輯區的空間，不要去動版面高度", function() {
@@ -175,27 +203,31 @@ test("kb-pending 只管編輯區的空間，不要去動版面高度", function(
   });
 });
 
-test("編輯時的底部空間要取 max(保底十行, 記得的鍵盤高度)", function() {
-  /* 游標要能被捲到鍵盤上方，底下就得有「一個鍵盤的高度」可以捲。寫死十行
-     （約 304px）在橫放時不夠——橫放的鍵盤佔 456px。 */
-  const pad = valueOf(":root.kb-pending .editor-content-area", "padding-bottom");
-  assert.strictEqual(pad.length, 1);
+test("不可以放保底行數 —— Android 上那是純粹的干擾", function() {
+  /* Android 的版面會自己 resize（viewport 的 interactive-widget=resizes-content），
+     所以 --kb-reserve 從來不會被寫入，fallback 的 0px 就是對的答案。
+     在這裡放一個「保底十行」的話，Android 使用者每次捲到底都會撞進那片空白。
+     使用者回報過：「在安卓上一定都會滑到那裡，好煩」。
 
-  assert.match(pad[0], /max\(/, "要用 max()，不能只寫死行數");
-  assert.match(pad[0], /var\(--editor-line\) \* 10/, "保底十行");
-  assert.match(pad[0], /var\(--kb-reserve, 0px\)/,
-    "要吃記得的鍵盤高度，而且要有 0px 的 fallback —— 第一次還沒量過時 " +
-    "var() 取不到值會讓整條宣告被丟掉，連保底的十行都沒有");
-
-  // 按鈕那一排與兩行的讓位不能因為改寫而掉了
-  assert.match(pad[0], /var\(--icon-44\)/, "浮動按鈕那一排的高度");
+     iOS 第一次聚焦（還沒量過鍵盤）確實會少這塊空間，但那一次還有 --kb-top
+     那一層接住，不會有東西被吃掉；而且量過一次就存進 localStorage 了。 */
+  [":root.kb-pending .editor-content-area", ":root.kb-open .editor-content-area"]
+    .forEach(function(sel) {
+      const pad = valueOf(sel, "padding-bottom");
+      assert.strictEqual(pad.length, 1);
+      assert.ok(!/--editor-line\) \* 1\d/.test(pad[0]),
+        sel + " 放了保底行數 —— 那在 Android 上是捲到底就撞得到的一大片空白");
+      // 按鈕那一排與兩行的讓位不能因為改寫而掉了
+      assert.match(pad[0], /var\(--icon-44\)/, sel + " 少了浮動按鈕那一排的高度");
+      assert.match(pad[0], /var\(--editor-line\) \* 2/, sel + " 少了游標上方那兩行");
+    });
 });
 
 test("底部空間不可以只掛在 kb-open 上", function() {
   /* kb-open 依賴 visualViewport 偵測得到鍵盤。萬一偵測失效（實際發生過），
      只掛在它上面的話這塊空間就永遠不會出現。kb-pending 只看有沒有聚焦。 */
   ["padding-bottom", "scroll-padding-bottom"].forEach(function(prop) {
-    assert.strictEqual(valueOf(":root.kb-pending .editor-content-area", prop).length, 1,
+    assert.ok(valueOf(":root.kb-pending .editor-content-area", prop).length >= 1,
       prop + " 也要掛在 kb-pending 上，不能只有 kb-open");
   });
 });

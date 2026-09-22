@@ -204,7 +204,19 @@ async function initSync() {
   }
 
   if (!syncIsActive()) { setSyncStatus("off"); return; }
+  await reconcileWithRemote();
+}
 
+/* 拉一次雲端，跟本機比，能安全採用就採用，不能就停下來問。
+
+   這一段原本長在 initSync() 裡面，只在 DOMContentLoaded 跑一次。但裝成 app
+   的人常常是「切到後台、在另一台改東西、再切回來」——那個過程不會重新載入
+   頁面，所以永遠不會再對帳一次，回來看到的還是切走之前的資料。
+   拆出來給「回到前景」共用，兩條路走的是同一套判斷，不會有一邊比較寬鬆。 */
+let lastReconcileAt = 0;
+
+async function reconcileWithRemote() {
+  lastReconcileAt = Date.now();
   setSyncStatus("syncing", "正在對帳…");
   try {
     const fresh = await pullFreshEnough();
@@ -360,11 +372,58 @@ function retryPushIfNeeded() {
   pushNow(true);
 }
 
+/* 回到前景時要不要重新對帳。
+
+   抽成純函式才測得到——visibilityState 與計時在測試裡偽造不了，而這裡每一條
+   都是「不做會弄丟資料」或「做了會打架」的判斷。
+
+   - 沒開同步：沒什麼好對的。
+   - 已經有衝突等使用者決定：再拉一次只會把問題蓋掉，而且他選的是哪一份就
+     變成猜的。
+   - 正在同步：讓它跑完，不要兩條路同時動 appData。
+   - 剛對過帳：iOS 切換 app 時 visibilitychange 有時會連發，而且從
+     通知中心滑一下回來也算一次。每次都打一輪 API 沒有意義。 */
+const RESUME_RECONCILE_MIN_GAP_MS = 5000;
+
+function shouldReconcileOnResume(active, hasConflict, status, msSinceLast, minGap) {
+  if (!active) return false;
+  if (hasConflict) return false;
+  if (status === "syncing") return false;
+  if (msSinceLast < minGap) return false;
+  return true;
+}
+
+/* 回到前景：先對帳一次。回傳有沒有真的去對。 */
+function reconcileOnResume() {
+  const ok = shouldReconcileOnResume(
+    syncIsActive(), !!pendingConflictRemote, syncStatus,
+    Date.now() - lastReconcileAt, RESUME_RECONCILE_MIN_GAP_MS);
+  if (!ok) return false;
+
+  /* 先把還在 debounce 裡的編輯寫進 localStorage。
+
+     內文是「改完 400ms」才存檔的，而 isLocalDirty() 是存檔時才被標記的。
+     少了這一行，剛打完就切走、回來時本機明明有新東西卻不算「髒」，對帳會
+     安靜地採用雲端那份——剛打的字就沒了。 */
+  if (typeof flushPendingContentPersist === "function") flushPendingContentPersist();
+
+  reconcileWithRemote();
+  return true;
+}
+
 function initSyncRecovery() {
   document.addEventListener("visibilitychange", function() {
-    if (document.visibilityState === "hidden") flushPendingPush();
-    else retryPushIfNeeded();
+    if (document.visibilityState === "hidden") { flushPendingPush(); return; }
+    // 對帳本身就會在該推的時候推；它沒去對才輪到單純的重試
+    if (!reconcileOnResume()) retryPushIfNeeded();
   });
+
+  /* iOS 從 bfcache 還原時不保證發 visibilitychange，但一定會發 pageshow。
+     重複觸發不要緊，上面那道 5 秒的間隔會擋掉。 */
+  window.addEventListener("pageshow", function() {
+    if (!reconcileOnResume()) retryPushIfNeeded();
+  });
+
   window.addEventListener("pagehide", flushPendingPush);
   window.addEventListener("online", retryPushIfNeeded);
   setInterval(retryPushIfNeeded, SYNC_RETRY_INTERVAL_MS);

@@ -2190,53 +2190,46 @@ button, input, select, textarea { color: inherit; }
    不會有哪一顆忘了跟上。 */
 :root.kb-open { --fab-bottom: calc(12px + var(--kb-inset)); }
 
-/* 編輯時，文章結尾底下要留一大塊空白。
+/* 文章結尾底下要留的捲動空間。
 
-   不是為了好看，是**捲動空間**。游標要能被捲到鍵盤上方，前提是底下還有
-   東西可以捲；游標在文章結尾附近時，能捲的就只剩這塊內距。不夠的話，
-   不管是我們自己算的 ensureCaretRoom() 還是 iOS 自己的「把游標捲進視野」，
-   都會捲不動——然後 iOS 只好改去推整個版面視窗（見 3c/3d）。
+   為什麼需要：游標要能被捲到鍵盤上方，前提是底下還有東西可以捲。游標在文章
+   結尾附近時，能捲的就只剩這塊內距。
 
-   要留多少：把最後一行從容器底抬到可視區頂端，要捲的量正好是**一個鍵盤的
-   高度**。所以取 max(保底十行, 實際量到的鍵盤高度)，再加上浮動按鈕那一排
-   （12 + 按鈕高）與兩行，免得游標停在按鈕底下一樣看不到。
+   **要留多少，取決於容器有沒有先縮掉。** 這一點我算錯過一次，多留了一整個
+   鍵盤的高度（約 304~456px），使用者在 Android 上每次捲到底都會撞進那片空白。
 
-   --kb-reserve 是上一次量到的鍵盤高度，由 js/main.js 的
-   rememberKeyboardHeight() 寫入並存進 localStorage。**鍵盤收起來不會清掉
-   它**——它是「記得的」，不是「現在的」。
+   鍵盤升起之後（.kb-open），主結構的高度已經被縮成可視高度了——容器少了一個
+   鍵盤的高度，而內容沒變，**可捲範圍自己就多出一個鍵盤的高度**。所以那時候
+   只需要留「浮動按鈕那一排 ＋ 兩行」，讓游標不要停在按鈕底下。
 
-   保底的十行（約 304px）只有真正的第一次（剛裝好、還沒見過鍵盤）會用到。
-   十行在橫放時其實不夠（橫放鍵盤佔 456px），所以才要記實際的值。
+   聚焦了、鍵盤還沒升起時（.kb-pending）容器還是全高，那一段多出來的空間還
+   不存在，所以要自己補一個 --kb-reserve（上一次量到的鍵盤高度）。
+
+   兩者相差剛好一個 --kb-reserve，而 .kb-open 生效的同一刻容器也縮掉同樣的
+   高度——一加一減，可捲範圍不變，所以切換的瞬間不會把捲動位置夾回去、畫面
+   不會跳。
+
+   Android 完全不吃這塊：它的版面會自己 resize（viewport 的
+   interactive-widget=resizes-content），所以 --kb-reserve 從來不會被寫入，
+   fallback 的 0px 就是對的答案。**不要在這裡放保底行數**——那個值在 Android
+   上是純粹的干擾，而 iOS 第一次聚焦（還沒量過鍵盤）就算沒有它，也還有
+   --kb-top 那一層接住（見上面），不會有東西被吃掉。
 
    按鈕高度取桌機的 44：兩種版面共用一條規則，取大的那個才不會不夠。
-   （第一版只留了 72px，實測游標離按鈕只剩 20px，不到一行的 30.4px。）
-
-   .kb-pending 是「聚焦了、鍵盤還沒來」——由 js/documents.js 的
-   setupCaretRoomOnFocus() 掛上、blur 時拿掉。值必須跟 .kb-open 一模一樣：
-   這塊空間最需要的時機就是鍵盤升起前的那一刻（要捲走的量最大，而那時
-   .kb-open 還沒掛上）。晚一步給，等於沒給。
-
-   而且 .kb-pending 只看「有沒有聚焦」，完全不依賴 visualViewport——就算
-   鍵盤偵測整個失效（.kb-open 從來沒掛上），這塊空間照樣會出現。
-
-   兩個 class 都是「正在編輯」才掛，所以沒在打字的時候這塊空白不存在，
-   平常讀稿捲不到它。 */
-:root.kb-open .editor-content-area,
+   （第一版只留了 72px，實測游標離按鈕只剩 20px，不到一行的 30.4px。） */
 :root.kb-pending .editor-content-area {
   padding-bottom: calc(
-    max(var(--editor-line) * 10, var(--kb-reserve, 0px))
+    var(--kb-reserve, 0px)
     + var(--sp-12) + var(--icon-44) + var(--editor-line) * 2
   );
 }
 
-/* 游標不要貼著容器最底下。捲進視野時在下面留一行多的空間，
-   才看得到自己正在寫的那一行下面還有什麼。
+/* 要排在 .kb-pending 後面：兩者權重相同，靠順序決勝。
+   鍵盤升起後兩個 class 會同時在，這一條才是對的那個。 */
+:root.kb-open .editor-content-area {
+  padding-bottom: calc(var(--sp-12) + var(--icon-44) + var(--editor-line) * 2);
+}
 
-   鍵盤打開時要留更多：除了那一行之外，還得閃開浮在編輯區底部的
-   復原／快速跳轉按鈕，游標停在它們底下一樣看不到。
-   （這條規則各家瀏覽器對「游標」的捲動遵守得不一致，所以
-   js/documents.js 的 ensureCaretRoom() 還有一道自己算的保險。） */
-.editor-content-area { scroll-padding-bottom: var(--sp-40); }
 :root.kb-open .editor-content-area,
 :root.kb-pending .editor-content-area {
   scroll-padding-bottom: calc(var(--icon-40) + var(--sp-12) + var(--editor-line) * 2);

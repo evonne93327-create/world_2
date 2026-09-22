@@ -161,9 +161,26 @@ iOS 的 `dvh` **不會**扣掉軟體鍵盤（只扣瀏覽器自己的網址列�
 等於沒給。順帶也讓 iOS 自己的「把游標捲進視野」有地方可捲，那對第 1 點
 （第一次聚焦）特別有用。
 
-**要留多少：一個鍵盤的高度。** 把最後一行從容器底抬到可視區頂端，要捲的量
-正好就是鍵盤蓋住的高度。所以內距是
-`max(保底十行, --kb-reserve) + 按鈕那一排 + 兩行`。
+**要留多少，取決於容器有沒有先縮掉。** 這裡算錯過一次，多留了一整個鍵盤的高度。
+
+鍵盤升起之後（`.kb-open`），主結構已經被縮成可視高度——**容器少了一個鍵盤的
+高度、而內容沒變，可捲範圍自己就多出一個鍵盤的高度**。所以那時候只需要留
+「浮動按鈕那一排 ＋ 兩行」。我當初是拿「縮之前」的容器高度去算，才得出「要留
+一個鍵盤的高度」這個結論。
+
+真正需要自己補 `--kb-reserve` 的只有「聚焦了、鍵盤還沒升起」那一段
+（`.kb-pending`）——那時容器還是全高，多出來的空間還不存在。
+
+兩條規則剛好差一個 `--kb-reserve`，而 `.kb-open` 生效的同一刻容器也縮掉同樣的
+高度：一加一減，可捲範圍不變，切換的瞬間不會把捲動位置夾回去、畫面不會跳。
+權重相同，所以 `.kb-open` 那條**必須寫在後面**，靠順序決勝。
+
+**不要放保底行數。** Android 的版面會自己 resize
+（`interactive-widget=resizes-content`），`--kb-reserve` 從來不會被寫入，
+fallback 的 `0px` 就是對的答案。放一個「保底十行」的話，Android 使用者每次捲到
+底都會撞進那片空白——使用者回報過：「在安卓上一定都會滑到那裡，好煩」。
+iOS 第一次聚焦（還沒量過鍵盤）確實會少這塊空間，但那一次還有 `--kb-top`
+那一層接住，不會有東西被吃掉，而且量過一次就存進 `localStorage` 了。
 
 `--kb-reserve` 是上一次量到的鍵盤高度，`rememberKeyboardHeight()` 寫入並存進
 `localStorage`。兩個關鍵：
@@ -171,8 +188,7 @@ iOS 的 `dvh` **不會**扣掉軟體鍵盤（只扣瀏覽器自己的網址列�
 - **收鍵盤時不清掉它。** 它是「記得的」不是「現在的」；清掉的話下次聚焦又
   沒有值可以用，整個機制等於不存在。`tests/kb-vars.test.js` 的豁免名單有
   反向檢查，免得哪天清除的程式碼加回來卻沒人發現。
-- **寫死行數不夠。** 十行約 304px，橫放的鍵盤是 456px。十行只是「剛裝好、
-  還沒見過鍵盤」那一次的保底值，存進 localStorage 就只有真正的第一次會用到。
+- **不要用行數當保底。** 見上面：那個值在 Android 上是純粹的干擾。
 
 還有一點很重要：這塊空間掛在 `.kb-pending` 上，而 `.kb-pending` **只看有沒有
 聚焦，完全不碰 `visualViewport`**。就算鍵盤偵測整個失效（`.kb-open` 從來沒
@@ -409,7 +425,7 @@ PWA）與 `stale`（這一頁是不是在跑舊程式碼）。有「複製」鈕
 ### 在 repo 裡的
 
 ```bash
-node --test          # 50 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 56 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |
@@ -418,7 +434,8 @@ node --test          # 50 項。注意：不要寫 node --test tests/，Node 22 
 | `tests/edge-geometry.test.js` | 白板連線的曲線幾何 |
 | `tests/shell-manifest.test.js` | sw.js 的 SHELL 有沒有跟實際檔案脫節 |
 | `tests/kb-vars.test.js` | 鍵盤那組 `--kb-*` 與 `.kb-*`：JS 寫／掛的與 CSS 用的有沒有對上 |
-| `tests/wiring.test.js` | `onclick="foo()"` 有沒有對應的函式、鍵盤診斷的 id 有沒有接上 |
+| `tests/wiring.test.js` | `onclick="foo()"` 有沒有對應的函式、鍵盤診斷的入口有沒有接上 |
+| `tests/sync.test.js` | 「回到前景先對帳」的判斷；每一條都是「不做會弄丟資料」 |
 | `tests/helpers/load-app.js` | `node:vm` 沙箱；跨 realm 的 `deepStrictEqual` 會因為 prototype 不同而失敗，所以有個 `host()` 做 JSON round-trip |
 
 ### 不在 repo 裡的
