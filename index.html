@@ -412,19 +412,11 @@
         <!-- 版本。不是裝飾：這個 app 靠 GitHub Pages 更新，加上 service worker
              會接管，「我現在跑的到底是不是最新版」在回報問題時是第一個要確認
              的事。沒有這一行的話，使用者與開發者都只能猜，而猜錯就是整輪白查。 -->
-        <!-- 鍵盤診斷。平常關著，回報 iOS 鍵盤問題時才打開。
-             這個環境驗不了 Safari，前面已經有三輪是靠推理猜的（見 NOTES.md
-             的 3c），與其再猜，不如讓那台機器自己把數字講出來。 -->
-        <button type="button" class="settings-row" onclick="toggleKbDiag()">
-          <span class="settings-row-icon">🩺</span>
-          <span class="settings-row-text">
-            <span class="settings-row-title">鍵盤診斷</span>
-            <span class="settings-row-desc">開著的時候畫面左上角會顯示鍵盤的實際數字，回報問題時用</span>
-          </span>
-          <span class="settings-row-value" id="kbDiagRowValue">關</span>
-        </button>
-
-        <button type="button" class="settings-row" onclick="checkForUpdateNow()">
+        <!-- 長按（或右鍵）這一列會跳出「鍵盤診斷」的開關。
+             那是回報 iOS 鍵盤問題時才用得到的工具，平常不該佔一列；但也不能
+             整個拿掉，不然它就變成永遠叫不出來的死程式碼。藏在這一列底下是
+             因為這裡本來就是「回報問題時請附上」的那一列。 -->
+        <button type="button" class="settings-row" id="versionRow" onclick="checkForUpdateNow()">
           <span class="settings-row-icon">🏷️</span>
           <span class="settings-row-text">
             <span class="settings-row-title">版本</span>

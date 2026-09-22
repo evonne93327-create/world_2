@@ -148,7 +148,6 @@ function renderSettingsRows() {
   }
   if (typeof renderSyncIndicator === "function") renderSyncIndicator();
   renderVersionRow();
-  if (typeof renderKbDiagRow === "function") renderKbDiagRow();
 }
 
 /* 目前跑的是哪一版。

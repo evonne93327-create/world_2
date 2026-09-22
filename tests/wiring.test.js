@@ -39,7 +39,7 @@ test("index.html 裡每一個事件屬性都指向真的存在的函式", functi
    程式動態產生的），所以可以嚴格比對。回報 iOS 問題時就靠它，少一個 id
    就等於整個面板不會動。 */
 test("鍵盤診斷的每一個 id 都在 index.html 裡", function() {
-  ["kbDiagPanel", "kbDiagBody", "kbDiagRowValue", "kbDiagCopyBtn"].forEach(function(id) {
+  ["kbDiagPanel", "kbDiagBody", "kbDiagCopyBtn"].forEach(function(id) {
     assert.ok(js.includes('getElementById("' + id + '")'),
       "js 應該要用到 " + id + "，是不是改名了？");
     assert.ok(html.includes('id="' + id + '"'),
@@ -52,8 +52,30 @@ test("鍵盤診斷預設是關的", function() {
      判斷式是「=== '1' 才算開」，所以沒設定過就是關的。 */
   assert.match(js, /localStorage\.getItem\(KB_DIAG_KEY\)\s*===\s*"1"/,
     "kbDiagEnabled() 要寫成「明確等於 1 才算開」，沒設定過就是關的");
-  assert.match(html, /id="kbDiagRowValue">關</,
-    "設定裡那一列的預設字樣應該是「關」");
+});
+
+test("鍵盤診斷藏起來了，但不可以變成叫不出來的死程式碼", function() {
+  /* 它只在回報 iOS 鍵盤問題時才用得到，平常不該在設定裡佔一列。
+     但「藏起來」跟「拿掉」是兩件事：沒有任何入口的話，那幾百行程式碼就是
+     死的，下次出事還得先把它接回來。
+
+     入口是長按（或右鍵）設定裡的「版本」那一列——那裡本來就是
+     「回報問題時請附上」的那一列。 */
+  assert.ok(!/class="settings-row"[^>]*onclick="toggleKbDiag\(\)"/.test(html),
+    "設定裡不該再有一列鍵盤診斷 —— 使用者說暫時用不到了");
+
+  assert.match(html, /id="versionRow"/, "版本那一列要有 id，長按選單才掛得上");
+  assert.match(js, /function setupKbDiagEntry\(\)/, "要有一條把入口接上去的路徑");
+
+  const entry = js.match(/function setupKbDiagEntry\([\s\S]*?(?=\nfunction )/);
+  assert.ok(entry, "找不到 setupKbDiagEntry()");
+  assert.match(entry[0], /attachContextMenu\(row/,
+    "用現成的 attachContextMenu()，不要自己寫長按 —— " +
+    "它已經處理過 iPad 上「長按放開會補一個假 click」那一串麻煩事");
+  assert.match(entry[0], /action: toggleKbDiag/, "選單項目要真的接到開關");
+
+  // 接上去了也要有人叫它，不然還是死的
+  assert.match(js, /setupKbDiagEntry\(\);/, "setupKbDiag() 要呼叫它");
 });
 
 test("版本那一行要講得出「這一頁還在跑舊程式碼」", function() {
