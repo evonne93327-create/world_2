@@ -86,6 +86,9 @@ function switchView(view, pushHistory = true) {
     但切回編輯器時沒有人把它收回來——按「編輯」分頁離開白板之後，
     那一筆就永遠留在歷史裡，變成一次不會有任何反應的返回鍵。 */
  if (pushHistory) scheduleUiHistorySync();
+
+ // 在 app 裡換了地方看，順便對一次帳（政策見 sync.js）
+ if (typeof syncOnUserNavigation === "function") syncOnUserNavigation();
 }
 
 // 4. 側邊欄開關控制
@@ -101,6 +104,8 @@ function toggleSidebarMenu() {
  } else {
  sidebar.classList.add("drawer-open");
  overlay.classList.add("active");
+ // 同 openSidebarMenu()：回到目錄也算一次「我要看這份資料」
+ if (typeof syncOnUserNavigation === "function") syncOnUserNavigation();
  }
  } else {
  sidebar.classList.toggle("collapsed");
@@ -113,6 +118,9 @@ function openSidebarMenu() {
  const isMobile = isMobileLayout();
  const sidebar = document.getElementById("appSidebar");
  const overlay = document.getElementById("sidebarOverlay");
+
+ // 回到目錄＝「我現在要看這份資料」，順便對一次帳（政策見 sync.js）
+ if (typeof syncOnUserNavigation === "function") syncOnUserNavigation();
 
  if (isMobile) {
  if (!sidebar.classList.contains("drawer-open")) {

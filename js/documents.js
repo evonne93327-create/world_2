@@ -57,6 +57,11 @@ function loadDocToEditor(docId) {
   if (typeof clearJumpHighlight === "function") clearJumpHighlight();
 
   ensureDocHistory(doc.id, doc.content || "");
+
+  /* 換了一篇文檔＝「我現在要看這份資料」，跟切回前景是同一種意圖。
+     不怕遞迴：adoptRemote() 也會叫這裡，但那時對帳正在跑（狀態是 syncing）
+     而且剛記過時間，兩道門檻都會擋下來。 */
+  if (typeof syncOnUserNavigation === "function") syncOnUserNavigation();
 }
 
 /* 標題每敲一個字原本都會 saveData() ＋ 重畫整棵側欄樹 ＋ 重畫麵包屑。

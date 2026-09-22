@@ -425,7 +425,7 @@ PWA）與 `stale`（這一頁是不是在跑舊程式碼）。有「複製」鈕
 ### 在 repo 裡的
 
 ```bash
-node --test          # 56 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 59 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |
