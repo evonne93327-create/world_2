@@ -86,6 +86,9 @@ function switchView(view, pushHistory = true) {
     但切回編輯器時沒有人把它收回來——按「編輯」分頁離開白板之後，
     那一筆就永遠留在歷史裡，變成一次不會有任何反應的返回鍵。 */
  if (pushHistory) scheduleUiHistorySync();
+
+ // 在 app 裡換了地方看，順便對一次帳（政策見 sync.js）
+ if (typeof syncOnUserNavigation === "function") syncOnUserNavigation();
 }
 
 // 4. 側邊欄開關控制
@@ -101,6 +104,8 @@ function toggleSidebarMenu() {
  } else {
  sidebar.classList.add("drawer-open");
  overlay.classList.add("active");
+ // 同 openSidebarMenu()：回到目錄也算一次「我要看這份資料」
+ if (typeof syncOnUserNavigation === "function") syncOnUserNavigation();
  }
  } else {
  sidebar.classList.toggle("collapsed");
@@ -113,6 +118,9 @@ function openSidebarMenu() {
  const isMobile = isMobileLayout();
  const sidebar = document.getElementById("appSidebar");
  const overlay = document.getElementById("sidebarOverlay");
+
+ // 回到目錄＝「我現在要看這份資料」，順便對一次帳（政策見 sync.js）
+ if (typeof syncOnUserNavigation === "function") syncOnUserNavigation();
 
  if (isMobile) {
  if (!sidebar.classList.contains("drawer-open")) {
@@ -731,20 +739,47 @@ let lastKnownKeyboardInset = 0;
    保底的十行——而十行在橫放時不夠（橫放鍵盤佔 456px）。存著就只有真正的
    第一次（剛裝好）會用到保底值。
 
-   只存一個數字，不分直放橫放：兩個方向的鍵盤高度其實差不多（實測 420 / 456），
-   而且轉向會重新量、量到就覆蓋掉。差那幾十 px 由 CSS 的 max() 兜著。 */
-const KB_HEIGHT_KEY = "wb_kbh";
+   直放跟橫放分開存：實測 iPad 直放約 420、橫放約 456。存成同一個數字的話，
+   轉向之後的第一次聚焦會拿到另一個方向的值——少算就讓不夠位（游標還是被
+   鍵盤蓋到），多算就是文章結尾多出一塊沒必要的空白。 */
+const KB_HEIGHT_KEY_PREFIX = "wb_kbh_";
+
+/* 分開存之前只有這一個鍵。留著當退路，見 restoreKeyboardHeight()。 */
+const KB_HEIGHT_KEY_LEGACY = "wb_kbh";
+
+/* 現在是直的還是橫的。抽成純函式才測得到（innerWidth/Height 偽造不了）。
+
+   用版面的寬高比就夠，不需要 screen.orientation（Safari 16.4 才有）：
+   這個值只有在「鍵盤是蓋上來、版面不會縮」的平台上才會被寫入，也就是
+   innerHeight 不受鍵盤影響的那些。Android 的版面會自己 resize，但那裡
+   根本不會走到這條路（covered 算出來是 0，量不到鍵盤）。 */
+function keyboardHeightKey(w, h) {
+  return KB_HEIGHT_KEY_PREFIX + (w > h ? "l" : "p");
+}
 
 function rememberKeyboardHeight(px) {
   if (!(px > 0)) return;
   lastKnownKeyboardInset = px;
   document.documentElement.style.setProperty("--kb-reserve", Math.round(px) + "px");
-  try { localStorage.setItem(KB_HEIGHT_KEY, String(Math.round(px))); } catch (e) {}
+  try {
+    localStorage.setItem(
+      keyboardHeightKey(window.innerWidth, window.innerHeight), String(Math.round(px)));
+  } catch (e) {}
 }
 
 function restoreKeyboardHeight() {
   let px = 0;
-  try { px = parseInt(localStorage.getItem(KB_HEIGHT_KEY), 10); } catch (e) {}
+  try {
+    px = parseInt(localStorage.getItem(
+      keyboardHeightKey(window.innerWidth, window.innerHeight)), 10);
+
+    /* 分開存之前的人只有舊的那一個鍵。讀不到新的就退回去用它——不然這些人
+       等於回到「第一次聚焦沒有值可用」的狀態，白白退步一次。
+       下次鍵盤升起就會寫進新的鍵，這條退路每個方向只會走一次。 */
+    if (!isFinite(px) || px <= 0) {
+      px = parseInt(localStorage.getItem(KB_HEIGHT_KEY_LEGACY), 10);
+    }
+  } catch (e) {}
   if (!isFinite(px) || px <= 0) return;
   lastKnownKeyboardInset = px;
   document.documentElement.style.setProperty("--kb-reserve", px + "px");
@@ -817,7 +852,14 @@ function setupKeyboardInset() {
     }, KB_SETTLE_MS);
   });
   window.addEventListener("orientationchange", function() {
-    setTimeout(applyKeyboardInset, 250);
+    /* 轉向之後換一個方向的鍵盤高度。要等版面轉完再讀，不然 innerWidth /
+       innerHeight 還是舊的，會挑到同一個鍵。
+       排在 applyKeyboardInset 之前：鍵盤當下就開著的話，那邊會重新量一次
+       把值蓋掉，那是更準的。 */
+    setTimeout(function() {
+      restoreKeyboardHeight();
+      applyKeyboardInset();
+    }, 250);
   });
 
   /* iOS 的鍵盤是動畫升上來的，resize 有時候在動畫跑完之前就先發了一次，

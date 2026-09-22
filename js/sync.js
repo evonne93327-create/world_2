@@ -364,6 +364,10 @@ function flushPendingPush() {
    條件是「本機真的有還沒推上去的東西」，沒有的話什麼都不做。 */
 const SYNC_RETRY_INTERVAL_MS = 60 * 1000;
 
+/* 定期對帳的間隔。比重試上傳長很多——重試只有在本機真的有東西要推時才動作，
+   成本是零；這裡每次都是一發真的 API 請求。 */
+const SYNC_POLL_INTERVAL_MS = 3 * 60 * 1000;
+
 function retryPushIfNeeded() {
   if (!syncIsActive()) return;
   if (pendingConflictRemote) return;       // 等使用者決定，不要自己亂推
@@ -393,8 +397,15 @@ function shouldReconcileOnResume(active, hasConflict, status, msSinceLast, minGa
   return true;
 }
 
-/* 回到前景：先對帳一次。回傳有沒有真的去對。 */
-function reconcileOnResume() {
+/* 現在就對帳一次——如果該對的話。回傳有沒有真的去對。
+
+   三個呼叫端，判斷完全共用（上面那支純函式）：
+   - 回到前景（visibilitychange / pageshow）
+   - app 一直開著沒動：每隔一段時間自己掃一次
+   - 在 app 裡切換（換文檔、切白板、開目錄欄）——那也是「我回來看這份資料了」
+
+   不用擔心呼叫太頻繁：最短間隔那一道會把多餘的擋掉。 */
+function maybeReconcileNow() {
   const ok = shouldReconcileOnResume(
     syncIsActive(), !!pendingConflictRemote, syncStatus,
     Date.now() - lastReconcileAt, RESUME_RECONCILE_MIN_GAP_MS);
@@ -415,18 +426,45 @@ function initSyncRecovery() {
   document.addEventListener("visibilitychange", function() {
     if (document.visibilityState === "hidden") { flushPendingPush(); return; }
     // 對帳本身就會在該推的時候推；它沒去對才輪到單純的重試
-    if (!reconcileOnResume()) retryPushIfNeeded();
+    if (!maybeReconcileNow()) retryPushIfNeeded();
   });
 
   /* iOS 從 bfcache 還原時不保證發 visibilitychange，但一定會發 pageshow。
      重複觸發不要緊，上面那道 5 秒的間隔會擋掉。 */
   window.addEventListener("pageshow", function() {
-    if (!reconcileOnResume()) retryPushIfNeeded();
+    if (!maybeReconcileNow()) retryPushIfNeeded();
   });
 
   window.addEventListener("pagehide", flushPendingPush);
   window.addEventListener("online", retryPushIfNeeded);
   setInterval(retryPushIfNeeded, SYNC_RETRY_INTERVAL_MS);
+
+  /* App 一直開著沒動的情況：放在桌上開著，中間在另一台改了東西。
+
+     沒有任何事件會通知我們——沒切到背景、沒換文檔，visibilitychange 不會發。
+     只能自己定期掃。
+
+     間隔比「重試上傳」長很多：重試只有在本機真的有東西要推時才會動作，
+     成本是零；這裡每次都是一發真的 API 請求，太頻繁會吃掉 Supabase 的免費
+     額度與 Google Drive 的配額。
+
+     藏在背景時不掃：看不到的東西不需要更新，而且 iOS 本來就會把背景分頁的
+     計時器凍結，掃了也是白掃。回到前景時 visibilitychange 那條會補上。 */
+  setInterval(function() {
+    if (document.visibilityState !== "visible") return;
+    maybeReconcileNow();
+  }, SYNC_POLL_INTERVAL_MS);
+}
+
+/* 在 app 裡換了地方看——換文檔、切白板、打開目錄欄。
+
+   人沒離開 app，所以 visibilitychange 不會發，但「我現在要看這份資料」的
+   意圖跟切回前景是一樣的。最短間隔那一道會擋掉連續切換造成的連發。
+
+   放在 sync.js 而不是各個呼叫端自己寫：政策只有一個地方，以後要改
+   （例如只在換文檔時對、切白板不對）不用去翻三個檔案。 */
+function syncOnUserNavigation() {
+  maybeReconcileNow();
 }
 
 /* ---------- 衝突處理 ---------- */

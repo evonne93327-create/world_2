@@ -72,11 +72,11 @@ test("回到前景要對帳，不能只是重試上傳", function() {
   assert.ok(recovery, "找不到 initSyncRecovery()");
 
   /* 兩個監聽器要分開檢查。只在整段 initSyncRecovery() 裡找
-     reconcileOnResume 的話，其中一個掉了、另一個還在，測試照樣綠——
+     maybeReconcileNow 的話，其中一個掉了、另一個還在，測試照樣綠——
      這個測試自己先這樣寫過，紅不起來。 */
   const onVisible = recovery[0].match(/addEventListener\("visibilitychange"[\s\S]*?\n  \}\);/);
   assert.ok(onVisible, "要聽 visibilitychange");
-  assert.match(onVisible[0], /reconcileOnResume\(\)/,
+  assert.match(onVisible[0], /maybeReconcileNow\(\)/,
     "回到前景要對帳 —— 只做 retryPushIfNeeded() 的話只推不拉");
   assert.match(onVisible[0], /visibilityState === "hidden"/,
     "hidden 那一支還是要把待上傳的送掉");
@@ -84,7 +84,7 @@ test("回到前景要對帳，不能只是重試上傳", function() {
   /* iOS 從 bfcache 還原時不保證發 visibilitychange，但一定會發 pageshow。 */
   const onShow = recovery[0].match(/addEventListener\("pageshow"[\s\S]*?\n  \}\);/);
   assert.ok(onShow, "iOS 的 bfcache 還原只保證發 pageshow");
-  assert.match(onShow[0], /reconcileOnResume\(\)/, "pageshow 也要對帳");
+  assert.match(onShow[0], /maybeReconcileNow\(\)/, "pageshow 也要對帳");
 
   // 切走時把還在等的上傳送掉，這條原本就有，不能弄丟
   assert.match(recovery[0], /flushPendingPush/,
@@ -95,8 +95,8 @@ test("對帳前要先把還在 debounce 裡的編輯存起來", function() {
   /* 內文是「改完 400ms」才存檔的，而 isLocalDirty() 是存檔時才標記的。
      少了這一步：剛打完字就切走、回來時本機明明有新東西卻不算「髒」，
      對帳會安靜地採用雲端那份——剛打的字就沒了。 */
-  const fn = syncJs.match(/function reconcileOnResume\(\)[\s\S]*?\n}/);
-  assert.ok(fn, "找不到 reconcileOnResume()");
+  const fn = syncJs.match(/function maybeReconcileNow\(\)[\s\S]*?\n}/);
+  assert.ok(fn, "找不到 maybeReconcileNow()");
 
   const flushAt = fn[0].indexOf("flushPendingContentPersist");
   const reconcileAt = fn[0].indexOf("reconcileWithRemote(");
@@ -105,4 +105,67 @@ test("對帳前要先把還在 debounce 裡的編輯存起來", function() {
   assert.ok(reconcileAt !== -1);
   assert.ok(flushAt < reconcileAt,
     "要排在對帳之前 —— 排在後面等於沒做");
+});
+
+/* ==========================================================
+   另外兩個對帳的時機
+   ========================================================== */
+test("app 一直開著沒動的時候也要自己去對一次", function() {
+  /* 放在桌上開著，中間在另一台改了東西——沒切到背景、沒換文檔，
+     visibilitychange 不會發，沒有任何事件會通知我們。只能自己定期掃。 */
+  const recovery = syncJs.match(/function initSyncRecovery\(\)[\s\S]*?\n}/);
+  assert.ok(recovery, "找不到 initSyncRecovery()");
+
+  const poll = recovery[0].match(/setInterval\(function\(\)[\s\S]*?SYNC_POLL_INTERVAL_MS\)/);
+  assert.ok(poll, "要有一個定期對帳的計時器");
+  assert.match(poll[0], /maybeReconcileNow\(\)/, "掃的時候要真的去對帳");
+
+  /* 藏在背景時不掃：看不到的東西不需要更新，而且 iOS 會把背景分頁的計時器
+     凍結，掃了也是白掃。回到前景時 visibilitychange 那條會補上。 */
+  assert.match(poll[0], /visibilityState !== "visible"/,
+    "背景時不要掃 —— 白花 API 額度");
+});
+
+test("定期對帳的間隔要明顯比重試上傳長", function() {
+  /* 重試上傳只有在本機真的有東西要推時才動作，成本是零；定期對帳每次都是
+     一發真的 API 請求，太頻繁會吃掉 Supabase 的免費額度與 Drive 的配額。 */
+  const poll = syncJs.match(/const SYNC_POLL_INTERVAL_MS = ([^;]+);/);
+  const retry = syncJs.match(/const SYNC_RETRY_INTERVAL_MS = ([^;]+);/);
+  assert.ok(poll && retry, "兩個間隔都要有具名常數");
+
+  const evalMs = function(expr) { return Function("return (" + expr + ");")(); };
+  const pollMs = evalMs(poll[1]);
+  const retryMs = evalMs(retry[1]);
+
+  assert.ok(pollMs > retryMs,
+    "定期對帳不該比重試上傳還頻繁 —— 一個免費、一個要花 API 額度");
+  assert.ok(pollMs >= 60 * 1000, "低於一分鐘太耗額度");
+  assert.ok(pollMs <= 15 * 60 * 1000, "超過十五分鐘就失去「自己會更新」的意義了");
+});
+
+test("在 app 裡換地方看的時候也要對帳", function() {
+  /* 人沒離開 app，所以 visibilitychange 不會發，但「我現在要看這份資料」的
+     意圖跟切回前景是一樣的。 */
+  assert.match(syncJs, /function syncOnUserNavigation\(\)/,
+    "政策要放在 sync.js，不要每個呼叫端各寫一套");
+
+  const fn = syncJs.match(/function syncOnUserNavigation\(\)[\s\S]*?\n}/);
+  assert.ok(fn, "找不到 syncOnUserNavigation()");
+  assert.match(fn[0], /maybeReconcileNow\(\)/, "要走同一支共用的判斷");
+
+  /* 呼叫端：換文檔、切文檔／白板、開目錄欄。少接一個就是那條路徑不會更新。 */
+  const docsJs = fs.readFileSync(path.join(ROOT, "js", "documents.js"), "utf8");
+  const mainJs = fs.readFileSync(path.join(ROOT, "js", "main.js"), "utf8");
+
+  const loadDoc = docsJs.match(/function loadDocToEditor\([\s\S]*?\n}/);
+  assert.ok(loadDoc, "找不到 loadDocToEditor()");
+  assert.match(loadDoc[0], /syncOnUserNavigation\(\)/, "換文檔要對帳");
+
+  const switchV = mainJs.match(/function switchView\([\s\S]*?\n}/);
+  assert.ok(switchV, "找不到 switchView()");
+  assert.match(switchV[0], /syncOnUserNavigation\(\)/, "切文檔／白板要對帳");
+
+  const openSidebar = mainJs.match(/function openSidebarMenu\([\s\S]*?\n}/);
+  assert.ok(openSidebar, "找不到 openSidebarMenu()");
+  assert.match(openSidebar[0], /syncOnUserNavigation\(\)/, "回到目錄要對帳");
 });
