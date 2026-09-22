@@ -199,3 +199,43 @@ test("底部空間不可以只掛在 kb-open 上", function() {
       prop + " 也要掛在 kb-pending 上，不能只有 kb-open");
   });
 });
+
+/* ==========================================================
+   鍵盤動畫期間不可以一格一格補捲
+   ========================================================== */
+test("visualViewport 的 resize 要等動畫停了才校正游標", function() {
+  /* 鍵盤是滑上來的，滑的過程中會連發好幾次 resize，每次量到的可視底都不同。
+     照著每一次去補捲，就會捲一點、再捲一點——使用者看到的「捲上去會跳動」
+     就是這個。兩個平台都會，因為兩邊的鍵盤都是動畫進場的。 */
+  const callAt = mainJs.indexOf("scheduleCaretRoomCheck(true)");
+  assert.ok(callAt !== -1, "main.js 應該有一處在鍵盤變化後校正游標");
+
+  const listenerAt = mainJs.lastIndexOf('addEventListener("resize"', callAt);
+  assert.ok(listenerAt !== -1, "那一處應該掛在 resize 監聽器裡");
+
+  const between = mainJs.slice(listenerAt, callAt);
+  assert.match(between, /setTimeout\(/,
+    "resize 一來就直接校正游標 —— 鍵盤動畫期間會連發好幾次，" +
+    "每次補捲一點就是使用者看到的跳動。要等它安靜下來再做一次");
+  assert.match(between, /clearTimeout\(/,
+    "每次 resize 要把上一個計時器取消掉，不然還是會做好幾次");
+});
+
+test("等待的時間要夠長蓋過鍵盤動畫，又不能久到游標晚回來", function() {
+  const m = mainJs.match(/const KB_SETTLE_MS = (\d+);/);
+  assert.ok(m, "要有一個具名常數，不要把毫秒數散在程式碼裡");
+  const ms = parseInt(m[1], 10);
+  assert.ok(ms >= 120, "太短會蓋不過鍵盤動畫（約 250~300ms 的進場），又開始一格一格捲");
+  assert.ok(ms <= 400, "太長的話游標會晚很久才回到看得見的地方");
+});
+
+test("診斷要數得出「這一次聚焦捲了幾次」", function() {
+  /* 會跳動就是這個數字大於 1。沒有它的話，下次再遇到同樣的回報又只能猜。 */
+  assert.match(allJs, /function logCaretScroll\(/, "每次補捲都要記一筆");
+  assert.match(allJs, /caretScrollLog/, "診斷面板要讀得到");
+
+  const focusHandler = allJs.match(/ta\.addEventListener\("focus"[\s\S]*?\}\);/);
+  assert.ok(focusHandler, "找不到 textarea 的 focus 監聽器");
+  assert.match(focusHandler[0], /resetCaretScrollLog\(\)/,
+    "每次聚焦要重新計數 —— 不歸零的話數到的是好幾次聚焦的總和，看不出這一次跳了幾下");
+});

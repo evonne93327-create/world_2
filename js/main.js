@@ -660,6 +660,10 @@ function setupAnchoredPopoverFollow() {
 /* 少於這個就不是鍵盤——網址列收合、分頁列變化都只有幾十 px */
 const KB_MIN_INSET = 80;
 
+/* 鍵盤的進場動畫大約 250~300ms，中間會連發好幾次 resize。等它安靜這麼久
+   才算「到定位了」。太短會又開始一格一格捲，太長則是游標晚回來。 */
+const KB_SETTLE_MS = 180;
+
 /* 把判斷抽成純函式，才測得到（visualViewport 沒辦法在測試裡偽造）。
    vv 傳 { height, offsetTop, scale }，innerH 傳 window.innerHeight。 */
 function keyboardInsetState(vv, innerH) {
@@ -790,11 +794,27 @@ function setupKeyboardInset() {
      一條黑帶。 */
   vv.addEventListener("scroll", applyKeyboardInset);
 
-  /* 鍵盤升起／收起都會改變「看得見的底」在哪裡，游標的位置要重新確認一次 */
+  /* 鍵盤升起／收起都會改變「看得見的底」在哪裡，游標的位置要重新確認一次。
+
+     這裡一定要等動畫停下來再做，不能每個 resize 都做。
+
+     鍵盤是**滑上來**的，滑的過程中 visualViewport 會連續發好幾次 resize，
+     每一次量到的 vv.height 都不一樣（鍵盤還沒到定位）。照著每一次的值去補
+     捲，就會捲一點、再捲一點、再捲一點——使用者看到的就是「捲上去的時候
+     會跳動」。兩個平台都有，因為兩邊的鍵盤都是動畫進場的。
+
+     改成只在「最後一次 resize 之後還安靜了 180ms」才做一次。動畫期間游標
+     可能短暫看不到，但那只有幾百毫秒，而且聚焦當下已經用記得的鍵盤高度
+     先捲到最終位置了（setupCaretRoomOnFocus），這一次多半根本不用動。 */
+  let caretSettleTimer = null;
   vv.addEventListener("resize", function() {
-    /* 這一刻鍵盤剛升起／剛收起，游標可能落在任何地方，所以要用精準的量法
-       （允許重排）。這是一次性的時機，不是每一鍵，成本付得起。 */
-    if (typeof scheduleCaretRoomCheck === "function") scheduleCaretRoomCheck(true);
+    if (caretSettleTimer) clearTimeout(caretSettleTimer);
+    caretSettleTimer = setTimeout(function() {
+      caretSettleTimer = null;
+      /* 動畫已經停了，游標可能落在任何地方，所以用精準的量法（允許重排）。
+         這是一次性的時機，不是每一鍵，成本付得起。 */
+      if (typeof scheduleCaretRoomCheck === "function") scheduleCaretRoomCheck(true);
+    }, KB_SETTLE_MS);
   });
   window.addEventListener("orientationchange", function() {
     setTimeout(applyKeyboardInset, 250);
@@ -1033,7 +1053,11 @@ function kbDiagLines() {
     ["bodyH", bs.height],
     ["navTop", kbDiagNum(function() { return nav.getBoundingClientRect().top; })],
     ["fabTop", kbDiagNum(function() { return fab.getBoundingClientRect().top; })],
-    ["focus", document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : "—"]
+    ["focus", document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : "—"],
+    /* 這次聚焦一共補捲了幾次、每次多少。會跳動就是這裡不只一筆。 */
+    ["caretScrolls", (typeof caretScrollLog !== "undefined")
+      ? (caretScrollLog.length + (caretScrollLog.length ? " (" + caretScrollLog.join(", ") + ")" : ""))
+      : "?"]
   ];
 }
 
