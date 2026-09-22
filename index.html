@@ -408,6 +408,18 @@
           </span>
           <span class="settings-row-go">›</span>
         </button>
+
+        <!-- 版本。不是裝飾：這個 app 靠 GitHub Pages 更新，加上 service worker
+             會接管，「我現在跑的到底是不是最新版」在回報問題時是第一個要確認
+             的事。沒有這一行的話，使用者與開發者都只能猜，而猜錯就是整輪白查。 -->
+        <div class="settings-row is-static">
+          <span class="settings-row-icon">🏷️</span>
+          <span class="settings-row-text">
+            <span class="settings-row-title">版本</span>
+            <span class="settings-row-desc" id="versionRowDesc">回報問題時請附上這一行</span>
+          </span>
+          <span class="settings-row-value" id="versionRowValue">—</span>
+        </div>
       </div>
     </div>
   </div>

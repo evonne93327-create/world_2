@@ -10,7 +10,7 @@
    本機 localStorage，網路只負責抓靜態檔。換來的是「更新一定拿得到」。
    ========================================================== */
 
-const VERSION = 'v56';
+const VERSION = 'v57';
 const CACHE = 'worldbuilder-' + VERSION;
 
 // 離線時要能完整開起來所需的檔案
@@ -62,6 +62,16 @@ self.addEventListener('activate', function (event) {
       }));
     }).then(function () { return self.clients.claim(); })
   );
+});
+
+/* 讓頁面問得到「正在服務你的這個 worker 是哪一版」。
+
+   設定裡那一行版本不能只顯示「伺服器上最新是哪一版」——使用者還沒換版的
+   時候，那個數字會是新的、他跑的卻是舊的，正好在最需要它的時候說謊。
+   要判斷「我是不是最新版」，得拿這裡回報的值跟伺服器上的比。 */
+self.addEventListener('message', function (event) {
+  if (!event.data || event.data.type !== 'GET_VERSION') return;
+  if (event.ports && event.ports[0]) event.ports[0].postMessage({ version: VERSION });
 });
 
 self.addEventListener('fetch', function (event) {

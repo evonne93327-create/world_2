@@ -147,6 +147,78 @@ function renderSettingsRows() {
     v.textContent = pref === "light" ? "日間" : (pref === "dark" ? "夜間" : "跟隨系統");
   }
   if (typeof renderSyncIndicator === "function") renderSyncIndicator();
+  renderVersionRow();
+}
+
+/* 目前跑的是哪一版。
+
+   版號的單一來源是 sw.js 裡的 VERSION——它本來就得跟著每次改動加一號
+   （見 NOTES.md 的硬規則 2），拿它當版本號就不會有「有人忘了同步」的問題。
+   不在 HTML 裡另寫一份：那會變成第二個要記得改的地方，遲早對不上，
+   而這一行存在的理由正是「不要用猜的」。
+
+   兩個值要分清楚，混在一起這一行就會在最需要它的時候說謊：
+     正在跑的 ＝ 問目前接管這一頁的 service worker（postMessage）
+     伺服器上的 ＝ fetch sw.js 帶 no-store
+   使用者還沒換版時這兩個不一樣，而那正是「為什麼我修好的東西他看不到」
+   的答案。只顯示後者的話，會告訴他一個他根本還沒跑到的版號。 */
+
+function askServiceWorkerVersion() {
+  return new Promise(function(resolve) {
+    const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!sw || typeof MessageChannel === "undefined") { resolve(null); return; }
+    const ch = new MessageChannel();
+    /* 舊版的 worker 不認得這個訊息，不會回話——給個逾時，不要讓整行卡住 */
+    const timer = setTimeout(function() { resolve(null); }, 1200);
+    ch.port1.onmessage = function(e) {
+      clearTimeout(timer);
+      resolve(e.data && e.data.version ? e.data.version : null);
+    };
+    try {
+      sw.postMessage({ type: "GET_VERSION" }, [ch.port2]);
+    } catch (err) {
+      clearTimeout(timer);
+      resolve(null);
+    }
+  });
+}
+
+function fetchLatestVersion() {
+  return fetch("sw.js", { cache: "no-store" })
+    .then(function(res) { return res.text(); })
+    .then(function(text) {
+      const m = /const VERSION = '([^']+)'/.exec(text);
+      return m ? m[1] : null;
+    })
+    .catch(function() { return null; });
+}
+
+function renderVersionRow() {
+  const value = document.getElementById("versionRowValue");
+  const desc = document.getElementById("versionRowDesc");
+  if (!value) return;
+
+  value.textContent = "…";
+  Promise.all([askServiceWorkerVersion(), fetchLatestVersion()]).then(function(r) {
+    const running = r[0];
+    const latest = r[1];
+
+    /* 沒有 service worker 接管時（第一次開、或使用者關掉了），跑的就是
+       剛從網路拿到的那一份，所以伺服器上的版號就是正在跑的版號。 */
+    const shown = running || latest;
+    value.textContent = shown || "?";
+    if (!desc) return;
+
+    if (!shown) {
+      desc.textContent = "連不上伺服器，也問不到本機的版本";
+    } else if (running && latest && running !== latest) {
+      desc.textContent = "有新版 " + latest + "，重新整理就會換過去";
+    } else if (!latest) {
+      desc.textContent = "離線中，無法確認是不是最新版";
+    } else {
+      desc.textContent = "已是最新版。回報問題時請附上這一行";
+    }
+  });
 }
 
 function openAppearanceModal() {

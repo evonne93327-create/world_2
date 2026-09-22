@@ -1983,6 +1983,11 @@ button, input, select, textarea { color: inherit; }
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
+/* 版本那一列只是顯示，不是按鈕：不要有滑鼠手勢、不要有 hover 回饋，
+   否則看起來像按得下去卻沒反應。 */
+.settings-row.is-static { cursor: default; }
+.settings-row.is-static:hover { background: var(--bg-card); border-color: var(--border); }
+
 .settings-row:hover { background: var(--bg-sunken); border-color: var(--accent-line); }
 .settings-row:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 
