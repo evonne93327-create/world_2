@@ -52,10 +52,26 @@ test("style.css 用到的每一個 --kb-* 都有人寫進去", function() {
   });
 });
 
-test("鍵盤收起來時，寫進去的每一個都要清掉", function() {
+/* 刻意不清掉的那些。--kb-reserve 是「上一次量到的鍵盤高度」，它的用途就是
+   在鍵盤還沒升起時先把捲動空間留出來——收鍵盤時清掉的話，下一次聚焦又沒有
+   值可以用，等於這個機制不存在。
+
+   這份豁免名單本身要被檢查：下面會反過來確認它真的沒被清除，免得有一天
+   清除的程式碼加回去了、名單卻還掛在這裡，變成一個測不到的洞。 */
+const KEPT_ON_CLOSE = ["--kb-reserve"];
+
+test("鍵盤收起來時，寫進去的每一個都要清掉（記得的值除外）", function() {
   written.forEach(function(name) {
+    if (KEPT_ON_CLOSE.includes(name)) return;
     assert.ok(removed.has(name),
       name + " 只有寫入沒有清除 —— 鍵盤收起來之後會留著上一次的值");
+  });
+
+  KEPT_ON_CLOSE.forEach(function(name) {
+    assert.ok(written.has(name), name + " 在豁免名單裡，卻沒有任何地方寫它");
+    assert.ok(!removed.has(name),
+      name + " 被清除了，但它在「刻意不清」的名單裡 —— 兩邊對不上，" +
+      "要嘛把清除拿掉，要嘛把它移出名單");
   });
 });
 
@@ -156,5 +172,30 @@ test("kb-pending 只管編輯區的空間，不要去動版面高度", function(
       assert.ok(!new RegExp("var\\(" + name + "\\)").test(rule),
         "kb-pending 的規則用到了 " + name + "，那是鍵盤升起之後才有意義的值：\n" + rule);
     });
+  });
+});
+
+test("編輯時的底部空間要取 max(保底十行, 記得的鍵盤高度)", function() {
+  /* 游標要能被捲到鍵盤上方，底下就得有「一個鍵盤的高度」可以捲。寫死十行
+     （約 304px）在橫放時不夠——橫放的鍵盤佔 456px。 */
+  const pad = valueOf(":root.kb-pending .editor-content-area", "padding-bottom");
+  assert.strictEqual(pad.length, 1);
+
+  assert.match(pad[0], /max\(/, "要用 max()，不能只寫死行數");
+  assert.match(pad[0], /var\(--editor-line\) \* 10/, "保底十行");
+  assert.match(pad[0], /var\(--kb-reserve, 0px\)/,
+    "要吃記得的鍵盤高度，而且要有 0px 的 fallback —— 第一次還沒量過時 " +
+    "var() 取不到值會讓整條宣告被丟掉，連保底的十行都沒有");
+
+  // 按鈕那一排與兩行的讓位不能因為改寫而掉了
+  assert.match(pad[0], /var\(--icon-44\)/, "浮動按鈕那一排的高度");
+});
+
+test("底部空間不可以只掛在 kb-open 上", function() {
+  /* kb-open 依賴 visualViewport 偵測得到鍵盤。萬一偵測失效（實際發生過），
+     只掛在它上面的話這塊空間就永遠不會出現。kb-pending 只看有沒有聚焦。 */
+  ["padding-bottom", "scroll-padding-bottom"].forEach(function(prop) {
+    assert.strictEqual(valueOf(":root.kb-pending .editor-content-area", prop).length, 1,
+      prop + " 也要掛在 kb-pending 上，不能只有 kb-open");
   });
 });

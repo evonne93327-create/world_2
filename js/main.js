@@ -721,6 +721,31 @@ function keyboardInsetState(vv, innerH) {
    見 js/documents.js 的 setupCaretRoomOnFocus()。 */
 let lastKnownKeyboardInset = 0;
 
+/* 記得的鍵盤高度要存下來，理由跟上面同一條：聚焦的那一刻量不到。
+
+   不存的話，每次重新開啟 app 的**第一次**聚焦都沒有值可以用，只能退回
+   保底的十行——而十行在橫放時不夠（橫放鍵盤佔 456px）。存著就只有真正的
+   第一次（剛裝好）會用到保底值。
+
+   只存一個數字，不分直放橫放：兩個方向的鍵盤高度其實差不多（實測 420 / 456），
+   而且轉向會重新量、量到就覆蓋掉。差那幾十 px 由 CSS 的 max() 兜著。 */
+const KB_HEIGHT_KEY = "wb_kbh";
+
+function rememberKeyboardHeight(px) {
+  if (!(px > 0)) return;
+  lastKnownKeyboardInset = px;
+  document.documentElement.style.setProperty("--kb-reserve", Math.round(px) + "px");
+  try { localStorage.setItem(KB_HEIGHT_KEY, String(Math.round(px))); } catch (e) {}
+}
+
+function restoreKeyboardHeight() {
+  let px = 0;
+  try { px = parseInt(localStorage.getItem(KB_HEIGHT_KEY), 10); } catch (e) {}
+  if (!isFinite(px) || px <= 0) return;
+  lastKnownKeyboardInset = px;
+  document.documentElement.style.setProperty("--kb-reserve", px + "px");
+}
+
 function applyKeyboardInset() {
   const vv = window.visualViewport;
   if (!vv) return;
@@ -731,7 +756,7 @@ function applyKeyboardInset() {
     /* 記的是「螢幕上被鍵盤蓋住的高度」，不是 state.inset——後者已經扣掉
        版面被推上去的量，下次聚焦時那個量還不存在，用它會低估。 */
     const covered = window.innerHeight - Number(vv.height);
-    if (covered > 0) lastKnownKeyboardInset = covered;
+    rememberKeyboardHeight(covered);
     root.style.setProperty("--kb-h", state.height + "px");
     root.style.setProperty("--kb-top", state.top + "px");
     root.style.setProperty("--kb-vh", state.viewHeight + "px");
@@ -747,6 +772,11 @@ function applyKeyboardInset() {
 }
 
 function setupKeyboardInset() {
+  /* 這一行要在 !vv 的守門之前：--kb-reserve 是給編輯區預留捲動空間用的，
+     那條 CSS 只看 .kb-pending（聚焦就掛），完全不依賴 visualViewport。
+     沒有這個 API 的瀏覽器一樣要拿得到記得的鍵盤高度。 */
+  restoreKeyboardHeight();
+
   const vv = window.visualViewport;
   if (!vv) return;   // 沒有這個 API 的瀏覽器維持原本的行為
 
@@ -995,6 +1025,10 @@ function kbDiagLines() {
     ["kbPending", root.classList.contains("kb-pending") ? "true" : "false"],
     ["--kb-h/top/vh/inset", cssVar("--kb-h") + " / " + cssVar("--kb-top") + " / " +
                             cssVar("--kb-vh") + " / " + cssVar("--kb-inset")],
+    ["--kb-reserve", cssVar("--kb-reserve")],
+    ["padBottom", kbDiagNum(function() {
+      return getComputedStyle(document.querySelector(".editor-content-area")).paddingBottom;
+    })],
     ["bodyPadTop", bs.paddingTop],
     ["bodyH", bs.height],
     ["navTop", kbDiagNum(function() { return nav.getBoundingClientRect().top; })],
