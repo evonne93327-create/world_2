@@ -679,6 +679,10 @@ function keyboardInsetState(vv, innerH) {
   return { open: true, height: visibleBottom, inset: hidden };
 }
 
+/* 最後一次量到的鍵盤高度。聚焦的那一刻鍵盤還沒升起，量不到，只能用記得的。
+   見 js/documents.js 的 setupCaretRoomOnFocus()。 */
+let lastKnownKeyboardInset = 0;
+
 function applyKeyboardInset() {
   const vv = window.visualViewport;
   if (!vv) return;
@@ -686,6 +690,10 @@ function applyKeyboardInset() {
   const state = keyboardInsetState(vv, window.innerHeight);
 
   if (state.open) {
+    /* 記的是「螢幕上被鍵盤蓋住的高度」，不是 state.inset——後者已經扣掉
+       版面被推上去的量，下次聚焦時那個量還不存在，用它會低估。 */
+    const covered = window.innerHeight - Number(vv.height);
+    if (covered > 0) lastKnownKeyboardInset = covered;
     root.style.setProperty("--kb-h", state.height + "px");
     root.style.setProperty("--kb-inset", state.inset + "px");
     root.classList.add("kb-open");
@@ -712,7 +720,9 @@ function setupKeyboardInset() {
 
   /* 鍵盤升起／收起都會改變「看得見的底」在哪裡，游標的位置要重新確認一次 */
   vv.addEventListener("resize", function() {
-    if (typeof scheduleCaretRoomCheck === "function") scheduleCaretRoomCheck();
+    /* 這一刻鍵盤剛升起／剛收起，游標可能落在任何地方，所以要用精準的量法
+       （允許重排）。這是一次性的時機，不是每一鍵，成本付得起。 */
+    if (typeof scheduleCaretRoomCheck === "function") scheduleCaretRoomCheck(true);
   });
   window.addEventListener("orientationchange", function() {
     setTimeout(applyKeyboardInset, 250);

@@ -262,38 +262,130 @@ function autoGrowTextareaFast(el) {
    不一致（而且這個環境裝不起 WebKit，沒辦法驗 Safari）。所以再加一道
    自己算的保險。
 
-   只處理「游標在最後一行」的情況。那正是連按 Enter 會遇到的，而且這種
-   情況下游標那一行的底就是 textarea 的底——一次 getBoundingClientRect
-   就問得到，不用像量任意位置的游標那樣把整篇文章重排一次（實測一萬行
-   要 106ms）。游標在中間時交給瀏覽器自己處理。
+   兩種量法，成本差很多：
 
-   「最後一行」用「游標後面沒有換行」判斷。那一行如果長到自動換行、而
-   游標停在前面幾段，這裡會多捲一點——方向是安全的（游標只會更靠上）。
+   - 游標在最後一行：那一行的底就是 textarea 的底，一次
+     getBoundingClientRect 就問得到。打字途中只走這條。
+   - 游標在中間：沒得取巧，要把游標前面的文字用同樣的字體與寬度重排一次
+     （實測一萬行 106ms）。只在「剛聚焦／鍵盤剛升起」這種一次性的時機做。
+
+   為什麼中間那種也非量不可——原本這裡是直接放棄、「交給瀏覽器自己處理」：
+   iOS 的「自己處理」是把整個版面視窗往上推（visualViewport.offsetTop 變成
+   非 0）。那一推會把最上面的工具列推出畫面，也讓所有 position:fixed 的
+   東西跟著偏掉，就是使用者回報的「點到會被鍵盤蓋住的地方，按鈕就跑掉」。
+   我們自己先把游標捲到看得見的地方，iOS 就沒有理由去推。
    ========================================================== */
 
 let caretRoomRaf = null;
+let caretRoomAccurate = false;
+let caretRoomAssumedInset = 0;
 
-function scheduleCaretRoomCheck() {
+/* accurate＝允許用重排的方式量任意位置的游標。打字途中不要開。 */
+function scheduleCaretRoomCheck(accurate, assumedInset) {
+  if (accurate) caretRoomAccurate = true;
+  if (assumedInset > 0) caretRoomAssumedInset = assumedInset;
   if (caretRoomRaf) return;
   caretRoomRaf = requestAnimationFrame(function() {
     caretRoomRaf = null;
-    ensureCaretRoom();
+    const acc = caretRoomAccurate;
+    const inset = caretRoomAssumedInset;
+    caretRoomAccurate = false;
+    caretRoomAssumedInset = 0;
+    ensureCaretRoom(acc, inset);
   });
 }
 
-function ensureCaretRoom() {
+/* 聚焦時先把位置讓出來。
+
+   這是整條因果鏈的上游：只要游標在鍵盤升起後仍然看得見，iOS 就不會去推
+   版面視窗，工具列不會被推掉，固定定位的按鈕也不會跟著偏。
+
+   鍵盤高度用上一次量到的。第一次聚焦時還沒有值，那一次就只能讓 iOS 自己
+   處理——之後每一次都有了。 */
+function setupCaretRoomOnFocus() {
+  const ta = document.getElementById("docContentInput");
+  if (!ta) return;
+  ta.addEventListener("focus", function() {
+    const inset = (typeof lastKnownKeyboardInset === "number") ? lastKnownKeyboardInset : 0;
+    if (inset <= 0) return;
+    scheduleCaretRoomCheck(true, inset);
+  });
+}
+
+/* 量游標那一行的底在畫面上的 y。量不出來就回 null，呼叫端照舊放棄。
+
+   做法是拿一個看不見的 div，套上跟 textarea 一模一樣的字體、寬度、內距與
+   換行規則，把游標前面的文字放進去，尾巴插一個記號，問那個記號在第幾列。
+   box-sizing 強制成 border-box 並直接用 textarea 的外框寬度，這樣內容區的
+   寬度一定對得起來——差一點點就會換行位置不同，整個量測就沒意義了。 */
+let caretMirror = null;
+
+function measureCaretBottom(ta) {
+  try {
+    const cs = getComputedStyle(ta);
+    const rect = ta.getBoundingClientRect();
+    if (!caretMirror) {
+      caretMirror = document.createElement("div");
+      caretMirror.setAttribute("aria-hidden", "true");
+      document.body.appendChild(caretMirror);
+    }
+    const m = caretMirror;
+    m.style.cssText = "";
+    ["fontFamily", "fontSize", "fontWeight", "fontStyle", "letterSpacing",
+     "lineHeight", "textIndent", "textTransform", "wordSpacing", "wordBreak",
+     "overflowWrap", "tabSize",
+     "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+     "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth"
+    ].forEach(function(k) { m.style[k] = cs[k]; });
+    m.style.boxSizing = "border-box";
+    m.style.width = rect.width + "px";
+    m.style.whiteSpace = "pre-wrap";
+    m.style.position = "absolute";
+    m.style.left = "-9999px";
+    m.style.top = "0";
+    m.style.visibility = "hidden";
+    m.style.pointerEvents = "none";
+
+    m.textContent = ta.value.slice(0, ta.selectionStart);
+    const marker = document.createElement("span");
+    /* 零寬字元：不佔寬度，但拿得到位置。空的 span 量不到。 */
+    marker.textContent = "\u200b";
+    m.appendChild(marker);
+
+    const lineHeight = parseFloat(cs.lineHeight) || 24;
+    const top = marker.offsetTop;
+    m.textContent = "";      // 量完就清掉，不要一直佔著整篇文章的記憶體
+    if (!isFinite(top)) return null;
+    return rect.top + top + lineHeight;
+  } catch (e) {
+    return null;
+  }
+}
+
+/* assumedInset：鍵盤還沒升起、但我們知道它大概會蓋掉多少時傳進來。
+
+   聚焦的那一刻鍵盤還沒出現，visualViewport 量到的還是整個畫面，照那個算
+   會覺得「游標看得見啊」而什麼都不做——然後 iOS 就自己去推版面視窗了。
+   用上一次記下來的鍵盤高度先把位置讓出來，它就沒有理由推。 */
+function ensureCaretRoom(accurate, assumedInset) {
   const ta = document.getElementById("docContentInput");
   const scroller = document.querySelector(".editor-content-area");
   if (!ta || !scroller || document.activeElement !== ta) return;
 
   const caret = ta.selectionStart;
   if (caret !== ta.selectionEnd) return;                  // 有選取範圍就不要亂動
-  if (ta.value.indexOf("\n", caret) !== -1) return;       // 不在最後一行
+
+  const onLastLine = ta.value.indexOf("\n", caret) === -1;
+  if (!onLastLine && !accurate) return;                   // 打字途中不做昂貴的量測
 
   /* 真正看得見的底：可視區域與捲動容器取交集。
      visualViewport 才知道鍵盤蓋掉多少，window.innerHeight 不知道。 */
   const vv = window.visualViewport;
-  const viewBottom = vv ? (vv.offsetTop + vv.height) : window.innerHeight;
+  let viewBottom = vv ? (vv.offsetTop + vv.height) : window.innerHeight;
+  if (assumedInset > 0) {
+    // 鍵盤還沒升起：用記得的高度先算，取比較保守（比較高）的那一個
+    viewBottom = Math.min(viewBottom, window.innerHeight - assumedInset);
+  }
   let bottom = Math.min(viewBottom, scroller.getBoundingClientRect().bottom);
 
   /* 浮動的復原／快速跳轉那一排就浮在編輯區底部，游標停在它們底下一樣
@@ -305,7 +397,10 @@ function ensureCaretRoom() {
   }
 
   const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 24;
-  const caretLineBottom = ta.getBoundingClientRect().bottom;
+  const caretLineBottom = onLastLine
+    ? ta.getBoundingClientRect().bottom
+    : measureCaretBottom(ta);
+  if (caretLineBottom === null) return;
 
   // 游標那一行的底，要離「可用的底」至少一行
   const overflow = caretLineBottom - (bottom - lineHeight);
