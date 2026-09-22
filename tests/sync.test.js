@@ -169,3 +169,87 @@ test("在 app 裡換地方看的時候也要對帳", function() {
   assert.ok(openSidebar, "找不到 openSidebarMenu()");
   assert.match(openSidebar[0], /syncOnUserNavigation\(\)/, "回到目錄要對帳");
 });
+
+/* ==========================================================
+   逐篇合併有沒有真的接上
+   ========================================================== */
+test("對帳要先試逐篇合併，再退回整包二選一", function() {
+  /* 合併引擎測得再細，對帳沒去叫它也是白搭——使用者還是會看到
+     「兩邊都有修改，請選一邊」。 */
+  const fn = syncJs.match(/async function reconcileWithRemote\(\)[\s\S]*?(?=\n\/\*)/);
+  assert.ok(fn, "找不到 reconcileWithRemote()");
+
+  const mergeAt = fn[0].indexOf("mergeAppData(");
+  const modalAt = fn[0].lastIndexOf("openSyncConflictModal(");
+  assert.ok(mergeAt !== -1, "對帳要呼叫 mergeAppData()");
+  assert.ok(modalAt !== -1, "整包二選一那條路要留著當退路");
+  assert.ok(mergeAt < modalAt,
+    "合併要排在跳衝突視窗之前 —— 排在後面就永遠輪不到它");
+
+  assert.match(fn[0], /!merged\.conflicts\.length/,
+    "只有「一項都不衝突」才可以自己套用");
+});
+
+test("沒有祖先時不可以硬合併", function() {
+  /* 第一次同步、剛換後端時沒有指紋。沒有祖先就分不出「誰改的」，硬合併
+     等於拿兩邊的現況瞎猜。mergeAppData() 這時回 null，對帳必須退回
+     整包二選一。 */
+  const merge = fs.readFileSync(path.join(ROOT, "js", "sync-merge.js"), "utf8");
+  assert.match(merge, /if \(!base \|\| !local \|\| !remote\) return null;/,
+    "缺任何一份就要回 null");
+
+  const fn = syncJs.match(/async function reconcileWithRemote\(\)[\s\S]*?(?=\n\/\*)/);
+  assert.match(fn[0], /merged && !merged\.conflicts\.length/,
+    "要先確認 merged 不是 null 才看 conflicts —— " +
+    "少了這道，null 會在讀 .conflicts 時丟例外，同步整個停擺");
+});
+
+test("每一個「本機與雲端一致」的時刻都要重記指紋", function() {
+  /* 漏掉任何一個，下次合併的祖先就是錯的。錯的祖先會讓「只有一邊改」被
+     誤判成「兩邊都改」（多問一次，還好），或更糟的「都沒改」——那會安靜地
+     採用另一邊，丟掉一次編輯。 */
+  assert.match(syncJs, /function saveSyncFingerprint\(/, "要有存指紋的函式");
+
+  [
+    ["function adoptRemote\\(", "採用雲端之後"],
+    ["async function pushNow\\(", "推送成功之後"],
+    ["async function resolveConflictUseLocal\\(", "以本機覆蓋雲端之後"]
+  ].forEach(function(pair) {
+    const fn = syncJs.match(new RegExp(pair[0] + "[\\s\\S]*?\\n}"));
+    assert.ok(fn, "找不到 " + pair[0]);
+    assert.match(fn[0], /saveSyncFingerprint\(/, pair[1] + "要重記指紋");
+  });
+});
+
+test("指紋只存雜湊，不存整包快照", function() {
+  /* 這個 app 的圖片是 base64 存在文檔裡的。存整包快照會讓 localStorage 的
+     佔用直接翻倍，很容易撐爆 5MB —— 而撐爆的症狀是存檔失敗，比不做還糟。 */
+  const fn = syncJs.match(/function saveSyncFingerprint\([\s\S]*?\n}/);
+  assert.ok(fn, "找不到 saveSyncFingerprint()");
+  assert.match(fn[0], /fingerprintOf\(/,
+    "要存 fingerprintOf() 的結果（每項一個雜湊），不是 JSON.stringify(appData)");
+  assert.ok(!/JSON\.stringify\(data\)\s*\)/.test(fn[0]),
+    "不可以把整包資料存進去");
+});
+
+test("合併完要推回去，不然另一台拿不到這台的那幾篇", function() {
+  const fn = syncJs.match(/function applyMergedData\([\s\S]*?\n}/);
+  assert.ok(fn, "找不到 applyMergedData()");
+  assert.match(fn[0], /pushNow\(/, "合併結果要推上去");
+  assert.match(fn[0], /changedFromRemote/,
+    "跟雲端一樣時就不要白推一次");
+  assert.match(fn[0], /saveSyncState\(remote\.version, remote\.at\)/,
+    "版本要記成 remote 的 —— 我們是站在那一版上面合併的，" +
+    "推送的條件式更新才對得上");
+});
+
+test("衝突視窗要講得出是哪幾篇，而且標題要跳脫", function() {
+  /* 只說「有衝突」的話，使用者在整包二選一時完全靠猜。
+     標題是使用者自己打的字，直接拼進 innerHTML 就是一個洞（NOTES 硬規則 5）。 */
+  const fn = syncJs.match(/function conflictListHtml\([\s\S]*?\n}/);
+  assert.ok(fn, "找不到 conflictListHtml()");
+  assert.match(fn[0], /escapeHtml\(String\(c\.title/,
+    "標題一定要 escapeHtml");
+  assert.match(fn[0], /CONFLICT_LIST_MAX/,
+    "要有上限 —— 幾百篇全列出來的話視窗會爆掉");
+});

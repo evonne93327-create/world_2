@@ -166,9 +166,31 @@ async function pullFreshEnough() {
   return { row: second || first, stale: true };
 }
 
+/* 上次同步當下每一項的雜湊（三方合併的祖先）。見 js/sync-merge.js。
+
+   只存雜湊不存內容：這個 app 的圖片是 base64 存在文檔裡的，存整包快照會讓
+   localStorage 的佔用直接翻倍，很容易撐爆 5MB。 */
+const SYNC_FP_KEY = "wb_sync_fp";
+
+function loadSyncFingerprint() {
+  try { return JSON.parse(safeStorageGet(SYNC_FP_KEY)) || null; } catch (e) { return null; }
+}
+
+/* 每一次「本機與雲端一致」的時刻都要重記一次：採用雲端之後、推送成功之後、
+   解決衝突之後。漏掉任何一個，下次合併的祖先就是錯的——而錯的祖先會讓
+   「只有一邊改」被誤判成「兩邊都改」（多問一次，還好），或更糟的
+   「都沒改」（安靜地採用另一邊，丟掉一次編輯）。 */
+function saveSyncFingerprint(data) {
+  try {
+    if (typeof fingerprintOf !== "function") return;
+    safeStorageSet(SYNC_FP_KEY, JSON.stringify(fingerprintOf(data)));
+  } catch (e) { /* 存不下就退回整包二選一，不要讓同步整個停擺 */ }
+}
+
 function adoptRemote(row) {
   appData = row.data;
   saveSyncState(row.version, row.at);
+  saveSyncFingerprint(appData);
   setLocalDirty(false);
   lastPushedPayload = JSON.stringify(appData);
 
@@ -274,11 +296,69 @@ async function reconcileWithRemote() {
       return;
     }
 
-    // 兩邊都有變更，或採用雲端會少掉東西 → 停下來問，不猜
-    openSyncConflictModal(remote);
+    /* 兩邊都有變更。原本到這裡就整包二選一了——但「兩邊都有變更」多半是
+       「這台改了第 1 篇、那台改了第 2 篇」，挑哪邊都會丟掉另一台的那一篇。
+
+       先試逐篇合併（js/sync-merge.js）。只有**同一篇兩邊都改**才是真的沒得
+       選，那時才問，而且問的時候講得出是哪幾篇。
+
+       沒有指紋（第一次同步、剛換後端）時 mergeAppData() 回 null，退回原本的
+       整包二選一——沒有祖先就沒辦法分辨「誰改的」，硬合併等於瞎猜。 */
+    const merged = (typeof mergeAppData === "function")
+      ? mergeAppData(loadSyncFingerprint(), appData, remote.data) : null;
+
+    if (merged && !merged.conflicts.length) {
+      applyMergedData(merged, remote);
+      return;
+    }
+
+    openSyncConflictModal(remote, false, merged ? merged.conflicts : null);
   } catch (e) {
     setSyncStatus("error", e.message || "同步失敗");
   }
+}
+
+/* 套用合併結果。
+
+   跟 adoptRemote() 的差別：那個是「整包採用雲端」，套完就跟雲端一致了；
+   這個套完之後本機還有雲端沒有的東西（另一台沒看過的那幾篇），所以要標成
+   髒的並推回去——不推的話，另一台永遠拿不到這台的那幾篇。
+
+   版本要記成 remote 的：我們是站在雲端那一版上面合併出來的，推送時的條件式
+   更新才對得上。指紋則等推送成功之後再記（pushNow 裡做），因為在推上去之前
+   「本機與雲端一致」還不成立。 */
+function applyMergedData(merged, remote) {
+  appData = merged.data;
+  saveSyncState(remote.version, remote.at);
+  safeStorageSet("novel_multi_world_data_v5", JSON.stringify(appData));
+
+  // 目前選的文檔可能在合併後不存在了（另一台刪掉的）
+  if (activeDocId && !appData.docs.find(d => d.id === activeDocId)) {
+    activeDocId = appData.docs.length ? appData.docs[0].id : null;
+    if (activeDocId) activeWorldId = appData.docs[0].worldId;
+  }
+  if (!appData.worldviews.find(w => w.id === activeWorldId) && appData.worldviews.length) {
+    activeWorldId = appData.worldviews[0].id;
+  }
+
+  renderWorldRail();
+  renderSidebarTree();
+  updateWorldBadge();
+  if (activeDocId) loadDocToEditor(activeDocId);
+  if (activeView === 'canvas') renderCanvas();
+
+  if (!merged.changedFromRemote) {
+    // 合併結果跟雲端一樣（只有雲端改過），沒什麼好推的
+    saveSyncFingerprint(appData);
+    setLocalDirty(false);
+    lastPushedPayload = JSON.stringify(appData);
+    setSyncStatus("idle", "已從雲端更新");
+    return;
+  }
+
+  setLocalDirty(true);
+  setSyncStatus("syncing", "已合併，上傳中…");
+  pushNow(true);
 }
 
 /* ---------- 推送 ---------- */
@@ -328,6 +408,7 @@ async function pushNow(silent) {
     }
 
     saveSyncState(result.version, result.at);
+    saveSyncFingerprint(appData);
     setLocalDirty(false);
     lastPushedPayload = payload;
     setSyncStatus("idle", silent ? "已同步" : "已同步");
@@ -475,7 +556,9 @@ let pendingConflictRemote = null;
    「兩邊都有修改」，把「雲端那份比較舊、建議選這台」這個最關鍵的提示弄丟。 */
 let pendingConflictStale = false;
 
-function openSyncConflictModal(remote, remoteLooksStale) {
+/* conflicts：逐篇合併找出來的「同一篇兩邊都改」清單（見 js/sync-merge.js）。
+   沒傳就是走整包二選一的老路——第一次同步、剛換後端、或合併本身也沒轍。 */
+function openSyncConflictModal(remote, remoteLooksStale, conflicts) {
   pendingConflictRemote = remote;
   pendingConflictStale = !!remoteLooksStale;
   setSyncStatus("conflict", remoteLooksStale ? "雲端回應看起來是舊的" : "偵測到衝突");
@@ -495,6 +578,7 @@ function openSyncConflictModal(remote, remoteLooksStale) {
           '通常是雲端剛寫入還沒完全生效，過一下再開通常就正常了。' +
           '<b>不確定的話請選「用這台的版本」</b>，那是比較新的那一份。</div>'
         : '<div style="margin-bottom:8px;">這台裝置和雲端都有未同步的修改，需要你決定要保留哪一份。</div>') +
+      conflictListHtml(conflicts) +
       '<div style="font-size:12px; color:var(--text-secondary); line-height:1.7;">' +
       '☁️ 雲端版本：' + remoteDocs + ' 份文檔，最後更新於 ' + escapeHtml(when) + '<br>' +
       '💻 這台裝置：' + (appData.docs ? appData.docs.length : 0) + ' 份文檔（尚未上傳）' +
@@ -502,6 +586,34 @@ function openSyncConflictModal(remote, remoteLooksStale) {
   }
   const modal = document.getElementById("syncConflictModal");
   if (modal) modal.classList.add("active");
+}
+
+/* 把「哪幾篇真的撞在一起」列出來。
+
+   只說「有衝突」的話，使用者要在整包二選一的時候完全靠猜。列出來之後他至少
+   知道自己在放棄什麼——而且多數情況下這個清單只有一兩篇，其餘幾百篇都是
+   自動合併好的。
+
+   標題一律走 escapeHtml：那是使用者自己打的字，直接拼進 innerHTML 就是一個洞
+   （見 NOTES 的硬規則 5）。 */
+const CONFLICT_LIST_MAX = 8;
+
+function conflictListHtml(conflicts) {
+  if (!conflicts || !conflicts.length) return "";
+
+  const shown = conflicts.slice(0, CONFLICT_LIST_MAX);
+  const rest = conflicts.length - shown.length;
+  const kindLabel = { doc: "📄", folder: "📁", world: "🌐", trashDoc: "🗑️", trashFolder: "🗑️" };
+
+  return '<div style="margin:8px 0; padding:8px 10px; background:var(--bg-sunken);' +
+         ' border-radius:8px; font-size:12px; line-height:1.8;">' +
+         '<b>兩邊都改過的有 ' + conflicts.length + ' 項</b>' +
+         '（其餘的已經自動合併好了）：<br>' +
+         shown.map(function(c) {
+           return (kindLabel[c.kind] || "•") + " " + escapeHtml(String(c.title || c.id));
+         }).join("<br>") +
+         (rest > 0 ? '<br>…還有 ' + rest + ' 項' : '') +
+         '</div>';
 }
 
 /* 「稍後再決定」把彈窗收起來，但衝突還在。
@@ -537,6 +649,7 @@ async function resolveConflictUseLocal() {
   try {
     const result = await P().overwrite(appData);
     saveSyncState(result.version, result.at);
+    saveSyncFingerprint(appData);
     setLocalDirty(false);
     lastPushedPayload = JSON.stringify(appData);
     pendingConflictRemote = null;
