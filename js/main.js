@@ -721,6 +721,31 @@ function keyboardInsetState(vv, innerH) {
    見 js/documents.js 的 setupCaretRoomOnFocus()。 */
 let lastKnownKeyboardInset = 0;
 
+/* 記得的鍵盤高度要存下來，理由跟上面同一條：聚焦的那一刻量不到。
+
+   不存的話，每次重新開啟 app 的**第一次**聚焦都沒有值可以用，只能退回
+   保底的十行——而十行在橫放時不夠（橫放鍵盤佔 456px）。存著就只有真正的
+   第一次（剛裝好）會用到保底值。
+
+   只存一個數字，不分直放橫放：兩個方向的鍵盤高度其實差不多（實測 420 / 456），
+   而且轉向會重新量、量到就覆蓋掉。差那幾十 px 由 CSS 的 max() 兜著。 */
+const KB_HEIGHT_KEY = "wb_kbh";
+
+function rememberKeyboardHeight(px) {
+  if (!(px > 0)) return;
+  lastKnownKeyboardInset = px;
+  document.documentElement.style.setProperty("--kb-reserve", Math.round(px) + "px");
+  try { localStorage.setItem(KB_HEIGHT_KEY, String(Math.round(px))); } catch (e) {}
+}
+
+function restoreKeyboardHeight() {
+  let px = 0;
+  try { px = parseInt(localStorage.getItem(KB_HEIGHT_KEY), 10); } catch (e) {}
+  if (!isFinite(px) || px <= 0) return;
+  lastKnownKeyboardInset = px;
+  document.documentElement.style.setProperty("--kb-reserve", px + "px");
+}
+
 function applyKeyboardInset() {
   const vv = window.visualViewport;
   if (!vv) return;
@@ -731,7 +756,7 @@ function applyKeyboardInset() {
     /* 記的是「螢幕上被鍵盤蓋住的高度」，不是 state.inset——後者已經扣掉
        版面被推上去的量，下次聚焦時那個量還不存在，用它會低估。 */
     const covered = window.innerHeight - Number(vv.height);
-    if (covered > 0) lastKnownKeyboardInset = covered;
+    rememberKeyboardHeight(covered);
     root.style.setProperty("--kb-h", state.height + "px");
     root.style.setProperty("--kb-top", state.top + "px");
     root.style.setProperty("--kb-vh", state.viewHeight + "px");
@@ -747,6 +772,11 @@ function applyKeyboardInset() {
 }
 
 function setupKeyboardInset() {
+  /* 這一行要在 !vv 的守門之前：--kb-reserve 是給編輯區預留捲動空間用的，
+     那條 CSS 只看 .kb-pending（聚焦就掛），完全不依賴 visualViewport。
+     沒有這個 API 的瀏覽器一樣要拿得到記得的鍵盤高度。 */
+  restoreKeyboardHeight();
+
   const vv = window.visualViewport;
   if (!vv) return;   // 沒有這個 API 的瀏覽器維持原本的行為
 
@@ -909,4 +939,148 @@ function setupEdgeSwipe() {
   };
   document.addEventListener("touchend", finish, true);
   document.addEventListener("touchcancel", finish, true);
+}
+
+/* ==========================================================
+   鍵盤診斷
+
+   這個環境裝不起 WebKit，iOS 上鍵盤到底發生什麼事只有使用者的機器知道。
+   前面已經有三輪是靠推理猜出來的，猜錯一次就是整輪白查（見 NOTES.md
+   的 3c）。與其再猜，不如讓那台機器自己把數字講出來。
+
+   決定性的三個問題，這面板一眼就答得出來：
+
+     kbOpen=false          → 根本沒偵測到鍵盤（vv.height 沒縮）
+     kbOpen=true, padTop=0, vvTop>0
+                           → 偵測到了，但讓位的 CSS 沒生效（多半是跑著舊版）
+     navTop < 0            → 上面的工具列還是被推出畫面
+     fabTop > vvH          → 浮動按鈕還藏在鍵盤後面
+
+   開關放在設定裡，狀態記在 localStorage——使用者要先打開、關掉設定、
+   點進內文把鍵盤叫出來，中間隔了好幾步，不記著就白開了。
+   ========================================================== */
+
+const KB_DIAG_KEY = "wb_kbdiag";
+
+function kbDiagEnabled() {
+  try { return localStorage.getItem(KB_DIAG_KEY) === "1"; } catch (e) { return false; }
+}
+
+function toggleKbDiag() {
+  const next = !kbDiagEnabled();
+  try { localStorage.setItem(KB_DIAG_KEY, next ? "1" : "0"); } catch (e) {}
+  renderKbDiagRow();
+  applyKbDiagVisibility();
+}
+
+function renderKbDiagRow() {
+  const v = document.getElementById("kbDiagRowValue");
+  if (v) v.textContent = kbDiagEnabled() ? "開" : "關";
+}
+
+function applyKbDiagVisibility() {
+  const panel = document.getElementById("kbDiagPanel");
+  if (!panel) return;
+  panel.classList.toggle("active", kbDiagEnabled());
+  if (kbDiagEnabled()) updateKbDiag();
+}
+
+/* 量一個數字，量不到就回 "?"。整個面板不能因為某一項拿不到就整個消失——
+   拿不到本身就是情報。 */
+function kbDiagNum(fn) {
+  try {
+    const v = fn();
+    if (v === null || v === undefined) return "?";
+    return typeof v === "number" ? Math.round(v) : String(v);
+  } catch (e) { return "?"; }
+}
+
+function kbDiagLines() {
+  const root = document.documentElement;
+  const cs = getComputedStyle(root);
+  const bs = getComputedStyle(document.body);
+  const vv = window.visualViewport;
+  const nav = document.querySelector("header.top-nav-bar");
+  const fab = document.getElementById("quickJumpFab");
+
+  function cssVar(name) {
+    const raw = cs.getPropertyValue(name).trim();
+    return raw === "" ? "—" : raw;
+  }
+
+  return [
+    ["standalone", kbDiagNum(function() {
+      return (window.navigator.standalone === true ||
+              window.matchMedia("(display-mode: standalone)").matches) ? "yes" : "no";
+    })],
+    ["stale", (typeof pageCodeStale !== "undefined" && pageCodeStale) ? "YES 舊程式碼" : "no"],
+    ["inner", kbDiagNum(function() { return window.innerWidth; }) + "x" +
+              kbDiagNum(function() { return window.innerHeight; })],
+    ["vv", kbDiagNum(function() { return vv.width; }) + "x" +
+           kbDiagNum(function() { return vv.height; })],
+    ["vvTop", kbDiagNum(function() { return vv.offsetTop; })],
+    ["scale", kbDiagNum(function() { return Math.round(vv.scale * 100) / 100; })],
+    ["scrollY", kbDiagNum(function() { return window.scrollY; })],
+    ["kbOpen", root.classList.contains("kb-open") ? "true" : "FALSE"],
+    ["kbPending", root.classList.contains("kb-pending") ? "true" : "false"],
+    ["--kb-h/top/vh/inset", cssVar("--kb-h") + " / " + cssVar("--kb-top") + " / " +
+                            cssVar("--kb-vh") + " / " + cssVar("--kb-inset")],
+    ["--kb-reserve", cssVar("--kb-reserve")],
+    ["padBottom", kbDiagNum(function() {
+      return getComputedStyle(document.querySelector(".editor-content-area")).paddingBottom;
+    })],
+    ["bodyPadTop", bs.paddingTop],
+    ["bodyH", bs.height],
+    ["navTop", kbDiagNum(function() { return nav.getBoundingClientRect().top; })],
+    ["fabTop", kbDiagNum(function() { return fab.getBoundingClientRect().top; })],
+    ["focus", document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : "—"]
+  ];
+}
+
+function updateKbDiag() {
+  const panel = document.getElementById("kbDiagPanel");
+  if (!panel || !kbDiagEnabled()) return;
+
+  const body = document.getElementById("kbDiagBody");
+  if (body) {
+    body.textContent = kbDiagLines().map(function(r) { return r[0] + ": " + r[1]; }).join("\n");
+  }
+
+  /* 面板自己也要閃開被推掉的那一段，否則它會跟工具列一起被推出畫面——
+     而那正是最需要看到它的時候。這裡不用 --kb-top：那個變數只有在偵測到
+     鍵盤時才有值，而「沒偵測到」正是要診斷的情況之一。 */
+  const vv = window.visualViewport;
+  const top = vv ? (Number(vv.offsetTop) || 0) : 0;
+  panel.style.top = (top + 8) + "px";
+}
+
+function copyKbDiag() {
+  const text = kbDiagLines().map(function(r) { return r[0] + ": " + r[1]; }).join("\n");
+  const btn = document.getElementById("kbDiagCopyBtn");
+  function done(ok) { if (btn) btn.textContent = ok ? "已複製" : "複製失敗"; }
+
+  try {
+    navigator.clipboard.writeText(text).then(function() { done(true); }, function() { done(false); });
+  } catch (e) {
+    done(false);
+  }
+}
+
+function setupKbDiag() {
+  renderKbDiagRow();
+  applyKbDiagVisibility();
+  if (!kbDiagEnabled()) return;
+
+  const vv = window.visualViewport;
+  if (vv) {
+    vv.addEventListener("resize", updateKbDiag);
+    vv.addEventListener("scroll", updateKbDiag);
+  }
+  window.addEventListener("resize", updateKbDiag);
+  document.addEventListener("focusin", updateKbDiag);
+  document.addEventListener("focusout", updateKbDiag);
+
+  /* iOS 的鍵盤是動畫升上來的，事件未必落在最後的狀態；而且我們要的是
+     「穩定之後的數字」。只有開著診斷時才跑這個計時器。 */
+  setInterval(updateKbDiag, 500);
 }
