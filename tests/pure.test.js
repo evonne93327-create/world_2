@@ -153,3 +153,87 @@ test("validateFullDatabase：壞掉的備份檔要擋下來並說明原因", fun
         docs: [{ id: 'x" onfocus="alert(1)', worldId: "w1", title: "t" }] }),
     /不允許的字元/);
 });
+
+/* ==========================================================
+   軟體鍵盤：visualViewport 的四個量
+
+   實機只有使用者測得到（這個環境裝不起 WebKit），所以把算式釘在這裡。
+   iPad 直放 820×1124、橫放 1180×764 是實機量過的尺寸。
+   ========================================================== */
+test("keyboardInsetState：沒有 visualViewport、或差距太小就不算鍵盤", function() {
+  const f = app.keyboardInsetState;
+
+  assert.strictEqual(f(null, 1124).open, false, "沒有這個 API 的瀏覽器維持原樣");
+
+  // 網址列收合之類的小變化不是鍵盤
+  assert.strictEqual(f({ height: 1100, offsetTop: 0, scale: 1 }, 1124).open, false);
+
+  // 雙指放大時 vv.height 也會變小，那不是鍵盤
+  assert.strictEqual(f({ height: 500, offsetTop: 0, scale: 2 }, 1124).open, false);
+
+  // 關掉的時候四個值都要是 0，CSS 端才不會拿到半套的狀態
+  assert.deepStrictEqual(host(f(null, 1124)),
+    { open: false, height: 0, top: 0, viewHeight: 0, inset: 0 });
+});
+
+test("keyboardInsetState：iOS 沒有推版面視窗時（offsetTop = 0）", function() {
+  const f = app.keyboardInsetState;
+
+  // iPad 直放，鍵盤蓋掉 420
+  const p = f({ height: 704, offsetTop: 0, scale: 1 }, 1124);
+  assert.strictEqual(p.open, true);
+  assert.strictEqual(p.viewHeight, 704, "body 的內容盒＝看得見的高度");
+  assert.strictEqual(p.top, 0, "沒被推就不用讓");
+  assert.strictEqual(p.height, 704, "body 的外框：版面頂端 → 看得見的底端");
+  assert.strictEqual(p.inset, 420, "浮動按鈕要讓開的量＝鍵盤高度");
+
+  // iPad 橫放，可視區矮很多
+  const l = f({ height: 364, offsetTop: 0, scale: 1 }, 764);
+  assert.strictEqual(l.open, true, "橫放一樣要判定成有鍵盤");
+  assert.strictEqual(l.viewHeight, 364);
+  assert.strictEqual(l.inset, 400);
+});
+
+test("keyboardInsetState：iOS 把版面視窗往上推時，上緣也要讓開", function() {
+  const f = app.keyboardInsetState;
+
+  // iPad 直放，鍵盤蓋掉 420，iOS 又把版面視窗往上推了 180
+  const s = f({ height: 704, offsetTop: 180, scale: 1 }, 1124);
+
+  assert.strictEqual(s.top, 180, "被推掉多少，body 的 padding-top 就要補多少");
+  assert.strictEqual(s.viewHeight, 704, "看得見的高度跟推不推無關");
+  assert.strictEqual(s.height, 884, "body 的外框＝被推掉的 + 看得見的");
+  assert.strictEqual(s.inset, 240, "版面被推上去之後，鍵盤只蓋住底下這麼多");
+
+  // top + viewHeight === height：body 的內容盒剛好落在看得見的那一塊
+  assert.strictEqual(s.top + s.viewHeight, s.height);
+  // top + viewHeight + inset === innerHeight：三段加起來就是整個版面視窗
+  assert.strictEqual(s.top + s.viewHeight + s.inset, 1124);
+
+  // 「有沒有鍵盤」不能受 offsetTop 影響 —— 橫放時 iOS 得推很多，
+  // 把 offsetTop 折進偵測式子就會判成「沒有鍵盤」，按鈕整組退回鍵盤底下。
+  assert.strictEqual(f({ height: 364, offsetTop: 340, scale: 1 }, 764).open, true);
+});
+
+test("keyboardInsetState：offsetTop 量到怪值也不能算出負數或 NaN", function() {
+  const f = app.keyboardInsetState;
+
+  // 橡皮筋捲動可能量到負的 offsetTop
+  assert.strictEqual(f({ height: 704, offsetTop: -50, scale: 1 }, 1124).top, 0);
+  assert.strictEqual(f({ height: 704, offsetTop: -50, scale: 1 }, 1124).inset, 420);
+
+  // 推得比鍵盤還高是不可能的，夾回鍵盤高度
+  const over = f({ height: 704, offsetTop: 999, scale: 1 }, 1124);
+  assert.strictEqual(over.top, 420);
+  assert.strictEqual(over.inset, 0, "讓到底就是 0，不能變負的");
+  assert.strictEqual(over.height, 1124);
+
+  // offsetTop 取不到時當 0。少了這道保險，undefined 會讓整串變成 NaN，
+  // 而 NaN <= 門檻 是 false，會一路寫進 --kb-h: NaNpx。
+  const missing = f({ height: 704, scale: 1 }, 1124);
+  assert.strictEqual(missing.top, 0);
+  Object.keys(missing).forEach(function(k) {
+    if (k === "open") return;
+    assert.ok(isFinite(missing[k]), k + " 不可以是 NaN");
+  });
+});

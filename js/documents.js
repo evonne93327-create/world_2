@@ -301,14 +301,42 @@ function scheduleCaretRoomCheck(accurate, assumedInset) {
    版面視窗，工具列不會被推掉，固定定位的按鈕也不會跟著偏。
 
    鍵盤高度用上一次量到的。第一次聚焦時還沒有值，那一次就只能讓 iOS 自己
-   處理——之後每一次都有了。 */
+   處理——之後每一次都有了。
+
+   但「捲上去」有個前提：下面還要有東西可以捲。
+
+   游標在文章中間時下面有一大片內容，捲得動；在**文章結尾附近**時，捲動
+   容器底下就只剩那一點內距（桌機／平板版是 40px），而要讓游標高過鍵盤得
+   捲 300~400px——捲到底也讓不出來，iOS 照樣得推版面視窗。而「在文章結尾
+   附近打字」正是寫東西最常見的狀態。
+
+   加大的底部內距本來只掛在 .kb-open 上，也就是**鍵盤已經升起**才給，
+   正好晚了一步：最需要那塊空間的就是「聚焦了、鍵盤還沒來」的那一刻。
+   所以這裡先掛一個 .kb-pending，把同一塊空間提前留出來。
+
+   順帶也讓 iOS 自己的「把游標捲進視野」有地方可捲——它會優先捲最近的
+   捲動容器，捲得動就不必去推版面視窗了。這一點對「第一次聚焦」特別有用，
+   那一次我們沒有記得的鍵盤高度可以用。 */
 function setupCaretRoomOnFocus() {
   const ta = document.getElementById("docContentInput");
   if (!ta) return;
+
   ta.addEventListener("focus", function() {
+    /* 只有軟體鍵盤才需要這塊空間。接了實體鍵盤的機器留著它，只是在文章
+       結尾多出一塊空白。這是「有沒有手指」的判斷，不是「版面寬不寬」——
+       iPad 直放 820 寬算桌機版面，但它一樣是軟體鍵盤。 */
+    if (isTouchPrimary()) document.documentElement.classList.add("kb-pending");
+
     const inset = (typeof lastKnownKeyboardInset === "number") ? lastKnownKeyboardInset : 0;
     if (inset <= 0) return;
     scheduleCaretRoomCheck(true, inset);
+  });
+
+  /* 不再編輯就把空間收回去，否則文章結尾會一直掛著一塊空白。
+     （用「收起鍵盤」按鈕關掉鍵盤時 iOS 不會 blur，那一次會留著——
+     那是對的，鍵盤隨時可能再上來。） */
+  ta.addEventListener("blur", function() {
+    document.documentElement.classList.remove("kb-pending");
   });
 }
 

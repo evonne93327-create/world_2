@@ -2110,17 +2110,56 @@ button, input, select, textarea { color: inherit; }
 /* ==========================================================
    軟體鍵盤打開時的版面高度
 
-   由 js/main.js 的 applyKeyboardInset() 在 <html> 上掛 .kb-open 並寫入
-   --kb-h（visualViewport 量到的、真正看得見的高度）。
+   由 js/main.js 的 applyKeyboardInset() 在 <html> 上掛 .kb-open 並寫入：
+
+     --kb-h     版面視窗頂端 → 看得見的底端
+     --kb-top   iOS 為了讓游標露出來、把版面視窗往上推掉的那一段
+     --kb-vh    真正看得見的高度
+     --kb-inset 版面視窗底下被鍵盤蓋掉的高度
 
    只在 .kb-open 在的時候覆蓋，沒有鍵盤時完全走原本的 100dvh 規則——
    這樣既有的版面一行都不用動，出問題也只要拿掉這個 class 就回得去。
 
    原因見 js/main.js 那一段的註解：iOS 的 dvh 不扣鍵盤。
+
+   body 為什麼是「外框 --kb-h ＋ padding-top --kb-top」而不是直接 --kb-vh：
+
+   - 外框給 --kb-h，body 的下緣就停在鍵盤上緣，而且文件的總高度不會超過
+     版面視窗 → 沒有多出來可以捲的空間，iOS 不會再去捲文件。
+   - padding-top 給 --kb-top，把內容整個往下讓開「被推掉的那一段」。少了這
+     一行的話，body 的上緣還留在版面視窗頂端，被推上去之後最上面的工具列
+     就跑出畫面外——使用者回報的「上面的東西被吃掉」就是這個。
+   - 兩個加起來，body 的**內容盒剛好蓋住看得見的那一塊**，所以子結構
+     （目錄欄、主結構）的高度要用 --kb-vh，不能再用 --kb-h。
    ========================================================== */
-:root.kb-open body { height: var(--kb-h); }
-:root.kb-open aside.sidebar-directory { height: var(--kb-h); }
-:root.kb-open .app-main-layout { height: var(--kb-h); }
+:root.kb-open body {
+  height: var(--kb-h);
+  padding-top: var(--kb-top);
+}
+:root.kb-open aside.sidebar-directory { height: var(--kb-vh); }
+:root.kb-open .app-main-layout { height: var(--kb-vh); }
+
+/* 整頁的固定圖層貼的是「版面視窗」，body 讓開它們不會跟著讓：上緣一樣被
+   推出畫面，下緣一樣藏在鍵盤後面。這幾個都是用 inset:0 / top:0;bottom:0
+   撐滿的（top 與 bottom 都已經有值，覆蓋掉不會多長出一個維度），改成貼齊
+   看得見的那一塊。
+
+   目錄抽屜的高度另外由上面那條 --kb-vh 決定（同時有 top/bottom/height 時
+   height 說了算），這裡只需要把它的上緣一起讓開。
+   桌機版的目錄欄是 static，top/bottom 對它沒有作用。 */
+:root.kb-open aside.sidebar-directory,
+:root.kb-open .modal-overlay,
+:root.kb-open .sidebar-overlay,
+:root.kb-open .quickjump-overlay,
+:root.kb-open .quickjump-panel {
+  top: var(--kb-top);
+  bottom: var(--kb-inset);
+}
+
+/* 彈窗卡片的 85vh 是「整個版面視窗」的 85%，而版面視窗延伸到鍵盤後面——
+   遮罩讓開之後卡片還是會比遮罩高，底下那一截照樣看不到。
+   遮罩已經只剩看得見的那一塊了，這裡改成跟著遮罩走。 */
+:root.kb-open .modal-card { max-height: 100%; }
 
 @media (max-width: 768px), (max-height: 500px) {
   /* 鍵盤打開時把底部的世界觀列收起來。
@@ -2132,7 +2171,7 @@ button, input, select, textarea { color: inherit; }
      收起來之後主結構就吃滿整個可視高度，不用再扣那 56px。
      （桌面版的世界觀列是左邊那條直的，不擋打字，所以不收。） */
   :root.kb-open aside.world-rail { display: none; }
-  :root.kb-open .app-main-layout { height: var(--kb-h); }
+  :root.kb-open .app-main-layout { height: var(--kb-vh); }
 
 }
 
@@ -2158,8 +2197,14 @@ button, input, select, textarea { color: inherit; }
    底下已經沒有東西可以捲了。要留出那一行，只能從這裡留。
    （第一版只留了 72px，實測游標離按鈕只剩 20px，不到一行的 30.4px。）
 
-   按鈕高度取桌機的 44：兩種版面共用一條規則，取大的那個才不會不夠。 */
-:root.kb-open .editor-content-area {
+   按鈕高度取桌機的 44：兩種版面共用一條規則，取大的那個才不會不夠。
+
+   .kb-pending 是「聚焦了、鍵盤還沒來」——由 js/documents.js 的
+   setupCaretRoomOnFocus() 掛上、blur 時拿掉。值必須跟 .kb-open 一模一樣：
+   這塊空間最需要的時機就是鍵盤升起前的那一刻（要捲走的量最大，而那時
+   .kb-open 還沒掛上）。晚一步給，等於沒給。 */
+:root.kb-open .editor-content-area,
+:root.kb-pending .editor-content-area {
   padding-bottom: calc(var(--sp-12) + var(--icon-44) + var(--editor-line) * 2);
 }
 
@@ -2171,7 +2216,8 @@ button, input, select, textarea { color: inherit; }
    （這條規則各家瀏覽器對「游標」的捲動遵守得不一致，所以
    js/documents.js 的 ensureCaretRoom() 還有一道自己算的保險。） */
 .editor-content-area { scroll-padding-bottom: var(--sp-40); }
-:root.kb-open .editor-content-area {
+:root.kb-open .editor-content-area,
+:root.kb-pending .editor-content-area {
   scroll-padding-bottom: calc(var(--icon-40) + var(--sp-12) + var(--editor-line) * 2);
 }
 
