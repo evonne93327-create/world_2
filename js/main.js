@@ -638,7 +638,7 @@ function setupAnchoredPopoverFollow() {
 const KB_MIN_INSET = 80;
 
 /* 把判斷抽成純函式，才測得到（visualViewport 沒辦法在測試裡偽造）。
-   vv 傳 { height, scale }，innerH 傳 window.innerHeight。 */
+   vv 傳 { height, offsetTop, scale }，innerH 傳 window.innerHeight。 */
 function keyboardInsetState(vv, innerH) {
   if (!vv) return { open: false, height: 0, inset: 0 };
 
@@ -647,11 +647,28 @@ function keyboardInsetState(vv, innerH) {
      排除——否則一放大整個版面就縮掉，比原本的問題更糟。 */
   if (vv.scale > 1.05) return { open: false, height: 0, inset: 0 };
 
-  const hidden = innerH - vv.height;
-  if (hidden <= KB_MIN_INSET) return { open: false, height: 0, inset: 0 };
-  /* height＝看得見的高度（給在正常文件流裡的東西縮用）
-     inset＝被鍵盤蓋掉的高度（給 position:fixed 的東西閃用，見下面） */
-  return { open: true, height: vv.height, inset: hidden };
+  /* offsetTop 這一項不能省。
+
+     鍵盤升起時 iOS 會把整個版面視窗往上推，好讓游標露出來——那時
+     offsetTop 就不是 0 了。看得見的那一段在版面視窗座標裡是
+     [offsetTop, offsetTop + height]，所以「鍵盤上緣」在 offsetTop + height，
+     不是 height。
+
+     少了這一項，被推上去多少就會錯多少，而且是一次錯兩個方向：
+       inset 多算 offsetTop → 固定定位的浮動按鈕被頂得太高，浮在半空中
+       height 少算 offsetTop → body 太矮，畫面下方露出一條黑帶
+     使用者的截圖兩個症狀同時出現，黑帶高度正好等於被捲上去的距離。 */
+  /* offsetTop 取不到就當 0。少了這道保險，undefined + height 會是 NaN，
+     而 NaN <= KB_MIN_INSET 是 false——會一路往下掛上 .kb-open 並寫進
+     --kb-h: NaNpx，版面反而整個壞掉。算不出來時寧可當作沒有鍵盤。 */
+  const offsetTop = Number(vv.offsetTop) || 0;
+  const visibleBottom = offsetTop + Number(vv.height);
+  const hidden = innerH - visibleBottom;
+  if (!isFinite(hidden) || hidden <= KB_MIN_INSET) return { open: false, height: 0, inset: 0 };
+  /* height＝從版面視窗頂端到看得見的底端（給 body 這類從頂端長下來的東西用，
+            這樣它的下緣就正好停在鍵盤上緣）
+     inset ＝版面視窗底下被鍵盤蓋掉的高度（給 position:fixed 的東西閃用） */
+  return { open: true, height: visibleBottom, inset: hidden };
 }
 
 function applyKeyboardInset() {
@@ -676,6 +693,15 @@ function setupKeyboardInset() {
   if (!vv) return;   // 沒有這個 API 的瀏覽器維持原本的行為
 
   vv.addEventListener("resize", applyKeyboardInset);
+
+  /* offsetTop 改變時 iOS 發的是 scroll，不是 resize。
+
+     鍵盤升起之後，iOS 還會為了讓游標露出來把整個版面視窗再往上推，那一下
+     只有 scroll 會通知我們。少聽這一個的話，鍵盤剛升起的那一刻算出來的值
+     是對的，接下來被推上去多少就錯多少——浮動按鈕浮在半空、畫面下方露出
+     一條黑帶。 */
+  vv.addEventListener("scroll", applyKeyboardInset);
+
   /* 鍵盤升起／收起都會改變「看得見的底」在哪裡，游標的位置要重新確認一次 */
   vv.addEventListener("resize", function() {
     if (typeof scheduleCaretRoomCheck === "function") scheduleCaretRoomCheck();
