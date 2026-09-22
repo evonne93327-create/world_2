@@ -238,47 +238,21 @@ test("keyboardInsetState：offsetTop 量到怪值也不能算出負數或 NaN", 
   });
 });
 
-test("caretScrollBehavior：什麼時候可以用滑的", function() {
-  const f = app.caretScrollBehavior;
+test("caretBottomFromPointer：用手指的座標換算游標那一行的底", function() {
+  const f = app.caretBottomFromPointer;
 
-  // 一次性的大幅捲動（剛聚焦／鍵盤剛到定位）才值得動畫
-  assert.strictEqual(f(true, false, true), "smooth");
+  // 沒捲動過：就是點下去的位置再加一行
+  assert.strictEqual(f(300, 0, 0, 30), 330);
 
-  /* 打字途中每按一鍵都會校正一次，一次只捲一行。套上 300ms 的動畫會讓游標
-     一直追不上手速，比瞬間跳還難用。 */
-  assert.strictEqual(f(false, false, true), "auto");
+  /* 按下去之後瀏覽器自己又捲了 120（它也會把游標捲進視野）。
+     內容往上跑了 120，所以那一行現在在畫面上更高的地方。
+     不補這一段就是用過期的座標算，會少捲。 */
+  assert.strictEqual(f(300, 0, 120, 30), 210);
 
-  // 系統的「減少動態效果」是無障礙設定，不是我們可以斟酌的偏好
-  assert.strictEqual(f(true, true, true), "auto");
+  // 反方向（往回捲）也要對
+  assert.strictEqual(f(300, 120, 0, 30), 450);
 
-  // Safari 15.4 以前不認得 behavior: smooth，明確退回去而不是讓行為各機不同
-  assert.strictEqual(f(true, false, false), "auto");
-
-  // 三個「不要動畫」的理由任一個成立就不動畫
-  assert.strictEqual(f(false, true, false), "auto");
-});
-
-test("caretScrollPos：緩動要在前半段就走完大部分距離", function() {
-  const f = app.caretScrollPos;
-
-  // 端點
-  assert.strictEqual(f(100, 400, 0), 100);
-  assert.strictEqual(f(100, 400, 1), 500);
-  assert.strictEqual(f(100, 400, -0.5), 100, "負的進度當成還沒開始");
-  assert.strictEqual(f(100, 400, 2), 500, "超過 1 就是到了");
-
-  // 單調遞增
-  let prev = -Infinity;
-  for (let t = 0; t <= 1.0001; t += 0.05) {
-    const v = f(0, 400, t);
-    assert.ok(v >= prev, "t=" + t.toFixed(2) + " 時倒退了");
-    prev = v;
-  }
-
-  /* 這一條才是重點，不是好看而已：iOS 在哪一刻決定要不要推版面視窗我們
-     控制不了，只知道大概落在鍵盤升起的那段時間裡。前半段就走完八成以上的
-     話，就算 iOS 在動畫途中決定，游標也已經接近最終位置了。
-     線性的話同一時間只走到五成，剩下的一半就是被推的理由。 */
-  assert.ok(f(0, 100, 0.5) >= 80,
-    "一半的時間要走完八成以上（實得 " + f(0, 100, 0.5) + "%）");
+  /* 加一整行而不是半行：pointerY 落在那一行的任何高度都有可能，寧可多算
+     一點。游標只會被捲得更靠上，方向是安全的；少算就可能卡在鍵盤邊緣。 */
+  assert.ok(f(300, 0, 0, 30) - 300 >= 30, "至少要留一整行");
 });

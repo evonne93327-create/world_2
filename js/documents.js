@@ -289,6 +289,33 @@ let caretRoomAssumedInset = 0;
    只留最後五筆，不然長時間編輯會一直長。 */
 let caretScrollLog = [];
 
+/* 點下去的那個 y 座標，就是游標所在那一行的位置。
+
+   這是拿來取代 measureCaretBottom() 的——後者要把游標前面的整篇文章用同樣的
+   字體與寬度重排一次，實測一萬行 106ms。那一下停頓正好落在鍵盤升起的動畫
+   中間，使用者說的「卡」就是它。而且它只在「游標不在最後一行」時才會跑，
+   也就是**點文章中間**的時候——正是使用者描述的情況。
+
+   但這個位置本來就不必算：使用者剛剛才用手指指給我們看。pointerdown 的
+   clientY 就在那一行上，一個減法就換到答案，零重排。
+
+   scrollTop 也要一起記：從按下去到我們真正要用它，瀏覽器可能已經自己捲過
+   （它也會把游標捲進視野）。差多少就補多少，不然用的是過期的座標。 */
+let caretPointer = null;
+
+/* 手指按下去之後多久內還算數。超過就可能是先點別處、再用別的方式聚焦，
+   那時候那個座標跟游標沒有關係了。 */
+const CARET_POINTER_TTL_MS = 1500;
+
+/* 從點擊座標推回「游標那一行的底」在畫面上的 y。抽成純函式才測得到。
+
+   pointerY 落在那一行的任何高度都有可能，所以加一整行的高度當成行底——
+   寧可多算一點（游標只會被捲得更靠上，方向是安全的），少算就可能讓游標
+   剛好卡在鍵盤邊緣。 */
+function caretBottomFromPointer(pointerY, pointerScrollTop, nowScrollTop, lineHeight) {
+  return pointerY - (nowScrollTop - pointerScrollTop) + lineHeight;
+}
+
 function logCaretScroll(px) {
   caretScrollLog.push("+" + Math.round(px));
   if (caretScrollLog.length > 5) caretScrollLog.shift();
@@ -298,96 +325,33 @@ function resetCaretScrollLog() {
   caretScrollLog = [];
 }
 
-/* 這一次補捲要用滑的還是瞬間到位。
+/* 上一次是用哪一種方法量到游標的。只給 🩺 鍵盤診斷看——「卡」的時候
+   這一列會寫 mirror 幾 ms，一眼就知道停頓是不是它造成的。 */
+let caretMeasureHow = "—";
 
-   抽成純函式才測得到——matchMedia 與 scrollTo 的能力偵測在測試裡偽造不了。
-
-   三個「不要動畫」的理由，缺一不可：
-
-   - !animate：打字途中每按一鍵都會校正一次（走便宜的「最後一行」那條）。
-     那種一次只捲一行的微調要即時，套上 300ms 的動畫只會讓游標一直追不上
-     手速，比瞬間跳還難用。只有「剛聚焦／鍵盤剛到定位」這種一次性的大幅
-     捲動才值得動畫。
-   - reducedMotion：使用者在系統裡要求減少動態效果，那是無障礙設定，
-     不是我們可以斟酌的偏好。
-   - !supported：沒有 requestAnimationFrame 就沒辦法自己跑動畫，直接到位。 */
-function caretScrollBehavior(animate, reducedMotion, supported) {
-  if (!animate) return "auto";
-  if (reducedMotion) return "auto";
-  if (!supported) return "auto";
-  return "smooth";
+function nowMs() {
+  return (typeof performance !== "undefined" && performance.now)
+    ? performance.now() : Date.now();
 }
 
-function prefersReducedMotion() {
-  try {
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  } catch (e) {
-    return false;
-  }
+function caretPointerFresh() {
+  return !!caretPointer && (nowMs() - caretPointer.at) < CARET_POINTER_TTL_MS;
 }
 
-function supportsCaretScrollAnim() {
-  return typeof requestAnimationFrame === "function";
-}
-
-/* 動畫長度。這個數字不是手感問題，是**正確性**問題。
+/* 為什麼這裡沒有動畫——這一條是硬限制，不是還沒做。
 
    聚焦時那一下補捲是在跟 iOS 搶時間：只要鍵盤升起的那一刻游標已經在安全
-   位置，iOS 就沒有理由去推版面視窗（推了最上面的工具列就會被推出畫面，
-   見 NOTES 3c/3d）。所以這一下必須在鍵盤升起之前就走完。
+   位置，iOS 就沒有理由去推版面視窗（推了最上面的工具列就被推出畫面）。
 
-   鍵盤的進場動畫大約 250~300ms，所以這裡要明顯短於它。
-   用瀏覽器內建的 behavior: smooth 不行——那個時長是瀏覽器決定的（Safari 對
-   長距離大約 300~500ms），指定不了，實測就是這樣讓「工具列被吃掉」跑回來的。
+   試過兩輪，兩輪都壞：
 
-   低於 100ms 人眼看起來就只是跳了一下，動畫等於白做。 */
-const CARET_SCROLL_MS = 160;
+     瀏覽器內建的 behavior: smooth（時長 300~500ms，指定不了）→ 工具列被吃掉
+     自己跑 rAF 動畫壓到 160ms ease-out                      → 工具列還是被吃掉
 
-/* 緩動：前面快、後面收。
+   所以 iOS 決定的那一刻很早，早到任何動畫都來不及。**這一下必須是瞬間的。**
 
-   這不只是好看。iOS 要在哪一刻決定推不推版面視窗，我們控制不了，只知道
-   大概落在鍵盤升起的那段時間裡。用 ease-out 的話，一半的時間就走完八成以上
-   的距離——就算 iOS 在動畫途中決定，游標也已經接近最終位置了。
-   線性的話同樣時間只走到一半，剩下的一半就是被推的理由。 */
-function easeOutCubic(t) {
-  const c = 1 - t;
-  return 1 - c * c * c;
-}
-
-/* 某個時間點該停在哪。抽出來才測得到——rAF 在測試裡跑不起來。
-   t 是 0~1 的進度（呼叫端負責夾範圍）。 */
-function caretScrollPos(from, delta, t) {
-  if (!(t > 0)) return from;
-  if (t >= 1) return from + delta;
-  return from + delta * easeOutCubic(t);
-}
-
-let caretScrollAnim = null;
-
-function animateCaretScroll(scroller, delta) {
-  if (caretScrollAnim) cancelAnimationFrame(caretScrollAnim);
-
-  const from = scroller.scrollTop;
-  const start = (typeof performance !== "undefined" && performance.now)
-    ? performance.now() : Date.now();
-  let expected = from;
-
-  function step(now) {
-    /* 有人插手就讓開。使用者自己拖、或別的程式碼捲了它——上一格我們設成
-       什麼、這一格讀到的就該是什麼，差太多代表不是我們動的。
-       繼續硬捲會變成跟使用者的手指打架。 */
-    if (Math.abs(scroller.scrollTop - expected) > 2) { caretScrollAnim = null; return; }
-
-    const t = Math.min(1, (now - start) / CARET_SCROLL_MS);
-    scroller.scrollTop = caretScrollPos(from, delta, t);
-    expected = scroller.scrollTop;          // 被夾到上下限的話以實際值為準
-
-    if (t >= 1) { caretScrollAnim = null; return; }
-    caretScrollAnim = requestAnimationFrame(step);
-  }
-
-  caretScrollAnim = requestAnimationFrame(step);
-}
+   使用者抱怨的「卡」不是這裡——那是 measureCaretBottom() 把整篇文章重排一次
+   造成的主執行緒停頓（實測一萬行 106ms），見下面用點擊座標取代它的那一段。
 
 /* accurate＝允許用重排的方式量任意位置的游標。打字途中不要開。 */
 function scheduleCaretRoomCheck(accurate, assumedInset) {
@@ -430,6 +394,17 @@ function setupCaretRoomOnFocus() {
   const ta = document.getElementById("docContentInput");
   if (!ta) return;
 
+  /* 要在 focus 之前就記下來：focus 一來我們就要用它了。
+     pointerdown 比 click 早，而且觸控與滑鼠都會發。 */
+  ta.addEventListener("pointerdown", function(e) {
+    const scroller = document.querySelector(".editor-content-area");
+    caretPointer = {
+      y: e.clientY,
+      scrollTop: scroller ? scroller.scrollTop : 0,
+      at: nowMs()
+    };
+  });
+
   ta.addEventListener("focus", function() {
     resetCaretScrollLog();      // 每次聚焦重新計數，診斷看的是「這一次」
 
@@ -448,6 +423,7 @@ function setupCaretRoomOnFocus() {
      那是對的，鍵盤隨時可能再上來。） */
   ta.addEventListener("blur", function() {
     document.documentElement.classList.remove("kb-pending");
+    caretPointer = null;        // 下次聚焦不一定是用點的，不要沿用舊座標
   });
 }
 
@@ -536,35 +512,32 @@ function ensureCaretRoom(accurate, assumedInset) {
   }
 
   const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 24;
-  const caretLineBottom = onLastLine
-    ? ta.getBoundingClientRect().bottom
-    : measureCaretBottom(ta);
-  if (caretLineBottom === null) return;
+
+  /* 三條路，成本差很多：
+
+     最後一行  → 那一行的底就是 textarea 的底，一次 getBoundingClientRect。
+     剛剛點過  → 用手指的座標換算，零重排。這是「點中間」的常見情況。
+     其他      → 只好重排（一萬行 106ms）。程式聚焦、鍵盤操作才會走到這裡。 */
+  let caretLineBottom;
+  if (onLastLine) {
+    caretLineBottom = ta.getBoundingClientRect().bottom;
+    caretMeasureHow = "last-line";
+  } else if (caretPointerFresh()) {
+    caretLineBottom = caretBottomFromPointer(
+      caretPointer.y, caretPointer.scrollTop, scroller.scrollTop, lineHeight);
+    caretMeasureHow = "pointer";
+  } else {
+    const t0 = nowMs();
+    caretLineBottom = measureCaretBottom(ta);
+    caretMeasureHow = "mirror " + Math.round(nowMs() - t0) + "ms";
+  }
+  if (caretLineBottom === null || caretLineBottom === undefined) return;
 
   // 游標那一行的底，要離「可用的底」至少一行
   const overflow = caretLineBottom - (bottom - lineHeight);
   if (overflow <= 1) return;
 
-  /* 用滑的，不要瞬間跳。
-
-     即使只捲一次，瞬間位移也會讓人「失去自己在哪一段」——畫面忽然換一批字，
-     要重新找游標。滑過去的話眼睛跟得上，而且剛好跟鍵盤升起的動畫疊在一起，
-     看起來是同一個動作。
-
-     但**不能用瀏覽器內建的 behavior: smooth**：那個時長指定不了（Safari 對長
-     距離大約 300~500ms），比鍵盤升起還慢，於是 iOS 又有理由去推版面視窗，
-     「上面的東西被吃掉」就跑回來了——這是實際發生過的一輪。所以自己跑動畫，
-     把時長壓在 CARET_SCROLL_MS。
-
-     打字途中那條路仍然是瞬間到位，理由見 caretScrollBehavior()。 */
-  const behavior = caretScrollBehavior(
-    !!accurate, prefersReducedMotion(), supportsCaretScrollAnim());
-
-  if (behavior === "smooth") {
-    animateCaretScroll(scroller, overflow);
-  } else {
-    scroller.scrollTop += overflow;
-  }
+  scroller.scrollTop += overflow;
   logCaretScroll(overflow);
 }
 
