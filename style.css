@@ -1415,6 +1415,10 @@ main.content-workspace {
 /* 自訂右鍵選單 */
 .ctx-menu-overlay {
   position: fixed;
+  /* 遮罩蓋住整個畫面，長按時手指也可能落在它上面——理由同 .ctx-menu */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   inset: 0;
   background: rgba(42,36,32,0.32);
   z-index: 190;
@@ -1424,6 +1428,20 @@ main.content-workspace {
 
 .ctx-menu {
   position: fixed;
+  /* 選單裡的文字一律不能被選取。
+
+     這不是裝飾。選單是在手指還按著的時候跳出來的（長按 480ms），而在
+     平板／桌機版面它就開在手指正下方——選單左上角＝觸控點，標題那一行
+     剛好落在手指位置。手指還按著，iOS 的長按手勢繼續跑，這時底下已經從
+     節點換成選單了；標題如果選得到字，就會跳出系統的選字工具列
+     （拷貝／查詢／翻譯），整個蓋住我們的選單。使用者看到的是「長按節點，
+     整個反藍」——被選到的其實是選單，不是節點。
+
+     設在容器上，裡面的標題、項目、圖示、分隔線全部繼承，以後加新的東西
+     也不會漏掉。（.ctx-menu-item 自己那一行留著沒關係，只是重複。） */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1467,6 +1485,7 @@ main.content-workspace {
   color: var(--text-primary);
   cursor: pointer;
   user-select: none;
+  -webkit-user-select: none;
   -webkit-touch-callout: none;
   transition: background 0.12s ease;
 }
