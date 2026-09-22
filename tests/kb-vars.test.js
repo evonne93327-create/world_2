@@ -243,7 +243,8 @@ test("診斷要數得出「這一次聚焦捲了幾次」", function() {
 test("一次性的補捲要用滑的，打字途中不要", function() {
   /* caretScrollBehavior() 算出來的結果要真的被用上——純函式測得再漂亮，
      呼叫端沒接也是白搭。 */
-  assert.match(allJs, /behavior:\s*"smooth"/, "要真的傳 behavior: smooth 給 scrollTo");
+  assert.match(allJs, /animateCaretScroll\(scroller, overflow\)/,
+    "要真的走自己的動畫");
   assert.match(allJs, /caretScrollBehavior\(\s*!!accurate/,
     "動不動畫要看 accurate —— 那是「一次性時機」與「打字途中」的分界，" +
     "兩條路都用同一個值就會退回瞬間跳、或讓打字變黏");
@@ -251,4 +252,34 @@ test("一次性的補捲要用滑的，打字途中不要", function() {
   /* 退路要在：不支援 behavior 的瀏覽器仍然得捲得動。 */
   assert.match(allJs, /scroller\.scrollTop \+= overflow/,
     "behavior 算出 auto 時要退回直接設 scrollTop");
+});
+
+/* ==========================================================
+   自己跑動畫：時長是正確性問題，不是手感問題
+   ========================================================== */
+test("不可以用瀏覽器內建的 behavior: smooth 捲編輯區", function() {
+  /* 內建的時長是瀏覽器決定的（Safari 對長距離約 300~500ms），比鍵盤升起
+     （約 250~300ms）還慢。聚焦時那一下補捲是在跟 iOS 搶時間——慢了，iOS 就
+     有理由去推版面視窗，最上面的工具列被推出畫面。實際發生過一輪。 */
+  assert.ok(!/scrollTo\(\{[^}]*behavior:\s*"smooth"/.test(allJs),
+    "編輯區的補捲不能交給瀏覽器的 behavior: smooth —— 時長指定不了，" +
+    "會比鍵盤升起還慢，「上面的東西被吃掉」就會跑回來");
+});
+
+test("動畫要短到在鍵盤升起前就走完", function() {
+  const m = allJs.match(/const CARET_SCROLL_MS = (\d+);/);
+  assert.ok(m, "要有具名常數，不要把毫秒數散在程式碼裡");
+  const ms = parseInt(m[1], 10);
+  assert.ok(ms >= 100, "低於 100ms 看起來就只是跳了一下，動畫等於白做");
+  assert.ok(ms < 250, "鍵盤的進場動畫約 250~300ms，要明顯短於它才搶得贏");
+});
+
+test("動畫被人插手就要讓開", function() {
+  /* 使用者自己拖、或別的程式碼捲了它，繼續硬捲會變成跟手指打架。 */
+  const fn = allJs.match(/function animateCaretScroll\([\s\S]*?(?=\nfunction )/);
+  assert.ok(fn, "找不到 animateCaretScroll()");
+  assert.match(fn[0], /cancelAnimationFrame/, "重新開始時要把上一個動畫取消掉");
+  assert.match(fn[0], /Math\.abs\(scroller\.scrollTop - expected\)/,
+    "每一格要確認「上一格我們設成什麼、這一格讀到的就該是什麼」，" +
+    "差太多代表不是我們動的，要讓開");
 });

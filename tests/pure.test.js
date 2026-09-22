@@ -257,3 +257,28 @@ test("caretScrollBehavior：什麼時候可以用滑的", function() {
   // 三個「不要動畫」的理由任一個成立就不動畫
   assert.strictEqual(f(false, true, false), "auto");
 });
+
+test("caretScrollPos：緩動要在前半段就走完大部分距離", function() {
+  const f = app.caretScrollPos;
+
+  // 端點
+  assert.strictEqual(f(100, 400, 0), 100);
+  assert.strictEqual(f(100, 400, 1), 500);
+  assert.strictEqual(f(100, 400, -0.5), 100, "負的進度當成還沒開始");
+  assert.strictEqual(f(100, 400, 2), 500, "超過 1 就是到了");
+
+  // 單調遞增
+  let prev = -Infinity;
+  for (let t = 0; t <= 1.0001; t += 0.05) {
+    const v = f(0, 400, t);
+    assert.ok(v >= prev, "t=" + t.toFixed(2) + " 時倒退了");
+    prev = v;
+  }
+
+  /* 這一條才是重點，不是好看而已：iOS 在哪一刻決定要不要推版面視窗我們
+     控制不了，只知道大概落在鍵盤升起的那段時間裡。前半段就走完八成以上的
+     話，就算 iOS 在動畫途中決定，游標也已經接近最終位置了。
+     線性的話同一時間只走到五成，剩下的一半就是被推的理由。 */
+  assert.ok(f(0, 100, 0.5) >= 80,
+    "一半的時間要走完八成以上（實得 " + f(0, 100, 0.5) + "%）");
+});

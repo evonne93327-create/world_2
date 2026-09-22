@@ -310,8 +310,7 @@ function resetCaretScrollLog() {
      捲動才值得動畫。
    - reducedMotion：使用者在系統裡要求減少動態效果，那是無障礙設定，
      不是我們可以斟酌的偏好。
-   - !supported：Safari 15.4 以前不認得 behavior: smooth。傳了也不會報錯，
-     但會被當成瞬間捲——與其讓行為在不同機器上不一樣，不如明確退回去。 */
+   - !supported：沒有 requestAnimationFrame 就沒辦法自己跑動畫，直接到位。 */
 function caretScrollBehavior(animate, reducedMotion, supported) {
   if (!animate) return "auto";
   if (reducedMotion) return "auto";
@@ -327,12 +326,67 @@ function prefersReducedMotion() {
   }
 }
 
-function supportsScrollBehavior() {
-  try {
-    return "scrollBehavior" in document.documentElement.style;
-  } catch (e) {
-    return false;
+function supportsCaretScrollAnim() {
+  return typeof requestAnimationFrame === "function";
+}
+
+/* 動畫長度。這個數字不是手感問題，是**正確性**問題。
+
+   聚焦時那一下補捲是在跟 iOS 搶時間：只要鍵盤升起的那一刻游標已經在安全
+   位置，iOS 就沒有理由去推版面視窗（推了最上面的工具列就會被推出畫面，
+   見 NOTES 3c/3d）。所以這一下必須在鍵盤升起之前就走完。
+
+   鍵盤的進場動畫大約 250~300ms，所以這裡要明顯短於它。
+   用瀏覽器內建的 behavior: smooth 不行——那個時長是瀏覽器決定的（Safari 對
+   長距離大約 300~500ms），指定不了，實測就是這樣讓「工具列被吃掉」跑回來的。
+
+   低於 100ms 人眼看起來就只是跳了一下，動畫等於白做。 */
+const CARET_SCROLL_MS = 160;
+
+/* 緩動：前面快、後面收。
+
+   這不只是好看。iOS 要在哪一刻決定推不推版面視窗，我們控制不了，只知道
+   大概落在鍵盤升起的那段時間裡。用 ease-out 的話，一半的時間就走完八成以上
+   的距離——就算 iOS 在動畫途中決定，游標也已經接近最終位置了。
+   線性的話同樣時間只走到一半，剩下的一半就是被推的理由。 */
+function easeOutCubic(t) {
+  const c = 1 - t;
+  return 1 - c * c * c;
+}
+
+/* 某個時間點該停在哪。抽出來才測得到——rAF 在測試裡跑不起來。
+   t 是 0~1 的進度（呼叫端負責夾範圍）。 */
+function caretScrollPos(from, delta, t) {
+  if (!(t > 0)) return from;
+  if (t >= 1) return from + delta;
+  return from + delta * easeOutCubic(t);
+}
+
+let caretScrollAnim = null;
+
+function animateCaretScroll(scroller, delta) {
+  if (caretScrollAnim) cancelAnimationFrame(caretScrollAnim);
+
+  const from = scroller.scrollTop;
+  const start = (typeof performance !== "undefined" && performance.now)
+    ? performance.now() : Date.now();
+  let expected = from;
+
+  function step(now) {
+    /* 有人插手就讓開。使用者自己拖、或別的程式碼捲了它——上一格我們設成
+       什麼、這一格讀到的就該是什麼，差太多代表不是我們動的。
+       繼續硬捲會變成跟使用者的手指打架。 */
+    if (Math.abs(scroller.scrollTop - expected) > 2) { caretScrollAnim = null; return; }
+
+    const t = Math.min(1, (now - start) / CARET_SCROLL_MS);
+    scroller.scrollTop = caretScrollPos(from, delta, t);
+    expected = scroller.scrollTop;          // 被夾到上下限的話以實際值為準
+
+    if (t >= 1) { caretScrollAnim = null; return; }
+    caretScrollAnim = requestAnimationFrame(step);
   }
+
+  caretScrollAnim = requestAnimationFrame(step);
 }
 
 /* accurate＝允許用重排的方式量任意位置的游標。打字途中不要開。 */
@@ -497,12 +551,17 @@ function ensureCaretRoom(accurate, assumedInset) {
      要重新找游標。滑過去的話眼睛跟得上，而且剛好跟鍵盤升起的動畫疊在一起，
      看起來是同一個動作。
 
+     但**不能用瀏覽器內建的 behavior: smooth**：那個時長指定不了（Safari 對長
+     距離大約 300~500ms），比鍵盤升起還慢，於是 iOS 又有理由去推版面視窗，
+     「上面的東西被吃掉」就跑回來了——這是實際發生過的一輪。所以自己跑動畫，
+     把時長壓在 CARET_SCROLL_MS。
+
      打字途中那條路仍然是瞬間到位，理由見 caretScrollBehavior()。 */
   const behavior = caretScrollBehavior(
-    !!accurate, prefersReducedMotion(), supportsScrollBehavior());
+    !!accurate, prefersReducedMotion(), supportsCaretScrollAnim());
 
   if (behavior === "smooth") {
-    scroller.scrollTo({ top: scroller.scrollTop + overflow, behavior: "smooth" });
+    animateCaretScroll(scroller, overflow);
   } else {
     scroller.scrollTop += overflow;
   }
