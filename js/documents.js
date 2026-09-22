@@ -298,6 +298,43 @@ function resetCaretScrollLog() {
   caretScrollLog = [];
 }
 
+/* 這一次補捲要用滑的還是瞬間到位。
+
+   抽成純函式才測得到——matchMedia 與 scrollTo 的能力偵測在測試裡偽造不了。
+
+   三個「不要動畫」的理由，缺一不可：
+
+   - !animate：打字途中每按一鍵都會校正一次（走便宜的「最後一行」那條）。
+     那種一次只捲一行的微調要即時，套上 300ms 的動畫只會讓游標一直追不上
+     手速，比瞬間跳還難用。只有「剛聚焦／鍵盤剛到定位」這種一次性的大幅
+     捲動才值得動畫。
+   - reducedMotion：使用者在系統裡要求減少動態效果，那是無障礙設定，
+     不是我們可以斟酌的偏好。
+   - !supported：Safari 15.4 以前不認得 behavior: smooth。傳了也不會報錯，
+     但會被當成瞬間捲——與其讓行為在不同機器上不一樣，不如明確退回去。 */
+function caretScrollBehavior(animate, reducedMotion, supported) {
+  if (!animate) return "auto";
+  if (reducedMotion) return "auto";
+  if (!supported) return "auto";
+  return "smooth";
+}
+
+function prefersReducedMotion() {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch (e) {
+    return false;
+  }
+}
+
+function supportsScrollBehavior() {
+  try {
+    return "scrollBehavior" in document.documentElement.style;
+  } catch (e) {
+    return false;
+  }
+}
+
 /* accurate＝允許用重排的方式量任意位置的游標。打字途中不要開。 */
 function scheduleCaretRoomCheck(accurate, assumedInset) {
   if (accurate) caretRoomAccurate = true;
@@ -452,10 +489,24 @@ function ensureCaretRoom(accurate, assumedInset) {
 
   // 游標那一行的底，要離「可用的底」至少一行
   const overflow = caretLineBottom - (bottom - lineHeight);
-  if (overflow > 1) {
+  if (overflow <= 1) return;
+
+  /* 用滑的，不要瞬間跳。
+
+     即使只捲一次，瞬間位移也會讓人「失去自己在哪一段」——畫面忽然換一批字，
+     要重新找游標。滑過去的話眼睛跟得上，而且剛好跟鍵盤升起的動畫疊在一起，
+     看起來是同一個動作。
+
+     打字途中那條路仍然是瞬間到位，理由見 caretScrollBehavior()。 */
+  const behavior = caretScrollBehavior(
+    !!accurate, prefersReducedMotion(), supportsScrollBehavior());
+
+  if (behavior === "smooth") {
+    scroller.scrollTo({ top: scroller.scrollTop + overflow, behavior: "smooth" });
+  } else {
     scroller.scrollTop += overflow;
-    logCaretScroll(overflow);
   }
+  logCaretScroll(overflow);
 }
 
 function autoGrowTextarea(el) {

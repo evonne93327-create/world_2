@@ -237,3 +237,23 @@ test("keyboardInsetState：offsetTop 量到怪值也不能算出負數或 NaN", 
     assert.ok(isFinite(missing[k]), k + " 不可以是 NaN");
   });
 });
+
+test("caretScrollBehavior：什麼時候可以用滑的", function() {
+  const f = app.caretScrollBehavior;
+
+  // 一次性的大幅捲動（剛聚焦／鍵盤剛到定位）才值得動畫
+  assert.strictEqual(f(true, false, true), "smooth");
+
+  /* 打字途中每按一鍵都會校正一次，一次只捲一行。套上 300ms 的動畫會讓游標
+     一直追不上手速，比瞬間跳還難用。 */
+  assert.strictEqual(f(false, false, true), "auto");
+
+  // 系統的「減少動態效果」是無障礙設定，不是我們可以斟酌的偏好
+  assert.strictEqual(f(true, true, true), "auto");
+
+  // Safari 15.4 以前不認得 behavior: smooth，明確退回去而不是讓行為各機不同
+  assert.strictEqual(f(true, false, false), "auto");
+
+  // 三個「不要動畫」的理由任一個成立就不動畫
+  assert.strictEqual(f(false, true, false), "auto");
+});
