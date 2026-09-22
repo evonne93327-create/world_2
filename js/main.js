@@ -976,8 +976,12 @@ function setupEdgeSwipe() {
      navTop < 0            → 上面的工具列還是被推出畫面
      fabTop > vvH          → 浮動按鈕還藏在鍵盤後面
 
-   開關放在設定裡，狀態記在 localStorage——使用者要先打開、關掉設定、
-   點進內文把鍵盤叫出來，中間隔了好幾步，不記著就白開了。
+   狀態記在 localStorage——使用者要先打開、關掉設定、點進內文把鍵盤叫出來，
+   中間隔了好幾步，不記著就白開了。
+
+   開關藏在設定裡「版本」那一列的長按選單裡，不佔一列：這是回報問題時才用
+   得到的工具，平常不該一直在那邊。藏在版本那一列是因為那裡本來就是
+   「回報問題時請附上」的那一列。
    ========================================================== */
 
 const KB_DIAG_KEY = "wb_kbdiag";
@@ -989,13 +993,25 @@ function kbDiagEnabled() {
 function toggleKbDiag() {
   const next = !kbDiagEnabled();
   try { localStorage.setItem(KB_DIAG_KEY, next ? "1" : "0"); } catch (e) {}
-  renderKbDiagRow();
   applyKbDiagVisibility();
 }
 
-function renderKbDiagRow() {
-  const v = document.getElementById("kbDiagRowValue");
-  if (v) v.textContent = kbDiagEnabled() ? "開" : "關";
+/* 把開關掛到設定裡「版本」那一列的長按（或右鍵）選單。
+
+   用 attachContextMenu() 而不是自己寫長按：它已經處理過 iPad 上那一串麻煩
+   事——長按之後放開手指會補一個假的 click，不擋掉的話會順便觸發那一列原本
+   的「檢查更新」（見 NOTES 的 3a）。 */
+function setupKbDiagEntry() {
+  const row = document.getElementById("versionRow");
+  if (!row || typeof attachContextMenu !== "function") return;
+
+  attachContextMenu(row, function() {
+    return [{
+      icon: "\u{1FA7A}",
+      label: kbDiagEnabled() ? "關掉鍵盤診斷" : "打開鍵盤診斷",
+      action: toggleKbDiag
+    }];
+  }, function() { return "\u{1FA7A} 疑難排解"; });
 }
 
 function applyKbDiagVisibility() {
@@ -1094,7 +1110,7 @@ function copyKbDiag() {
 }
 
 function setupKbDiag() {
-  renderKbDiagRow();
+  setupKbDiagEntry();
   applyKbDiagVisibility();
   if (!kbDiagEnabled()) return;
 
