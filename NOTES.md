@@ -172,6 +172,54 @@ iOS 的 `dvh` **不會**扣掉軟體鍵盤（只扣瀏覽器自己的網址列�
 以及 `offsetTop` 取不到時要當 0——`undefined` 會讓整串變成 `NaN`，而
 `NaN <= 門檻` 是 `false`，會一路往下寫進 `--kb-h: NaNpx`，比不做還糟。
 
+### 3e. 版本那一行會在最需要它的時候說謊
+
+`sw.js` 有 `skipWaiting()` + `clients.claim()`，所以新的 worker 一裝好就
+**立刻接管已經開著的那一頁**。於是會出現這個狀態：
+
+| 東西 | 是哪一版 |
+|---|---|
+| 設定裡顯示的版本（問 worker 拿的） | **新的** |
+| 這一頁的 `style.css` / `js`（載入當下拿的） | **舊的** |
+
+使用者看到新版號、以為在跑新程式碼，回報「你改了還是一樣」——而新版的 CSS
+根本還沒套用。**這真的發生過，白查了一輪**：對方附了截圖說版本是 v60，症狀
+卻跟 v58 一模一樣。
+
+所以 `controllerchange`（以及 `updatefound` 那條備援）除了跳更新提示，還要
+把這一頁標記成 `pageCodeStale`，而 `renderVersionRow()` **必須把這個判斷排在
+「已是最新版」之前**——兩邊版號這時是一致的，排在後面就永遠輪不到它。
+
+更新提示彈窗不能代替這一行：它有可能被別的彈窗擋著排隊、也可能被使用者按掉，
+而版本那一行是「回報問題時請附上」的那一行，它說的話必須永遠是真的。
+
+### 3f. 猜三輪不如讓那台機器自己說
+
+iOS 鍵盤的行為在這個環境驗不了（裝不起 WebKit）。3c 那三個踩過的寫法、加上
+這一輪的兩個，全都是靠推理猜出來的，猜錯一次就是一整輪。
+
+設定裡有一個預設關著的 **🩺 鍵盤診斷**：打開之後畫面左上角會浮一塊黑框，
+即時顯示 `innerHeight` / `visualViewport` 的寬高與 `offsetTop` / `scale`、
+`.kb-open` 有沒有掛上、那四個 `--kb-*` 的實際值、`body` 的 `padding-top` 與
+高度、工具列與浮動按鈕的 `rect.top`，還有 `standalone`（是不是從主畫面開的
+PWA）與 `stale`（這一頁是不是在跑舊程式碼）。有「複製」鈕可以直接貼回來。
+
+幾個決定性的讀法：
+
+| 看到 | 意思 |
+|---|---|
+| `kbOpen: FALSE` | 根本沒偵測到鍵盤，`vv.height` 沒縮 |
+| `kbOpen: true`、`bodyPadTop: 0px`、`vvTop` 不是 0 | 偵測到了但讓位的 CSS 沒生效（多半是 3e 那個狀況） |
+| `navTop` 是負的 | 上面的工具列還是被推出畫面 |
+| `fabTop` 大於 `vv` 的高度 | 浮動按鈕還藏在鍵盤後面 |
+
+面板自己的 `top` 是用 `visualViewport.offsetTop` 直接算的，**不能用
+`--kb-top`**：那個變數只有在偵測到鍵盤時才有值，而「沒偵測到」正是要診斷的
+情況之一。
+
+（以前做過一頁 `diag.html`，任務結束就刪掉了。這次放在設定裡、預設關著，
+下次就不用重做。）
+
 ### 4. 彈窗卡片不要畫預設焦點框
 
 `.modal-card` 的 `tabindex="-1"` 只是給程式聚焦用的錨點，使用者按 Tab
@@ -220,7 +268,7 @@ iOS 的 `dvh` **不會**扣掉軟體鍵盤（只扣瀏覽器自己的網址列�
 ### 在 repo 裡的
 
 ```bash
-node --test          # 31 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 35 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |
@@ -229,6 +277,7 @@ node --test          # 31 項。注意：不要寫 node --test tests/，Node 22 
 | `tests/edge-geometry.test.js` | 白板連線的曲線幾何 |
 | `tests/shell-manifest.test.js` | sw.js 的 SHELL 有沒有跟實際檔案脫節 |
 | `tests/kb-vars.test.js` | 鍵盤那組 `--kb-*` 與 `.kb-*`：JS 寫／掛的與 CSS 用的有沒有對上 |
+| `tests/wiring.test.js` | `onclick="foo()"` 有沒有對應的函式、鍵盤診斷的 id 有沒有接上 |
 | `tests/helpers/load-app.js` | `node:vm` 沙箱；跨 realm 的 `deepStrictEqual` 會因為 prototype 不同而失敗，所以有個 `host()` 做 JSON round-trip |
 
 ### 不在 repo 裡的

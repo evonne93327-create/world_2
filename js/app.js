@@ -18,6 +18,7 @@ window.addEventListener("DOMContentLoaded", function() {
   setupHistoryNavigation();
   setupKeyboardInset();
   setupCaretRoomOnFocus();
+  setupKbDiag();
   setupEdgeSwipe();
   initSync();
   initSyncRecovery();
@@ -52,6 +53,7 @@ function registerServiceWorker() {
   // updatefound 可能已經發生過了，監聽器掛上去也接不到。
   navigator.serviceWorker.addEventListener("controllerchange", function() {
     if (!hadController) { hadController = true; return; }
+    markPageCodeStale();
     showUpdateModal();
   });
 
@@ -63,6 +65,7 @@ function registerServiceWorker() {
       if (!incoming || !hadController) return;
       incoming.addEventListener("statechange", function() {
         if (incoming.state === "installed" || incoming.state === "activated") {
+          markPageCodeStale();
           showUpdateModal();
         }
       });
@@ -75,6 +78,26 @@ function registerServiceWorker() {
     // 註冊失敗只代表沒有離線能力，app 本身照常運作，不需要打擾使用者
     console.warn("Service worker 註冊失敗：", e);
   });
+}
+
+/* 這一頁載入之後，底下的程式碼被換掉了嗎。
+
+   sw.js 有 skipWaiting() + clients.claim()，新的 worker 一裝好就**立刻接管
+   已經開著的這一頁**。於是會出現一個很會騙人的狀態：
+
+     設定裡的版本顯示 v60（那是問 worker 拿到的）
+     但這一頁的 style.css / js 還是載入當下那一版的
+
+   使用者看到 v60、以為在跑新版，回報「改了還是一樣」——而其實新版的
+   CSS 根本還沒套用。這一輪就真的發生了，白查了一整輪。
+
+   所以只要接管過，就把這一頁標記成「跑的是舊程式碼」，版本那一行要講出來。
+   這比顯示哪個版號更重要：使用者要的答案是「我看到的是不是你改的那一版」。 */
+let pageCodeStale = false;
+
+function markPageCodeStale() {
+  pageCodeStale = true;
+  if (typeof renderVersionRow === "function") renderVersionRow();
 }
 
 /* 偵測到新版時提示，但不自動重載。

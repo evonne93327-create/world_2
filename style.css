@@ -2305,3 +2305,59 @@ button, input, select, textarea { color: inherit; }
   font-size: var(--fs-10);
   color: var(--text-muted);
 }
+
+/* ==========================================================
+   鍵盤診斷面板
+
+   平常不顯示。z-index 要比所有東西都高（含彈窗的 100 與目錄抽屜）——
+   它存在的理由就是「在畫面已經亂掉的時候還看得到」。
+   ========================================================== */
+.kbdiag-panel {
+  position: fixed;
+  left: 8px;
+  top: 8px;
+  z-index: 9999;
+  display: none;
+  max-width: min(320px, calc(100vw - 16px));
+  background: rgba(0, 0, 0, 0.82);
+  color: #e8e8e8;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: var(--radius-8);
+  padding: var(--sp-8);
+  /* 面板本身不能吃掉點擊：使用者要能點到它底下的內文把鍵盤叫出來。
+     只有上面那排按鈕收回點擊。 */
+  pointer-events: none;
+}
+.kbdiag-panel.active { display: block; }
+
+.kbdiag-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  font-size: var(--fs-12);
+  font-weight: 700;
+  margin-bottom: var(--sp-6);
+}
+.kbdiag-btn {
+  pointer-events: auto;
+  margin-left: auto;
+  background: rgba(255, 255, 255, 0.16);
+  color: inherit;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: var(--sp-4) var(--sp-8);
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+.kbdiag-btn + .kbdiag-btn { margin-left: 0; }
+
+/* 等寬字：數字一行一行對齊才看得出哪個變了。
+   white-space: pre-wrap 讓長的一行折下來而不是被切掉。 */
+.kbdiag-body {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

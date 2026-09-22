@@ -148,6 +148,7 @@ function renderSettingsRows() {
   }
   if (typeof renderSyncIndicator === "function") renderSyncIndicator();
   renderVersionRow();
+  if (typeof renderKbDiagRow === "function") renderKbDiagRow();
 }
 
 /* 目前跑的是哪一版。
@@ -208,6 +209,18 @@ function renderVersionRow() {
     const shown = running || latest;
     value.textContent = shown || "?";
     if (!desc) return;
+
+    /* 這一條要排在最前面。
+
+       worker 接管過之後，上面問到的 running 已經是**新**的版號了，但這一頁
+       的 CSS 與 js 還是載入當下那一版——三個字串會一致，這一行會很有自信地
+       說「已是最新版」，而使用者看到的其實還是舊畫面。
+       實際發生過：使用者確認了版號是新的、回報「改了還是一樣」，整輪白查。 */
+    if (typeof pageCodeStale !== "undefined" && pageCodeStale) {
+      value.textContent = shown + "（未套用）";
+      desc.textContent = "新版已經下載好了，但這一頁還在跑舊的程式碼，重新整理才會套用";
+      return;
+    }
 
     if (!shown) {
       desc.textContent = "連不上伺服器，也問不到本機的版本";
