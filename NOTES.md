@@ -409,7 +409,7 @@ PWA）與 `stale`（這一頁是不是在跑舊程式碼）。有「複製」鈕
 ### 在 repo 裡的
 
 ```bash
-node --test          # 50 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 55 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |
@@ -418,7 +418,8 @@ node --test          # 50 項。注意：不要寫 node --test tests/，Node 22 
 | `tests/edge-geometry.test.js` | 白板連線的曲線幾何 |
 | `tests/shell-manifest.test.js` | sw.js 的 SHELL 有沒有跟實際檔案脫節 |
 | `tests/kb-vars.test.js` | 鍵盤那組 `--kb-*` 與 `.kb-*`：JS 寫／掛的與 CSS 用的有沒有對上 |
-| `tests/wiring.test.js` | `onclick="foo()"` 有沒有對應的函式、鍵盤診斷的 id 有沒有接上 |
+| `tests/wiring.test.js` | `onclick="foo()"` 有沒有對應的函式、鍵盤診斷的入口有沒有接上 |
+| `tests/sync.test.js` | 「回到前景先對帳」的判斷；每一條都是「不做會弄丟資料」 |
 | `tests/helpers/load-app.js` | `node:vm` 沙箱；跨 realm 的 `deepStrictEqual` 會因為 prototype 不同而失敗，所以有個 `host()` 做 JSON round-trip |
 
 ### 不在 repo 裡的
