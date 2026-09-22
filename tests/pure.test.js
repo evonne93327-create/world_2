@@ -277,3 +277,21 @@ test("caretMeasureMethod：手指座標要排在所有量法前面", function() 
   assert.strictEqual(f(false, true, false), "skip",
     "打字途中不可以用手指座標 —— 游標早就離開那個位置了");
 });
+
+test("keyboardHeightKey：直放橫放要分開存", function() {
+  const f = app.keyboardHeightKey;
+
+  // iPad 實測尺寸：直 820×1124、橫 1180×764
+  assert.strictEqual(f(820, 1124), "wb_kbh_p");
+  assert.strictEqual(f(1180, 764), "wb_kbh_l");
+
+  // 手機
+  assert.strictEqual(f(390, 844), "wb_kbh_p");
+  assert.strictEqual(f(844, 390), "wb_kbh_l");
+
+  // 兩個方向不能拿到同一個鍵，否則分開存等於沒做
+  assert.notStrictEqual(f(820, 1124), f(1124, 820));
+
+  // 正方形視窗（分割畫面可能出現）歸到直放，不要變成 undefined
+  assert.strictEqual(f(800, 800), "wb_kbh_p");
+});

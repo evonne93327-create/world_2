@@ -25,6 +25,14 @@ const allJs = fs.readdirSync(path.join(ROOT, "js"))
   .map(function(f) { return fs.readFileSync(path.join(ROOT, "js", f), "utf8"); })
   .join("\n");
 
+/* 比「誰排在誰前面」之前一定要先把註解拿掉。
+
+   這份測試在同一個陷阱上踩過四次：註解本身就在解釋舊寫法、或在解釋另一個
+   函式為什麼排在後面，那些字出現在程式碼之前，比到的就是註解的位置。 */
+function codeOnly(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
+}
+
 function matchAll(text, re) {
   const out = new Set();
   let m;
@@ -351,4 +359,53 @@ test("診斷要說得出這次是用哪種方法量的", function() {
   assert.match(allJs, /caretMeasureHow/, "要記下用了哪一條路");
   assert.match(allJs, /"mirror " \+ Math\.round/,
     "走到重排那條時要把耗時記下來 —— 「卡」不卡看這個數字就知道");
+});
+
+test("鍵盤高度要依直橫分開存、分開讀", function() {
+  /* 實測 iPad 直放約 420、橫放約 456。存成同一個數字的話，轉向之後的第一次
+     聚焦會拿到另一個方向的值——少算就讓不夠位（游標還是被鍵盤蓋到），
+     多算就是文章結尾多出一塊沒必要的空白。 */
+  assert.match(mainJs, /function keyboardHeightKey\(w, h\)/, "要有挑鍵的函式");
+
+  const remember = mainJs.match(/function rememberKeyboardHeight\([\s\S]*?\n}/);
+  const restore = mainJs.match(/function restoreKeyboardHeight\([\s\S]*?\n}/);
+  assert.ok(remember && restore, "找不到存／讀的那兩支");
+
+  assert.match(remember[0], /keyboardHeightKey\(window\.innerWidth, window\.innerHeight\)/,
+    "存的時候要挑當下方向的鍵");
+  assert.match(restore[0], /keyboardHeightKey\(window\.innerWidth, window\.innerHeight\)/,
+    "讀的時候也要挑當下方向的鍵 —— 只有一邊改的話就是存 A 讀 B");
+});
+
+test("分開存之前的舊值要留一條退路", function() {
+  /* 已經在用的人 localStorage 裡只有舊的那一個鍵。讀不到新的就直接放棄的話，
+     他們等於回到「第一次聚焦沒有值可用」的狀態，白白退步一次。 */
+  const restore = mainJs.match(/function restoreKeyboardHeight\([\s\S]*?\n}/);
+  assert.ok(restore, "找不到 restoreKeyboardHeight()");
+  assert.match(restore[0], /KB_HEIGHT_KEY_LEGACY/,
+    "讀不到新的鍵時要退回舊的那一個");
+  assert.match(mainJs, /const KB_HEIGHT_KEY_LEGACY = "wb_kbh";/,
+    "舊鍵名不能寫錯，寫錯就等於沒有退路");
+});
+
+test("轉向之後要重新讀一次", function() {
+  /* 不重讀的話，轉過去之後 --kb-reserve 還是另一個方向的值，要等鍵盤再升起
+     一次才會對。而最需要它的就是轉向後的第一次聚焦。 */
+  const setup = mainJs.match(/function setupKeyboardInset\([\s\S]*?(?=\n\/\*|\nfunction )/);
+  assert.ok(setup, "找不到 setupKeyboardInset()");
+
+  const onRotate = setup[0].match(/addEventListener\("orientationchange"[\s\S]*?\}\);/);
+  assert.ok(onRotate, "要聽 orientationchange");
+  assert.match(onRotate[0], /restoreKeyboardHeight\(\)/, "轉向後要重新讀");
+
+  /* 要等版面轉完再讀，不然 innerWidth/innerHeight 還是舊的，會挑到同一個鍵。 */
+  assert.match(onRotate[0], /setTimeout\(/, "要等版面轉完再讀");
+
+  const rotateCode = codeOnly(onRotate[0]);
+  const restoreAt = rotateCode.indexOf("restoreKeyboardHeight");
+  const applyAt = rotateCode.indexOf("applyKeyboardInset");
+  assert.ok(restoreAt !== -1 && applyAt !== -1);
+  assert.ok(restoreAt < applyAt,
+    "先讀再算 —— 鍵盤當下就開著的話，applyKeyboardInset() 會重新量一次把值蓋掉，" +
+    "那是更準的");
 });
