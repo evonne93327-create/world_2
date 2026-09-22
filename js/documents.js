@@ -280,6 +280,24 @@ let caretRoomRaf = null;
 let caretRoomAccurate = false;
 let caretRoomAssumedInset = 0;
 
+/* 這一次聚焦補捲了幾次、每次多少。只給設定裡的 🩺 鍵盤診斷看。
+
+   「捲上去的時候會跳動」的真面目就是這個陣列不只一筆：鍵盤是滑上來的，
+   滑的過程中 visualViewport 會連發好幾次 resize，每次量到的可視底都不一樣，
+   照著補就變成一格一格往上跳。正常情況這裡應該只有一筆（聚焦當下那一次）。
+
+   只留最後五筆，不然長時間編輯會一直長。 */
+let caretScrollLog = [];
+
+function logCaretScroll(px) {
+  caretScrollLog.push("+" + Math.round(px));
+  if (caretScrollLog.length > 5) caretScrollLog.shift();
+}
+
+function resetCaretScrollLog() {
+  caretScrollLog = [];
+}
+
 /* accurate＝允許用重排的方式量任意位置的游標。打字途中不要開。 */
 function scheduleCaretRoomCheck(accurate, assumedInset) {
   if (accurate) caretRoomAccurate = true;
@@ -322,6 +340,8 @@ function setupCaretRoomOnFocus() {
   if (!ta) return;
 
   ta.addEventListener("focus", function() {
+    resetCaretScrollLog();      // 每次聚焦重新計數，診斷看的是「這一次」
+
     /* 只有軟體鍵盤才需要這塊空間。接了實體鍵盤的機器留著它，只是在文章
        結尾多出一塊空白。這是「有沒有手指」的判斷，不是「版面寬不寬」——
        iPad 直放 820 寬算桌機版面，但它一樣是軟體鍵盤。 */
@@ -432,7 +452,10 @@ function ensureCaretRoom(accurate, assumedInset) {
 
   // 游標那一行的底，要離「可用的底」至少一行
   const overflow = caretLineBottom - (bottom - lineHeight);
-  if (overflow > 1) scroller.scrollTop += overflow;
+  if (overflow > 1) {
+    scroller.scrollTop += overflow;
+    logCaretScroll(overflow);
+  }
 }
 
 function autoGrowTextarea(el) {
