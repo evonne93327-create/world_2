@@ -239,3 +239,16 @@ test("診斷要數得出「這一次聚焦捲了幾次」", function() {
   assert.match(focusHandler[0], /resetCaretScrollLog\(\)/,
     "每次聚焦要重新計數 —— 不歸零的話數到的是好幾次聚焦的總和，看不出這一次跳了幾下");
 });
+
+test("一次性的補捲要用滑的，打字途中不要", function() {
+  /* caretScrollBehavior() 算出來的結果要真的被用上——純函式測得再漂亮，
+     呼叫端沒接也是白搭。 */
+  assert.match(allJs, /behavior:\s*"smooth"/, "要真的傳 behavior: smooth 給 scrollTo");
+  assert.match(allJs, /caretScrollBehavior\(\s*!!accurate/,
+    "動不動畫要看 accurate —— 那是「一次性時機」與「打字途中」的分界，" +
+    "兩條路都用同一個值就會退回瞬間跳、或讓打字變黏");
+
+  /* 退路要在：不支援 behavior 的瀏覽器仍然得捲得動。 */
+  assert.match(allJs, /scroller\.scrollTop \+= overflow/,
+    "behavior 算出 auto 時要退回直接設 scrollTop");
+});
