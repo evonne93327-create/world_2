@@ -1055,6 +1055,9 @@ function kbDiagLines() {
     ["fabTop", kbDiagNum(function() { return fab.getBoundingClientRect().top; })],
     ["focus", document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : "—"],
     /* 這次聚焦一共補捲了幾次、每次多少。會跳動就是這裡不只一筆。 */
+    /* 上一次是用哪一種方法量游標的。寫 mirror 幾 ms 就代表主執行緒被鎖了
+       那麼久——使用者說的「卡」就是它。 */
+    ["caretMeasure", (typeof caretMeasureHow !== "undefined") ? caretMeasureHow : "?"],
     ["caretScrolls", (typeof caretScrollLog !== "undefined")
       ? (caretScrollLog.length + (caretScrollLog.length ? " (" + caretScrollLog.join(", ") + ")" : ""))
       : "?"]

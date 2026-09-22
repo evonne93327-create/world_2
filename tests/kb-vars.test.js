@@ -240,46 +240,83 @@ test("診斷要數得出「這一次聚焦捲了幾次」", function() {
     "每次聚焦要重新計數 —— 不歸零的話數到的是好幾次聚焦的總和，看不出這一次跳了幾下");
 });
 
-test("一次性的補捲要用滑的，打字途中不要", function() {
-  /* caretScrollBehavior() 算出來的結果要真的被用上——純函式測得再漂亮，
-     呼叫端沒接也是白搭。 */
-  assert.match(allJs, /animateCaretScroll\(scroller, overflow\)/,
-    "要真的走自己的動畫");
-  assert.match(allJs, /caretScrollBehavior\(\s*!!accurate/,
-    "動不動畫要看 accurate —— 那是「一次性時機」與「打字途中」的分界，" +
-    "兩條路都用同一個值就會退回瞬間跳、或讓打字變黏");
-
-  /* 退路要在：不支援 behavior 的瀏覽器仍然得捲得動。 */
-  assert.match(allJs, /scroller\.scrollTop \+= overflow/,
-    "behavior 算出 auto 時要退回直接設 scrollTop");
-});
-
 /* ==========================================================
-   自己跑動畫：時長是正確性問題，不是手感問題
+   聚焦時那一下補捲：不能有動畫，也不能重排整篇文章
    ========================================================== */
-test("不可以用瀏覽器內建的 behavior: smooth 捲編輯區", function() {
-  /* 內建的時長是瀏覽器決定的（Safari 對長距離約 300~500ms），比鍵盤升起
-     （約 250~300ms）還慢。聚焦時那一下補捲是在跟 iOS 搶時間——慢了，iOS 就
-     有理由去推版面視窗，最上面的工具列被推出畫面。實際發生過一輪。 */
-  assert.ok(!/scrollTo\(\{[^}]*behavior:\s*"smooth"/.test(allJs),
-    "編輯區的補捲不能交給瀏覽器的 behavior: smooth —— 時長指定不了，" +
-    "會比鍵盤升起還慢，「上面的東西被吃掉」就會跑回來");
+test("聚焦時的補捲必須是瞬間的，不可以有動畫", function() {
+  /* 這一條是硬限制，不是還沒做。試過兩輪、兩輪都把「工具列被吃掉」帶回來：
+
+       瀏覽器內建 behavior: smooth（300~500ms，時長指定不了）→ 壞
+       自己跑 rAF 動畫壓到 160ms ease-out                    → 還是壞
+
+     iOS 決定要不要推版面視窗的那一刻很早，早到任何動畫都來不及。
+     這個錯誤的失敗方式很惡劣：症狀（工具列被吃掉）看起來像完全無關的另一個
+     bug，而且要好幾輪之後才會被發現。 */
+  const fn = allJs.match(/function ensureCaretRoom\([\s\S]*?(?=\nfunction )/);
+  assert.ok(fn, "找不到 ensureCaretRoom()");
+
+  assert.ok(!/behavior:\s*["']smooth["']/.test(fn[0]),
+    "補捲不能用 behavior: smooth —— 時長指定不了，比鍵盤升起還慢");
+  assert.ok(!/requestAnimationFrame/.test(fn[0]),
+    "補捲不能自己跑動畫 —— 160ms 都還是輸給 iOS 的決定時機");
+  assert.match(fn[0], /scroller\.scrollTop \+= overflow/,
+    "就是直接設 scrollTop，瞬間到位");
 });
 
-test("動畫要短到在鍵盤升起前就走完", function() {
-  const m = allJs.match(/const CARET_SCROLL_MS = (\d+);/);
-  assert.ok(m, "要有具名常數，不要把毫秒數散在程式碼裡");
-  const ms = parseInt(m[1], 10);
-  assert.ok(ms >= 100, "低於 100ms 看起來就只是跳了一下，動畫等於白做");
-  assert.ok(ms < 250, "鍵盤的進場動畫約 250~300ms，要明顯短於它才搶得贏");
+test("點中間時要用手指的座標，不要重排整篇文章", function() {
+  /* measureCaretBottom() 要把游標前面的整篇文章用同樣的字體與寬度重排一次，
+     實測一萬行 106ms。那一下停頓正好落在鍵盤升起的動畫中間——使用者說的
+     「卡」就是它。而且它只在「游標不在最後一行」時才跑，也就是點文章中間，
+     正是使用者描述的情況。
+
+     位置本來就不必算：使用者剛剛才用手指指給我們看。 */
+  assert.match(allJs, /addEventListener\("pointerdown"/,
+    "要記下手指按在哪裡");
+  assert.match(allJs, /function caretBottomFromPointer\(/,
+    "要有一條零重排的換算路徑");
+
+  const fn = allJs.match(/function ensureCaretRoom\([\s\S]*?(?=\nfunction )/);
+  assert.ok(fn, "找不到 ensureCaretRoom()");
+  /* 順序由 caretMeasureMethod() 決定，那支有自己的單元測試。這裡只確認
+     呼叫端真的照它給的答案走，沒有自己又寫一套 if。 */
+  assert.match(fn[0], /caretMeasureMethod\(!!accurate, caretPointerFresh\(\), atVeryEnd\)/,
+    "要由 caretMeasureMethod() 決定用哪一種量法");
+  assert.match(fn[0], /how === "pointer"/, "要照它的答案分支");
 });
 
-test("動畫被人插手就要讓開", function() {
-  /* 使用者自己拖、或別的程式碼捲了它，繼續硬捲會變成跟手指打架。 */
-  const fn = allJs.match(/function animateCaretScroll\([\s\S]*?(?=\nfunction )/);
-  assert.ok(fn, "找不到 animateCaretScroll()");
-  assert.match(fn[0], /cancelAnimationFrame/, "重新開始時要把上一個動畫取消掉");
-  assert.match(fn[0], /Math\.abs\(scroller\.scrollTop - expected\)/,
-    "每一格要確認「上一格我們設成什麼、這一格讀到的就該是什麼」，" +
-    "差太多代表不是我們動的，要讓開");
+test("「最後一行」要用長度比對，不是「後面有沒有換行」", function() {
+  /* 原本寫的是 ta.value.indexOf("\n", caret) === -1，那判斷的其實是
+     「游標在最後一個**段落**裡」。中文段落一折就是十幾個視覺行，點在最後
+     一段的任何地方都會通過，然後拿整個 textarea 的底當成游標那一行的底
+     ——本來不必捲的位置被往上推一大段。使用者回報過。 */
+  assert.match(allJs, /const atVeryEnd = caret === ta\.value\.length;/,
+    "要比對長度：只有游標真的在最末端時，textarea 的底才等於游標那一行的底");
+
+  const fn = allJs.match(/function ensureCaretRoom\([\s\S]*?(?=\nfunction )/);
+  assert.ok(fn, "找不到 ensureCaretRoom()");
+
+  /* 註解要先拿掉：上面那段註解本身就在解釋舊寫法長什麼樣，不拿掉的話
+     比到的是註解。這個陷阱這份測試已經踩第三次了。 */
+  const code = fn[0].replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
+  assert.ok(!/indexOf\("\\n", caret\)/.test(code),
+    "不可以再用「後面有沒有換行」判斷 —— 那是段落，不是行");
+});
+
+test("手指座標有時效，過期不能用", function() {
+  /* 先點別處、再用別的方式聚焦的話，那個座標跟游標沒有關係了。 */
+  assert.match(allJs, /const CARET_POINTER_TTL_MS = \d+;/, "要有具名的時效");
+  assert.match(allJs, /function caretPointerFresh\(/, "用之前要檢查新不新鮮");
+  /* 要檢查「blur 監聽器裡面」有清掉，不能只看整份檔案有沒有這串字——
+     宣告本身就是 `let caretPointer = null;`，整份檔案永遠找得到它，
+     那樣寫的話把 blur 裡那一行刪掉測試照樣綠。（先漏掉過一次。） */
+  const blurFn = allJs.match(/ta\.addEventListener\("blur"[\s\S]*?\n  \}\);/);
+  assert.ok(blurFn, "找不到 textarea 的 blur 監聽器");
+  assert.match(blurFn[0], /caretPointer = null/,
+    "blur 時要清掉 —— 下次聚焦不一定是用點的");
+});
+
+test("診斷要說得出這次是用哪種方法量的", function() {
+  assert.match(allJs, /caretMeasureHow/, "要記下用了哪一條路");
+  assert.match(allJs, /"mirror " \+ Math\.round/,
+    "走到重排那條時要把耗時記下來 —— 「卡」不卡看這個數字就知道");
 });
