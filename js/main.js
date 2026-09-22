@@ -632,6 +632,29 @@ function setupAnchoredPopoverFollow() {
    而那個視窗在 iOS 上本來就延伸到鍵盤後面，body 變矮它們不會跟著動。
    浮動的復原／快速跳轉按鈕就是這種——它們其實一直都被鍵盤蓋著。
    所以另外給一個 --kb-inset（被鍵盤蓋掉的高度），讓它們自己往上讓。
+
+   還有一件事光靠「縮高度」救不到：iOS 為了讓游標露出來，會把整個
+   **版面視窗往上推** offsetTop（`visualViewport.offsetTop` 變成非 0）。
+   body 是從版面視窗的頂端長下來的，被推上去的那一段就是最上面的工具列
+   ——使用者看到的就是「上面的東西被吃掉了」。
+
+   先前的版本只把 body 的高度設成 offsetTop + 可視高度，讓它的**下緣**
+   停在鍵盤上方；上緣就活該被推出畫面。這一版改成連上緣一起顧：body 再加
+   一段 padding-top: offsetTop，把內容整個往下讓開被推掉的那一段。
+   body 的外框仍然是 offsetTop + 可視高度（文件不會變高、不會多出可捲的
+   空間），但**內容盒剛好等於看得見的那一塊**，工具列就留在畫面上。
+
+   所以一共餵四個值給 CSS：
+
+     --kb-h    版面頂端 → 看得見的底端（body 的外框高度）
+     --kb-top  被推掉的高度 offsetTop（body 的 padding-top；
+               position:fixed 的整頁圖層也要用它讓開）
+     --kb-vh   真正看得見的高度（body 的內容盒，也就是所有子結構的高度）
+     --kb-inset 版面底端被鍵盤蓋掉的高度（position:fixed 的東西往上讓的量）
+
+   offsetTop 會被 iOS 夾在 0 ~ 鍵盤高度之間（可視區不可能被推出版面視窗
+   之外），所以「跟著 offsetTop 讓開」不會跟 iOS 互推到失控——最多就是
+   讓到鍵盤高度，那時 app 正好貼齊可視區。
    ========================================================== */
 
 /* 少於這個就不是鍵盤——網址列收合、分頁列變化都只有幾十 px */
@@ -640,12 +663,12 @@ const KB_MIN_INSET = 80;
 /* 把判斷抽成純函式，才測得到（visualViewport 沒辦法在測試裡偽造）。
    vv 傳 { height, offsetTop, scale }，innerH 傳 window.innerHeight。 */
 function keyboardInsetState(vv, innerH) {
-  if (!vv) return { open: false, height: 0, inset: 0 };
+  if (!vv) return { open: false, height: 0, top: 0, viewHeight: 0, inset: 0 };
 
   /* 使用者雙指放大時 visualViewport 也會變小，那不是鍵盤。
      我們是刻意拿掉 user-scalable=no 讓他可以放大的，所以這個情況一定要
      排除——否則一放大整個版面就縮掉，比原本的問題更糟。 */
-  if (vv.scale > 1.05) return { open: false, height: 0, inset: 0 };
+  if (vv.scale > 1.05) return { open: false, height: 0, top: 0, viewHeight: 0, inset: 0 };
 
   /* 這裡有兩個不同的量，不能用同一條式子算——混在一起正是上一版的 bug。
 
@@ -664,19 +687,34 @@ function keyboardInsetState(vv, innerH) {
 
      offsetTop 取不到就當 0：少了這道保險，undefined 會讓整串變成 NaN，
      而 NaN <= KB_MIN_INSET 是 false，會一路往下寫進 --kb-h: NaNpx。 */
-  const offsetTop = Number(vv.offsetTop) || 0;
+  const rawOffsetTop = Number(vv.offsetTop) || 0;
   const visibleH = Number(vv.height);
   const covered = innerH - visibleH;                    // (1) 偵測用
-  if (!isFinite(covered) || covered <= KB_MIN_INSET) return { open: false, height: 0, inset: 0 };
+  if (!isFinite(covered) || covered <= KB_MIN_INSET) {
+    return { open: false, height: 0, top: 0, viewHeight: 0, inset: 0 };
+  }
+
+  /* offsetTop 夾在 0 ~ covered 之間。可視區不可能被推到版面視窗外面，
+     量到超出範圍的值只會是橡皮筋捲動之類的暫態。
+     夾住之後下面幾個值就自動都是合理的：hidden 不會變負（負的 bottom 會把
+     浮動按鈕推到鍵盤底下，比不動還糟），visibleBottom 也不會超出畫面。 */
+  const offsetTop = Math.min(Math.max(0, rawOffsetTop), covered);
 
   const visibleBottom = offsetTop + visibleH;
-  /* (2) 讓位用。頁面若被捲過頭（橡皮筋），這個值可能變負，夾成 0 就好——
-     負的 bottom 會把按鈕推到鍵盤底下，比不動還糟。 */
-  const hidden = Math.max(0, innerH - visibleBottom);
-  /* height＝從版面視窗頂端到看得見的底端（給 body 這類從頂端長下來的東西用，
-            這樣它的下緣就正好停在鍵盤上緣）
-     inset ＝版面視窗底下被鍵盤蓋掉的高度（給 position:fixed 的東西閃用） */
-  return { open: true, height: visibleBottom, inset: hidden };
+  const hidden = covered - offsetTop;                   // (2) 讓位用
+  /* height    ＝版面視窗頂端 → 看得見的底端（body 的外框高度，這樣它的下緣
+                 就正好停在鍵盤上緣，而且文件不會長到可以捲）
+     top       ＝被 iOS 推掉的那一段（body 的 padding-top，讓內容整個下移，
+                 最上面的工具列才不會被推出畫面）
+     viewHeight＝真正看得見的高度（body 的內容盒＝所有子結構的高度）
+     inset     ＝版面視窗底下被鍵盤蓋掉的高度（給 position:fixed 的東西閃用） */
+  return {
+    open: true,
+    height: visibleBottom,
+    top: offsetTop,
+    viewHeight: visibleH,
+    inset: hidden
+  };
 }
 
 /* 最後一次量到的鍵盤高度。聚焦的那一刻鍵盤還沒升起，量不到，只能用記得的。
@@ -695,11 +733,15 @@ function applyKeyboardInset() {
     const covered = window.innerHeight - Number(vv.height);
     if (covered > 0) lastKnownKeyboardInset = covered;
     root.style.setProperty("--kb-h", state.height + "px");
+    root.style.setProperty("--kb-top", state.top + "px");
+    root.style.setProperty("--kb-vh", state.viewHeight + "px");
     root.style.setProperty("--kb-inset", state.inset + "px");
     root.classList.add("kb-open");
   } else {
     root.classList.remove("kb-open");
     root.style.removeProperty("--kb-h");
+    root.style.removeProperty("--kb-top");
+    root.style.removeProperty("--kb-vh");
     root.style.removeProperty("--kb-inset");
   }
 }

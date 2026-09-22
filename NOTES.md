@@ -100,17 +100,19 @@ git checkout -B claude/beautiful-feynman-ts3pe6 origin/main
 （含標題那一行）一定要設 `user-select: none`，否則 iOS 的長按會改去選選單的
 文字，跳出系統的選字工具列。
 
-### 3c. 軟體鍵盤：`visualViewport` 有兩個不同的量，不要混用
+### 3c. 軟體鍵盤：`visualViewport` 有幾個不同的量，不要混用
 
 iOS 的 `dvh` **不會**扣掉軟體鍵盤（只扣瀏覽器自己的網址列），
 `interactive-widget=resizes-content` 只有 Chrome/Android 認得。
 所以鍵盤的高度只能從 `visualViewport` 算。這裡很容易寫錯，錯過三次：
 
-| 要算什麼 | 式子 | 為什麼 |
-|---|---|---|
-| **有沒有鍵盤** | `innerHeight − vv.height` | 螢幕上被鍵盤蓋住的高度。**頁面捲到哪裡都不影響它** |
-| **固定定位要往上讓多少** | `innerHeight − vv.offsetTop − vv.height` | `position: fixed` 貼的是版面視窗底部，而鍵盤升起時 iOS 會把版面視窗往上推 `offsetTop`（為了讓游標露出來），要扣掉 |
-| **正常文件流要縮到多高** | `vv.offsetTop + vv.height` | 從版面頂端到看得見的底端 |
+| 要算什麼 | 式子 | 寫成哪個變數 | 為什麼 |
+|---|---|---|---|
+| **有沒有鍵盤** | `innerHeight − vv.height` | —（只用來判斷） | 螢幕上被鍵盤蓋住的高度。**頁面捲到哪裡都不影響它** |
+| **固定定位要往上讓多少** | `innerHeight − vv.offsetTop − vv.height` | `--kb-inset` | `position: fixed` 貼的是版面視窗底部，而鍵盤升起時 iOS 會把版面視窗往上推 `offsetTop`（為了讓游標露出來），要扣掉 |
+| **`body` 的外框要多高** | `vv.offsetTop + vv.height` | `--kb-h` | 從版面頂端到看得見的底端。下緣剛好停在鍵盤上緣，而且文件不會長到可以捲 |
+| **`body` 的上緣要讓開多少** | `vv.offsetTop` | `--kb-top` | 被 iOS 推掉的那一段。用 `padding-top` 補回來，最上面的工具列才留得住 |
+| **子結構要多高** | `vv.height` | `--kb-vh` | `body` 加了 `padding-top` 之後，內容盒是這個高度，不是 `--kb-h` |
 
 踩過的三種寫法：
 
@@ -122,6 +124,23 @@ iOS 的 `dvh` **不會**扣掉軟體鍵盤（只扣瀏覽器自己的網址列�
   門檻，所以只有橫的壞**——「只有一個方向壞」就是在指這一類錯誤。
 - **只聽 `resize`** → `offsetTop` 改變時 iOS 發的是 **`scroll`**，不是
   `resize`。少聽那一個的話，鍵盤剛升起算出來的值是對的，之後就一直停在舊值。
+- **只顧 `body` 的下緣、不顧上緣** → 高度設成 `offsetTop + vv.height`
+  確實讓下緣停在鍵盤上方，但 `body` 的上緣還釘在版面視窗頂端，被推上去的
+  `offsetTop` 那一段就是最上面的工具列——**「上面的東西被吃掉」**。
+  補一行 `padding-top: var(--kb-top)` 把內容整個下移，外框維持 `--kb-h`
+  （文件才不會多出可捲的空間，iOS 不會再去捲文件）。
+  子結構的高度要跟著改成 `--kb-vh`，不然會比 `body` 的內容盒高出那一段。
+
+**「跟著 `offsetTop` 讓開會不會跟 iOS 互推到失控？」** 不會。可視區不可能
+被推出版面視窗之外，所以 `offsetTop` 被夾在 `0 ~ 鍵盤高度` 之間，最多就是
+讓到鍵盤高度、app 正好貼齊可視區。程式裡也照這個範圍夾過一次
+（`Math.min(Math.max(0, offsetTop), covered)`），量到橡皮筋造成的怪值也不會
+算出負的 `inset`。
+
+固定定位的整頁圖層（彈窗遮罩、目錄抽屜、快速跳轉面板）縮 `body` 救不到，
+要自己 `top: var(--kb-top); bottom: var(--kb-inset)`。它們本來就有 `inset:0`
+或 `top:0;bottom:0`，覆蓋這兩個值不會多長出一個維度——但**長按選單那種只有
+`top`/`left` 的就不能加 `bottom`**，會被撐成整片。
 
 另外兩個保險：雙指放大時 `vv.height` 也會變小（`vv.scale > 1.05` 要排除），
 以及 `offsetTop` 取不到時要當 0——`undefined` 會讓整串變成 `NaN`，而
@@ -175,14 +194,15 @@ iOS 的 `dvh` **不會**扣掉軟體鍵盤（只扣瀏覽器自己的網址列�
 ### 在 repo 裡的
 
 ```bash
-node --test          # 19 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 28 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |
 |---|---|
-| `tests/pure.test.js` | 純函式（escapeHtml、hashtag 抽取等） |
+| `tests/pure.test.js` | 純函式（escapeHtml、hashtag 抽取、鍵盤的 `keyboardInsetState` 等） |
 | `tests/edge-geometry.test.js` | 白板連線的曲線幾何 |
 | `tests/shell-manifest.test.js` | sw.js 的 SHELL 有沒有跟實際檔案脫節 |
+| `tests/kb-vars.test.js` | 鍵盤那組 `--kb-*`：JS 寫的與 CSS 用的有沒有對上 |
 | `tests/helpers/load-app.js` | `node:vm` 沙箱；跨 realm 的 `deepStrictEqual` 會因為 prototype 不同而失敗，所以有個 `host()` 做 JSON round-trip |
 
 ### 不在 repo 裡的
