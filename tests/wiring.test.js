@@ -76,9 +76,47 @@ test("版本那一行要講得出「這一頁還在跑舊程式碼」", function
      （又是這個測試自己先踩的一腳）。 */
   const body = row[0].replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
   const staleAt = body.indexOf("pageCodeStale");
-  const latestAt = body.indexOf("已是最新版");
-  assert.ok(staleAt !== -1 && latestAt !== -1, "兩個字串都要在函式體裡找得到");
-  assert.ok(staleAt < latestAt,
-    "「跑著舊程式碼」要判斷在「已是最新版」之前 —— 兩邊版號會一致，" +
+
+  /* 不要對著顯示字串比順序——那些字會改（實際上就改過一次，測試跟著紅了）。
+     改成比「第一個把結果寫進畫面的地方」：stale 一定要排在它之前，不然
+     兩邊版號一致時就永遠輪不到它。 */
+  const firstWriteAt = body.search(/desc\.textContent\s*=/);
+  assert.ok(staleAt !== -1, "函式體裡要看得到 pageCodeStale");
+  assert.ok(firstWriteAt !== -1, "函式體裡要看得到 desc.textContent = ...");
+  assert.ok(staleAt < firstWriteAt,
+    "「跑著舊程式碼」要判斷在所有其他分支之前 —— 兩邊版號會一致，" +
     "排在後面就永遠輪不到它");
+});
+
+test("版本那一列要可以點，而且點下去是真的去問伺服器", function() {
+  /* 「重新整理才會套用」只有使用者自己動手才會發生，所以那一列必須點得動。
+     原本它是 <div class="settings-row is-static">，看得到摸不著。 */
+  const row = html.match(/<(\w+)[^>]*onclick="checkForUpdateNow\(\)"/);
+  assert.ok(row, "設定裡的版本那一列要掛 checkForUpdateNow()");
+  assert.strictEqual(row[1], "button", "要是 <button>，div 沒有鍵盤焦點也沒有點擊語意");
+  assert.ok(!/is-static[^>]*onclick="checkForUpdateNow/.test(html),
+    "既然點得動就不該還掛著 is-static");
+
+  /* 光重讀一次 sw.js 不算「檢查更新」：那只問得到伺服器上是哪一版，
+     不會讓瀏覽器真的去把新的 worker 抓下來裝好。 */
+  assert.match(js, /function forceUpdateCheck\(\)/,
+    "要有一條強制去問伺服器的路徑");
+  assert.match(js, /swRegistration\.update\(\)/,
+    "forceUpdateCheck() 要呼叫 registration.update()，不能只是重讀 sw.js");
+  assert.match(js, /function checkForUpdateNow\(\)[\s\S]*?forceUpdateCheck\(\)/,
+    "點下去要先強制檢查，再重畫那一列");
+});
+
+test("使用者主動按的時候，防重複的那兩道閘門要讓路", function() {
+  /* showUpdateModal() 有兩道「不要吵人」的閘門：按掉過一次就不再跳、
+     有別的彈窗開著就排隊等。對自動偵測是對的，但使用者自己按的時候，
+     這兩道都會變成「我按了卻什麼都沒發生」。 */
+  assert.match(js, /function showUpdateModal\(force\)/,
+    "showUpdateModal() 要收一個 force 參數");
+  assert.match(js, /if \(updateModalShown && !force\) return;/,
+    "按掉過一次的閘門要能被 force 繞過");
+  assert.match(js, /if \(otherModalOpen\(\) && !force\)/,
+    "排隊等別的彈窗那道也要能被 force 繞過");
+  assert.match(js, /showUpdateModal\(true\)/,
+    "checkForUpdateNow() 要用 force 叫它");
 });

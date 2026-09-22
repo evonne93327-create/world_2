@@ -194,13 +194,14 @@ function fetchLatestVersion() {
     .catch(function() { return null; });
 }
 
+/* 回傳一個 promise，好讓「檢查更新」等它畫完再決定要不要跳更新視窗。 */
 function renderVersionRow() {
   const value = document.getElementById("versionRowValue");
   const desc = document.getElementById("versionRowDesc");
-  if (!value) return;
+  if (!value) return Promise.resolve({ stale: false, hasUpdate: false });
 
   value.textContent = "…";
-  Promise.all([askServiceWorkerVersion(), fetchLatestVersion()]).then(function(r) {
+  return Promise.all([askServiceWorkerVersion(), fetchLatestVersion()]).then(function(r) {
     const running = r[0];
     const latest = r[1];
 
@@ -216,21 +217,62 @@ function renderVersionRow() {
        的 CSS 與 js 還是載入當下那一版——三個字串會一致，這一行會很有自信地
        說「已是最新版」，而使用者看到的其實還是舊畫面。
        實際發生過：使用者確認了版號是新的、回報「改了還是一樣」，整輪白查。 */
-    if (typeof pageCodeStale !== "undefined" && pageCodeStale) {
+    const stale = (typeof pageCodeStale !== "undefined" && pageCodeStale);
+    if (stale) {
       value.textContent = shown + "（未套用）";
       desc.textContent = "新版已經下載好了，但這一頁還在跑舊的程式碼，重新整理才會套用";
-      return;
+      return { stale: true, hasUpdate: true };
     }
+
+    const hasUpdate = !!(running && latest && running !== latest);
 
     if (!shown) {
       desc.textContent = "連不上伺服器，也問不到本機的版本";
-    } else if (running && latest && running !== latest) {
+    } else if (hasUpdate) {
       desc.textContent = "有新版 " + latest + "，重新整理就會換過去";
     } else if (!latest) {
       desc.textContent = "離線中，無法確認是不是最新版";
     } else {
-      desc.textContent = "已是最新版。回報問題時請附上這一行";
+      desc.textContent = "點一下可以重新檢查。回報問題時請附上這一行";
     }
+    return { stale: false, hasUpdate: hasUpdate, offline: !latest };
+  }).catch(function() {
+    return { stale: false, hasUpdate: false, offline: true };
+  });
+}
+
+/* 點設定裡的版本那一列：主動去問一次伺服器。
+
+   跟「開著等」的差別：reg.update() 是強制去檢查，不用等那個半小時的計時器，
+   也不用等瀏覽器自己想到要去看 sw.js。使用者要的就是「我現在到底能不能更新」
+   這個問題的當場答案。
+
+   有新版就直接把更新視窗叫出來——那裡面才有「重新整理」的按鈕。用
+   settingsGoTo() 而不是自己開：showUpdateModal() 看到還有別的彈窗開著
+   （設定就是）會排隊等，使用者按了按鈕卻什麼都沒發生，比不做還糟。
+   settingsGoTo() 順便還會在更新視窗關掉之後把設定叫回來。 */
+let versionCheckBusy = false;
+
+function checkForUpdateNow() {
+  if (versionCheckBusy) return;          // 連點兩下不要疊兩次檢查
+  versionCheckBusy = true;
+
+  const desc = document.getElementById("versionRowDesc");
+  if (desc) desc.textContent = "檢查中…";
+
+  const check = (typeof forceUpdateCheck === "function")
+    ? forceUpdateCheck() : Promise.resolve();
+
+  check.then(function() {
+    return renderVersionRow();
+  }).then(function(state) {
+    versionCheckBusy = false;
+    if (!state || !state.hasUpdate) return;
+    if (typeof settingsGoTo === "function" && typeof showUpdateModal === "function") {
+      settingsGoTo(function() { showUpdateModal(true); });
+    }
+  }).catch(function() {
+    versionCheckBusy = false;
   });
 }
 
