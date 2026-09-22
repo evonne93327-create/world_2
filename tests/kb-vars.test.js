@@ -18,6 +18,13 @@ const { ROOT } = require("./helpers/load-app.js");
 const mainJs = fs.readFileSync(path.join(ROOT, "js", "main.js"), "utf8");
 const css = fs.readFileSync(path.join(ROOT, "style.css"), "utf8");
 
+/* 所有 js 串起來：掛 class 的是 documents.js，寫變數的是 main.js，
+   以後搬家也不用回來改這份清單。 */
+const allJs = fs.readdirSync(path.join(ROOT, "js"))
+  .filter(function(f) { return f.endsWith(".js"); })
+  .map(function(f) { return fs.readFileSync(path.join(ROOT, "js", f), "utf8"); })
+  .join("\n");
+
 function matchAll(text, re) {
   const out = new Set();
   let m;
@@ -72,5 +79,82 @@ test("子結構的高度要用 --kb-vh，不能再用 --kb-h", function() {
     if (/^:root\.kb-open body\b/.test(rule.trim())) return;   // body 自己例外
     assert.ok(!/var\(--kb-h\)/.test(rule),
       "這條規則還在用 --kb-h，應該是 --kb-vh：\n" + rule);
+  });
+});
+
+/* 把 CSS 拆成一條一條規則。巢狀在 @media 裡的也拆得到（內層規則會各自
+   成為一筆），這裡只需要「某個選擇器的某個宣告是什麼」。 */
+function declarationsFor(selector) {
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const out = [];
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m;
+  while ((m = re.exec(stripped))) {
+    const selectors = m[1].split(",").map(function(x) { return x.trim().replace(/\s+/g, " "); });
+    if (selectors.includes(selector)) out.push(m[2]);
+  }
+  return out;
+}
+
+function valueOf(selector, prop) {
+  const re = new RegExp("(?:^|;)\\s*" + prop + "\\s*:([^;]+)");
+  const found = [];
+  declarationsFor(selector).forEach(function(body) {
+    const m = body.match(re);
+    if (m) found.push(m[1].trim().replace(/\s+/g, " "));
+  });
+  return found;
+}
+
+/* ==========================================================
+   .kb-pending：聚焦了、鍵盤還沒來
+   ========================================================== */
+test("kb-* 的 class：JS 掛上去的與 CSS 用到的要對得上", function() {
+  const added = matchAll(allJs, /classList\.add\("(kb-[a-z-]+)"\)/g);
+  const removedCls = matchAll(allJs, /classList\.remove\("(kb-[a-z-]+)"\)/g);
+  const styled = matchAll(css, /:root\.(kb-[a-z-]+)/g);
+
+  assert.ok(added.has("kb-open"), "kb-open 應該由 applyKeyboardInset() 掛上");
+  assert.ok(added.has("kb-pending"), "kb-pending 應該由 setupCaretRoomOnFocus() 掛上");
+
+  added.forEach(function(cls) {
+    assert.ok(styled.has(cls),
+      "JS 掛了 ." + cls + "，但 style.css 沒有任何規則吃它 —— 白掛一場");
+    assert.ok(removedCls.has(cls),
+      "." + cls + " 只有掛上沒有拿掉 —— 會一直留在 <html> 上");
+  });
+
+  styled.forEach(function(cls) {
+    assert.ok(added.has(cls),
+      "style.css 為 ." + cls + " 寫了規則，但沒有任何 js 掛這個 class —— 永遠不會生效");
+  });
+});
+
+test("kb-pending 的底部空間要跟 kb-open 一模一樣", function() {
+  /* 晚一步給等於沒給：最需要這塊空間的就是鍵盤升起前的那一刻（要捲走的
+     量最大，而那時 kb-open 還沒掛上）。值不一樣的話，聚焦當下先捲的那一下
+     會用錯的可捲範圍算，捲完鍵盤一上來又得重算。 */
+  ["padding-bottom", "scroll-padding-bottom"].forEach(function(prop) {
+    const open = valueOf(":root.kb-open .editor-content-area", prop);
+    const pending = valueOf(":root.kb-pending .editor-content-area", prop);
+
+    assert.strictEqual(open.length, 1, ":root.kb-open 的 " + prop + " 應該只有一條");
+    assert.strictEqual(pending.length, 1, ":root.kb-pending 的 " + prop + " 應該只有一條");
+    assert.strictEqual(pending[0], open[0],
+      prop + " 兩邊不一樣：kb-open=" + open[0] + "，kb-pending=" + pending[0]);
+  });
+});
+
+test("kb-pending 只管編輯區的空間，不要去動版面高度", function() {
+  /* 鍵盤還沒升起，可視區就是整個畫面。這時候若把 body 或主結構縮成
+     --kb-vh，畫面會先縮一次、鍵盤上來再縮一次，閃兩下。
+     那些是 kb-open 的事，kb-pending 只負責「先把底下的空間讓出來」。 */
+  ["--kb-h", "--kb-vh", "--kb-top", "--kb-inset"].forEach(function(name) {
+    const rules = (css.replace(/\/\*[\s\S]*?\*\//g, "").match(/[^{}]+\{[^{}]*\}/g) || [])
+      .filter(function(r) { return /:root\.kb-pending/.test(r.split("{")[0]); });
+    rules.forEach(function(rule) {
+      assert.ok(!new RegExp("var\\(" + name + "\\)").test(rule),
+        "kb-pending 的規則用到了 " + name + "，那是鍵盤升起之後才有意義的值：\n" + rule);
+    });
   });
 });

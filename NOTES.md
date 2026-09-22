@@ -142,6 +142,32 @@ iOS 的 `dvh` **不會**扣掉軟體鍵盤（只扣瀏覽器自己的網址列�
 或 `top:0;bottom:0`，覆蓋這兩個值不會多長出一個維度——但**長按選單那種只有
 `top`/`left` 的就不能加 `bottom`**，會被撐成整片。
 
+### 3d. 「先捲上去再開鍵盤」為什麼不能當唯一的防線
+
+`setupCaretRoomOnFocus()` 在 `focus` 當下（鍵盤還沒升起）就用上一次記得的
+鍵盤高度把游標捲到安全位置，讓 iOS 沒有理由去推版面視窗。方向是對的，
+但它單獨撐不住，兩個洞：
+
+1. **第一次聚焦沒有值可以用**（`lastKnownKeyboardInset` 還是 0），那一次
+   一定讓 iOS 自己處理。
+2. **捲得上去的前提是下面還有東西可以捲。** 游標在文章中間時下面有一大片
+   內容；在**文章結尾附近**時，捲動容器底下只剩那一點內距，而要讓游標高過
+   鍵盤得捲 300~400px——捲到底也讓不出來。而「在文章結尾附近打字」正是寫
+   東西最常見的狀態。
+
+第 2 點可以補一半：加大的底部內距本來只掛在 `.kb-open` 上，也就是鍵盤
+**已經升起**才給，正好晚了一步。現在多一個 `.kb-pending`（聚焦時掛、blur
+時拿掉）把同一塊空間提前留出來，值必須跟 `.kb-open` 完全一樣——晚一步給
+等於沒給。順帶也讓 iOS 自己的「把游標捲進視野」有地方可捲，那對第 1 點
+（第一次聚焦）特別有用。
+
+`.kb-pending` 只動編輯區的內距，**不要去動版面高度**：鍵盤還沒升起，可視區
+就是整個畫面，這時候縮 `body` 會先縮一次、鍵盤上來再縮一次，閃兩下。
+
+兩條路是互補的，不是二選一：先捲上去是讓 iOS **沒有理由**推，3c 的
+`padding-top` 是推了也**無害**。後者才是保底，因為它不需要搶贏時序、也不
+需要有捲動空間可用。
+
 另外兩個保險：雙指放大時 `vv.height` 也會變小（`vv.scale > 1.05` 要排除），
 以及 `offsetTop` 取不到時要當 0——`undefined` 會讓整串變成 `NaN`，而
 `NaN <= 門檻` 是 `false`，會一路往下寫進 `--kb-h: NaNpx`，比不做還糟。
@@ -194,7 +220,7 @@ iOS 的 `dvh` **不會**扣掉軟體鍵盤（只扣瀏覽器自己的網址列�
 ### 在 repo 裡的
 
 ```bash
-node --test          # 28 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 31 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |
@@ -202,7 +228,7 @@ node --test          # 28 項。注意：不要寫 node --test tests/，Node 22 
 | `tests/pure.test.js` | 純函式（escapeHtml、hashtag 抽取、鍵盤的 `keyboardInsetState` 等） |
 | `tests/edge-geometry.test.js` | 白板連線的曲線幾何 |
 | `tests/shell-manifest.test.js` | sw.js 的 SHELL 有沒有跟實際檔案脫節 |
-| `tests/kb-vars.test.js` | 鍵盤那組 `--kb-*`：JS 寫的與 CSS 用的有沒有對上 |
+| `tests/kb-vars.test.js` | 鍵盤那組 `--kb-*` 與 `.kb-*`：JS 寫／掛的與 CSS 用的有沒有對上 |
 | `tests/helpers/load-app.js` | `node:vm` 沙箱；跨 realm 的 `deepStrictEqual` 會因為 prototype 不同而失敗，所以有個 `host()` 做 JSON round-trip |
 
 ### 不在 repo 裡的

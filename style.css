@@ -2197,8 +2197,14 @@ button, input, select, textarea { color: inherit; }
    底下已經沒有東西可以捲了。要留出那一行，只能從這裡留。
    （第一版只留了 72px，實測游標離按鈕只剩 20px，不到一行的 30.4px。）
 
-   按鈕高度取桌機的 44：兩種版面共用一條規則，取大的那個才不會不夠。 */
-:root.kb-open .editor-content-area {
+   按鈕高度取桌機的 44：兩種版面共用一條規則，取大的那個才不會不夠。
+
+   .kb-pending 是「聚焦了、鍵盤還沒來」——由 js/documents.js 的
+   setupCaretRoomOnFocus() 掛上、blur 時拿掉。值必須跟 .kb-open 一模一樣：
+   這塊空間最需要的時機就是鍵盤升起前的那一刻（要捲走的量最大，而那時
+   .kb-open 還沒掛上）。晚一步給，等於沒給。 */
+:root.kb-open .editor-content-area,
+:root.kb-pending .editor-content-area {
   padding-bottom: calc(var(--sp-12) + var(--icon-44) + var(--editor-line) * 2);
 }
 
@@ -2210,7 +2216,8 @@ button, input, select, textarea { color: inherit; }
    （這條規則各家瀏覽器對「游標」的捲動遵守得不一致，所以
    js/documents.js 的 ensureCaretRoom() 還有一道自己算的保險。） */
 .editor-content-area { scroll-padding-bottom: var(--sp-40); }
-:root.kb-open .editor-content-area {
+:root.kb-open .editor-content-area,
+:root.kb-pending .editor-content-area {
   scroll-padding-bottom: calc(var(--icon-40) + var(--sp-12) + var(--editor-line) * 2);
 }
 
