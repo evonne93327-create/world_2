@@ -38,6 +38,38 @@ window.addEventListener("DOMContentLoaded", function() {
 // 開著不動也要能發現新版，不然裝成 app 的人可能好幾天都停在舊版
 const SW_UPDATE_CHECK_MS = 30 * 60 * 1000;
 
+/* 註冊結果收著，設定裡那一列「檢查更新」要用它強制問一次伺服器。 */
+let swRegistration = null;
+
+/* 主動去問伺服器有沒有新版，回傳一個 promise。
+
+   reg.update() 只是「去檢查」，檢查完不代表新的 worker 已經裝好——安裝是
+   接著才跑的，而 sw.js 有 skipWaiting()，裝好就會接管並觸發
+   controllerchange（那裡會 markPageCodeStale()）。所以這裡要等的不是
+   update() 本身，是「有沒有冒出一個正在安裝的 worker，它裝完了沒」。
+
+   等不到就放行：使用者按了按鈕，不能讓畫面卡在「檢查中…」下不來。
+   反正真的有新版時 controllerchange 還是會來，那一行自己會更新。 */
+function forceUpdateCheck() {
+  if (!swRegistration) return Promise.resolve();
+
+  return swRegistration.update().then(function() {
+    const incoming = swRegistration.installing || swRegistration.waiting;
+    if (!incoming) return;
+
+    return new Promise(function(resolve) {
+      const timer = setTimeout(resolve, 4000);
+      incoming.addEventListener("statechange", function() {
+        if (incoming.state === "installed" || incoming.state === "activated" ||
+            incoming.state === "redundant") {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+  }).catch(function() { /* 離線或註冊失敗：讓呼叫端照常往下走 */ });
+}
+
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   if (location.protocol !== "https:" && location.hostname !== "localhost" &&
@@ -58,6 +90,8 @@ function registerServiceWorker() {
   });
 
   navigator.serviceWorker.register("sw.js").then(function(reg) {
+    swRegistration = reg;
+
     // 備援路徑：萬一哪天 sw.js 拿掉了 skipWaiting，新 worker 會停在 waiting
     // 不接管，controllerchange 就不會來，這時要靠 updatefound 才發現得到。
     reg.addEventListener("updatefound", function() {
@@ -116,12 +150,17 @@ function otherModalOpen() {
   return !!open && open.id !== "updateModal";
 }
 
-function showUpdateModal() {
-  if (updateModalShown) return;     // 一次就好，不要每次檢查都跳
+/* force＝使用者自己按了「檢查更新」。
+
+   底下那兩道閘門都是為了「不要吵人」而設的，對自動偵測是對的，但使用者
+   主動問的時候必須讓路：按掉過一次就再也叫不出來、或者默默排隊等別的彈窗
+   關掉——兩種都會變成「我按了按鈕卻什麼都沒發生」，比不做還糟。 */
+function showUpdateModal(force) {
+  if (updateModalShown && !force) return;     // 一次就好，不要每次檢查都跳
   const el = document.getElementById("updateModal");
   if (!el) return;
 
-  if (otherModalOpen()) {
+  if (otherModalOpen() && !force) {
     // 排隊重試，而不是直接放棄——放棄的話這次更新就再也不會通知了
     if (!updatePendingTimer) {
       updatePendingTimer = setInterval(function() {
