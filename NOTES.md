@@ -15,8 +15,8 @@
 | | |
 |---|---|
 | 線上位置 | https://evonne93327-create.github.io/world_2/ |
-| main | `8ef02b3`（PR #30 合併後） |
-| service worker | **v40** |
+| main | `c672df8`（PR #38 合併後） |
+| service worker | **v56** |
 | 開發分支 | `claude/beautiful-feynman-ts3pe6` |
 | 開著的 PR | 無 |
 
@@ -60,11 +60,72 @@ git checkout -B claude/beautiful-feynman-ts3pe6 origin/main
   不加的話舊快取不會被清掉。`tests/shell-manifest.test.js` 會檢查 SHELL
   有沒有跟實際檔案脫節，但版號要自己記得改。
 
-### 3. 觸控裝置不自動聚焦輸入框
+### 3. 「有沒有手指／鍵盤」跟「版面寬不寬」是兩件事
 
-會把軟體鍵盤叫出來，鍵盤又把彈窗擠掉半個畫面。判斷用
-`isTouchPrimary()`（`(hover: none) and (pointer: coarse)`），
-**不要用寬度**——iPad 橫放超過 768px 但一樣沒有實體鍵盤。
+這一條被違反了三次，每次都是平板專屬的災情，而且每次都是同一個形狀：
+修正被 `isMobileLayout()` 或 `@media (max-width: 768px)` 關在手機版裡，
+**iPad 直放 820、橫放 1180，兩種都算桌機版面，所以永遠吃不到**。
+
+| 出過的事 | 被關在哪裡 |
+|---|---|
+| 自動聚焦把軟體鍵盤叫出來，擠掉半個彈窗 | 用寬度判斷「有沒有實體鍵盤」 |
+| 右滑打開目錄欄在平板完全沒反應 | `setupEdgeSwipe()` 開頭 `if (!isMobileLayout()) return;` |
+| 鍵盤升起時浮動按鈕不會讓位 | `:root.kb-open { --fab-bottom: ... }` 寫在手機版的媒體查詢裡 |
+
+規則：凡是跟**手指**或**軟體鍵盤**有關的判斷，用
+`isTouchPrimary()`（`(hover: none) and (pointer: coarse)`）或直接無條件套用，
+**不要用寬度**。寬度只決定版面長怎樣（抽屜 vs 收合），不決定裝置有什麼。
+
+（`isTouchPrimary()` 在 iPad 上實機量過是 `true`；但接了鍵盤保護殼或
+觸控板的機器有可能變 `false`，那時手勢就不會啟用——這是已知的取捨。）
+
+### 3b. iOS 長按之後會補一串合成的 mouse 事件
+
+長按結束放開手指時，iOS 會補出 `mousedown` / `mouseup` / `click`，
+**目標是手指底下那個元素**。這一串造成過兩個看起來完全無關的災情：
+
+- **白板節點會跳到點擊的位置。** 合成的 `mousedown` 讓拖曳重新開始，
+  掛在 window 上的 `mousemove` 一直留著，下次碰畫面節點就跟著跑。
+  擋法：**一次拖曳只屬於開始它的那一次互動**——觸控比對 `Touch.identifier`，
+  滑鼠看 `buttons === 0`（沒按著鍵卻在移動，那就不是拖曳）。
+  這個判斷跟「是誰讓拖曳殘留下來的」無關，所以之後再冒出別的路徑也擋得住。
+- **長按叫出的選單，鬆手就自己關掉。** 合成事件的目標是節點、不是選單，
+  於是「點到選單外面就關掉」的處理器把它關了。擋法：從長按叫出選單到那根
+  手指放開後 700ms 為止，不接受「點到外面」的關閉；新的一次 `touchstart`
+  立刻解除，所以點旁邊關選單不受影響。
+  **不能改成「開啟後 N 毫秒內不關」**——手指可以按著兩秒才鬆手，合成事件是
+  在鬆手時才來的。
+
+另外：長按叫出來的選單在桌機／平板版面是**開在手指正下方**的，所以選單自己
+（含標題那一行）一定要設 `user-select: none`，否則 iOS 的長按會改去選選單的
+文字，跳出系統的選字工具列。
+
+### 3c. 軟體鍵盤：`visualViewport` 有兩個不同的量，不要混用
+
+iOS 的 `dvh` **不會**扣掉軟體鍵盤（只扣瀏覽器自己的網址列），
+`interactive-widget=resizes-content` 只有 Chrome/Android 認得。
+所以鍵盤的高度只能從 `visualViewport` 算。這裡很容易寫錯，錯過三次：
+
+| 要算什麼 | 式子 | 為什麼 |
+|---|---|---|
+| **有沒有鍵盤** | `innerHeight − vv.height` | 螢幕上被鍵盤蓋住的高度。**頁面捲到哪裡都不影響它** |
+| **固定定位要往上讓多少** | `innerHeight − vv.offsetTop − vv.height` | `position: fixed` 貼的是版面視窗底部，而鍵盤升起時 iOS 會把版面視窗往上推 `offsetTop`（為了讓游標露出來），要扣掉 |
+| **正常文件流要縮到多高** | `vv.offsetTop + vv.height` | 從版面頂端到看得見的底端 |
+
+踩過的三種寫法：
+
+- **完全不管 `offsetTop`** → 按鈕被頂得太高浮在半空，`body` 太矮下方露一條
+  黑帶，黑帶高度正好等於被捲上去的距離。
+- **把 `offsetTop` 折進「有沒有鍵盤」** → 橫放時可視區只有 364px 左右，
+  iOS 得捲很多，那個值掉到門檻以下就判定「沒有鍵盤」，`.kb-open` 整個被
+  拿掉、按鈕退回原位躲到鍵盤後面。**直放可視區 704px 捲得少，僥倖沒跨過
+  門檻，所以只有橫的壞**——「只有一個方向壞」就是在指這一類錯誤。
+- **只聽 `resize`** → `offsetTop` 改變時 iOS 發的是 **`scroll`**，不是
+  `resize`。少聽那一個的話，鍵盤剛升起算出來的值是對的，之後就一直停在舊值。
+
+另外兩個保險：雙指放大時 `vv.height` 也會變小（`vv.scale > 1.05` 要排除），
+以及 `offsetTop` 取不到時要當 0——`undefined` 會讓整串變成 `NaN`，而
+`NaN <= 門檻` 是 `false`，會一路往下寫進 `--kb-h: NaNpx`，比不做還糟。
 
 ### 4. 彈窗卡片不要畫預設焦點框
 
@@ -126,11 +187,28 @@ node --test          # 19 項。注意：不要寫 node --test tests/，Node 22 
 
 ### 不在 repo 裡的
 
-開發過程中寫了約 30 個 Playwright 套件（`test_robust`、`test_review`、
-`test_perf`、`test_syncguard`、`test_settings`、`test_theme`、`test_darkscan`、
-`test_indent`、`test_back5`、`test_stale`、`test_supabase_stale`、`test_modalring` …），
-**它們只在當時的工作階段暫存區裡，沒有進版控**。
-重寫的成本不低，之後如果要長期維護這個專案，值得把常用的幾支搬進 `tests/`。
+開發過程中寫了約 40 個 Playwright 套件，**它們只在當時的工作階段暫存區裡，
+沒有進版控**。重寫的成本不低，之後如果要長期維護這個專案，值得把常用的幾支
+搬進 `tests/`。
+
+平板／iOS 那一輪的幾支特別值錢（它們釘住的都是這裡重現不了、只能靠推理與
+模擬的行為）：
+
+| 套件 | 釘住什麼 |
+|---|---|
+| `test_tablet` (72) | 平板右滑開目錄、長按成功率、點旁邊不會拖走節點 |
+| `test_kbdetect` (28) | 鍵盤偵測不受捲動影響（橫放捲到見底也要成立） |
+| `test_kbscroll` (33) | `offsetTop` 的三個量算對，`body` 下方不留黑帶 |
+| `test_fab` (27) | 三種尺寸下浮動按鈕有沒有高過鍵盤上緣 |
+| `test_stranded` (14) | 一次拖曳只屬於開始它的那一次互動 |
+| `test_menuclose` (21) | 合成 mouse 事件不會把剛跳出來的選單關掉 |
+| `test_ctxselect` (20) | 選單自己選不到字（含「選單開在手指底下」這個前提） |
+| `test_capture` (6) | 拖曳收尾不靠冒泡（被 `stopPropagation` 擋住也要收得掉） |
+
+**這些測試要自己送合成事件來模擬 iOS。** Chromium 有它自己的長按處理，
+會補 `contextmenu` 與 `touchcancel` 把問題掩蓋掉——走 CDP 真觸控的話，
+測試會「因為錯的理由而通過」。反過來，右滑那種要驗「會不會順手觸發 click」
+的，就必須走 CDP，合成事件不會產生 click。
 
 跑法（Playwright 在這個環境的路徑）：
 
@@ -139,12 +217,24 @@ const { chromium } = require('/opt/node22/lib/node_modules/playwright');
 const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
 ```
 
+伺服器：不同批測試寫死了不同的埠（多數是 `8899` 與 `8950`，另有 `8940`、
+`8947`、`8951`、`8952`），一次全開比較省事。
+
 ```bash
 python3 -m http.server 8899 --bind 127.0.0.1 &
 ```
 
-**WebKit 裝不起來**（proxy 擋掉 `cdn.playwright.dev`），所以 Safari／iOS
-專屬的問題只能靠使用者實機回報。這串裡的 iPad 白板漂移就是這樣查出來的。
+**WebKit 裝不起來。** 實測錯誤是
+`request blocked: no rule or allowlist entry allows host "playwright.download.prss.microsoft.com"`
+——環境的網路政策只放行特定網域。Safari 沒有 Linux 版，所以 iOS 專屬的行為
+只能靠推理＋合成事件模擬，最後由使用者實機確認。
+
+曾經做過一頁 `diag.html` 讓 iPad 自己跑檢查並印出 JSON 報告，任務完成後
+依使用者要求刪掉了（`git show 96bb95f^:diag.html` 可以撈回來）。它的結論
+記在下面「已實機驗證」那一節。它也留下一個教訓：**那一頁的長按門檻寫死
+300ms、app 其實是 480ms，於是把本來就不該跳選單的短按算成「失敗」，
+報出 13/17 這種嚇人的數字，害人去查根本沒壞的東西。會謊報的診斷工具比
+沒有還糟——所以門檻要讀 app 的常數，不要自己抄一個。**
 
 ---
 
@@ -158,9 +248,27 @@ python3 -m http.server 8899 --bind 127.0.0.1 &
 | Phase 2 AI 輔助 | 打算走 Supabase Edge Functions 代理，還沒開始 |
 | 刪掉已合併的舊分支 | 使用者說「等等再刪」 |
 
+## 已實機驗證（iPadOS 26 / Safari 26.6，820×1124 直、1180×764 橫）
+
+這些是這個環境驗不到、由使用者在 iPad 上跑出數據確認的。**不要因為看不懂
+就把相關的程式碼當成多餘的拿掉。**
+
+| 事項 | 實測結果 |
+|---|---|
+| `-webkit-touch-callout: none` 真的生效 | `.canvas-node` 計算值是 `none`（Chromium 連這個屬性都不認得，回 `undefined`） |
+| 編輯中的便條紙仍然選得到字 | 計算值 `default` / `text`，該關的關、該留的留 |
+| 放大鏡確實被擋掉 | 兩輪共 38 次長按，`touchcancel` **0 次**（系統沒來搶手勢） |
+| 冒泡那條路真的被切斷 | `windowCapture 21/21` 配 `windowBubble 0`——拖曳收尾非走捕獲階段不可 |
+| 右滑窄帶要含世界觀直欄 | 實測起手點 `x = 57`，落在新的 90px 窄帶內但**超出舊的 28px** |
+| `isTouchPrimary()` 在 iPad 是 true | `hover: none` 與 `pointer: coarse` 都成立（未接觸控板時） |
+| 鍵盤、長按、右滑、點旁邊不拖走節點 | 使用者逐項操作確認 |
+
 ## 待使用者實機驗證
 
 - **用注音打字時按 Enter 選字**，確認「段首空兩格」開著時不會把選字變成換行。
   程式有擋（`e.isComposing` / `keyCode 229`）、測試有模擬，但實機才算數。
 - **iPad 上白板的雙指縮放**。`user-scalable=no` 拿掉之後，頁面縮放可能
   跟白板本來就吃的雙指縮放打架，這是唯一沒把握的地方。
+- **接了鍵盤保護殼／觸控板的 iPad**。那時 `hover: none` 可能不成立，
+  `isTouchPrimary()` 會變 `false`，右滑開目錄的手勢就不會啟用。
+  目前沒有機器可以驗。
