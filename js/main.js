@@ -647,24 +647,32 @@ function keyboardInsetState(vv, innerH) {
      排除——否則一放大整個版面就縮掉，比原本的問題更糟。 */
   if (vv.scale > 1.05) return { open: false, height: 0, inset: 0 };
 
-  /* offsetTop 這一項不能省。
+  /* 這裡有兩個不同的量，不能用同一條式子算——混在一起正是上一版的 bug。
 
-     鍵盤升起時 iOS 會把整個版面視窗往上推，好讓游標露出來——那時
-     offsetTop 就不是 0 了。看得見的那一段在版面視窗座標裡是
-     [offsetTop, offsetTop + height]，所以「鍵盤上緣」在 offsetTop + height，
-     不是 height。
+     (1)「有沒有鍵盤」＝ innerHeight − vv.height
+        這是螢幕上被鍵盤蓋住的高度。頁面捲到哪裡都不會改變它，所以偵測
+        一定要用這一條。
 
-     少了這一項，被推上去多少就會錯多少，而且是一次錯兩個方向：
-       inset 多算 offsetTop → 固定定位的浮動按鈕被頂得太高，浮在半空中
-       height 少算 offsetTop → body 太矮，畫面下方露出一條黑帶
-     使用者的截圖兩個症狀同時出現，黑帶高度正好等於被捲上去的距離。 */
-  /* offsetTop 取不到就當 0。少了這道保險，undefined + height 會是 NaN，
-     而 NaN <= KB_MIN_INSET 是 false——會一路往下掛上 .kb-open 並寫進
-     --kb-h: NaNpx，版面反而整個壞掉。算不出來時寧可當作沒有鍵盤。 */
+     (2)「固定定位的東西要往上讓多少」＝ innerHeight − offsetTop − vv.height
+        固定定位的元素貼的是版面視窗底部，而鍵盤升起時 iOS 會把整個版面
+        視窗往上推 offsetTop（好讓游標露出來），所以要扣掉那一段。
+
+     上一版把 offsetTop 折進了 (1)。橫放時可視區只有 364px 左右，iOS 得捲
+     很多才能讓游標露出來，那個值就掉到 KB_MIN_INSET 以下——判定成「沒有
+     鍵盤」，.kb-open 整個被拿掉，按鈕退回原位躲到鍵盤後面。直放可視區有
+     704px，捲的量小，僥倖沒跨過門檻，所以當時只有橫的壞。
+
+     offsetTop 取不到就當 0：少了這道保險，undefined 會讓整串變成 NaN，
+     而 NaN <= KB_MIN_INSET 是 false，會一路往下寫進 --kb-h: NaNpx。 */
   const offsetTop = Number(vv.offsetTop) || 0;
-  const visibleBottom = offsetTop + Number(vv.height);
-  const hidden = innerH - visibleBottom;
-  if (!isFinite(hidden) || hidden <= KB_MIN_INSET) return { open: false, height: 0, inset: 0 };
+  const visibleH = Number(vv.height);
+  const covered = innerH - visibleH;                    // (1) 偵測用
+  if (!isFinite(covered) || covered <= KB_MIN_INSET) return { open: false, height: 0, inset: 0 };
+
+  const visibleBottom = offsetTop + visibleH;
+  /* (2) 讓位用。頁面若被捲過頭（橡皮筋），這個值可能變負，夾成 0 就好——
+     負的 bottom 會把按鈕推到鍵盤底下，比不動還糟。 */
+  const hidden = Math.max(0, innerH - visibleBottom);
   /* height＝從版面視窗頂端到看得見的底端（給 body 這類從頂端長下來的東西用，
             這樣它的下緣就正好停在鍵盤上緣）
      inset ＝版面視窗底下被鍵盤蓋掉的高度（給 position:fixed 的東西閃用） */
