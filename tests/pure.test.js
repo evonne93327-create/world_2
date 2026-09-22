@@ -256,3 +256,24 @@ test("caretBottomFromPointer：用手指的座標換算游標那一行的底", f
      一點。游標只會被捲得更靠上，方向是安全的；少算就可能卡在鍵盤邊緣。 */
   assert.ok(f(300, 0, 0, 30) - 300 >= 30, "至少要留一整行");
 });
+
+test("caretMeasureMethod：手指座標要排在所有量法前面", function() {
+  const f = app.caretMeasureMethod;
+
+  /* 手指剛指過就用它，不管游標在不在最末端。它是唯一「不管游標在哪裡都準」
+     的來源，而且零重排。 */
+  assert.strictEqual(f(true, true, false), "pointer");
+  assert.strictEqual(f(true, true, true), "pointer",
+    "就算在最末端也該用手指座標 —— 它比 textarea 的底更準");
+
+  // 沒有手指座標（程式聚焦、鍵盤操作）才退回去
+  assert.strictEqual(f(true, false, true), "textarea-bottom");
+  assert.strictEqual(f(true, false, false), "mirror");
+
+  /* 打字途中（accurate=false）：只有「游標在整篇最末端」這一種量法便宜到
+     負擔得起。不在最末端就跳過，交給瀏覽器自己的捲動。 */
+  assert.strictEqual(f(false, false, true), "textarea-bottom");
+  assert.strictEqual(f(false, false, false), "skip");
+  assert.strictEqual(f(false, true, false), "skip",
+    "打字途中不可以用手指座標 —— 游標早就離開那個位置了");
+});

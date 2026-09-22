@@ -277,18 +277,29 @@ test("點中間時要用手指的座標，不要重排整篇文章", function() 
 
   const fn = allJs.match(/function ensureCaretRoom\([\s\S]*?(?=\nfunction )/);
   assert.ok(fn, "找不到 ensureCaretRoom()");
-  const pointerAt = fn[0].indexOf("caretBottomFromPointer");
-  const mirrorAt = fn[0].indexOf("measureCaretBottom");
-  assert.ok(pointerAt !== -1 && mirrorAt !== -1, "兩條路都要在");
-  assert.ok(pointerAt < mirrorAt,
-    "手指座標那條要排在重排前面 —— 排在後面就永遠輪不到它，" +
-    "等於這個最佳化沒做");
+  /* 順序由 caretMeasureMethod() 決定，那支有自己的單元測試。這裡只確認
+     呼叫端真的照它給的答案走，沒有自己又寫一套 if。 */
+  assert.match(fn[0], /caretMeasureMethod\(!!accurate, caretPointerFresh\(\), atVeryEnd\)/,
+    "要由 caretMeasureMethod() 決定用哪一種量法");
+  assert.match(fn[0], /how === "pointer"/, "要照它的答案分支");
+});
 
-  /* 只檢查順序不夠：把條件改成 false 的話順序還是對的，但那條路永遠不會
-     走到。條件本身也要釘住。（這個測試自己先漏掉這一點，紅不起來。） */
-  assert.match(fn[0], /else if \(caretPointerFresh\(\)\) \{/,
-    "手指座標那條的條件必須是 caretPointerFresh() —— " +
-    "條件被改掉的話，順序再對也是永遠輪不到");
+test("「最後一行」要用長度比對，不是「後面有沒有換行」", function() {
+  /* 原本寫的是 ta.value.indexOf("\n", caret) === -1，那判斷的其實是
+     「游標在最後一個**段落**裡」。中文段落一折就是十幾個視覺行，點在最後
+     一段的任何地方都會通過，然後拿整個 textarea 的底當成游標那一行的底
+     ——本來不必捲的位置被往上推一大段。使用者回報過。 */
+  assert.match(allJs, /const atVeryEnd = caret === ta\.value\.length;/,
+    "要比對長度：只有游標真的在最末端時，textarea 的底才等於游標那一行的底");
+
+  const fn = allJs.match(/function ensureCaretRoom\([\s\S]*?(?=\nfunction )/);
+  assert.ok(fn, "找不到 ensureCaretRoom()");
+
+  /* 註解要先拿掉：上面那段註解本身就在解釋舊寫法長什麼樣，不拿掉的話
+     比到的是註解。這個陷阱這份測試已經踩第三次了。 */
+  const code = fn[0].replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
+  assert.ok(!/indexOf\("\\n", caret\)/.test(code),
+    "不可以再用「後面有沒有換行」判斷 —— 那是段落，不是行");
 });
 
 test("手指座標有時效，過期不能用", function() {

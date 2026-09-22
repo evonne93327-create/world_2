@@ -338,6 +338,26 @@ function caretPointerFresh() {
   return !!caretPointer && (nowMs() - caretPointer.at) < CARET_POINTER_TTL_MS;
 }
 
+/* 這一次要用哪一種量法。抽成純函式，因為順序本身就是 bug 的來源——
+   排錯順序不會壞掉，只會讓比較好的那條路永遠輪不到，而症狀（多捲一段）
+   看起來像別的問題。
+
+   - pointer：手指剛剛指給我們看的位置。唯一「不管游標在哪裡都準」的來源，
+     而且零重排，所以排第一。只在一次性的時機（accurate）用——打字途中游標
+     會離開那個座標，那時它就過期了。
+   - textarea-bottom：游標在整篇最末端時，textarea 的底就是游標那一行的底。
+     這是打字途中唯一負擔得起的量法（一次 getBoundingClientRect）。
+   - mirror：把游標前面的文字重排一次，一萬行 106ms。程式聚焦、鍵盤操作
+     這些沒有手指座標的情況才會走到。
+   - skip：打字途中而游標不在最末端。沒有便宜又正確的量法，交給瀏覽器自己
+     的「把游標捲進視野」——硬用 textarea 的底去算就是多捲一大段。 */
+function caretMeasureMethod(accurate, pointerFresh, atVeryEnd) {
+  if (accurate && pointerFresh) return "pointer";
+  if (atVeryEnd) return "textarea-bottom";
+  if (accurate) return "mirror";
+  return "skip";
+}
+
 /* 為什麼這裡沒有動畫——這一條是硬限制，不是還沒做。
 
    聚焦時那一下補捲是在跟 iOS 搶時間：只要鍵盤升起的那一刻游標已經在安全
@@ -490,8 +510,19 @@ function ensureCaretRoom(accurate, assumedInset) {
   const caret = ta.selectionStart;
   if (caret !== ta.selectionEnd) return;                  // 有選取範圍就不要亂動
 
-  const onLastLine = ta.value.indexOf("\n", caret) === -1;
-  if (!onLastLine && !accurate) return;                   // 打字途中不做昂貴的量測
+  /* 「游標就在整篇的最末端」——不是「在最後一個段落裡」。
+
+     原本這裡寫的是 ta.value.indexOf("\n", caret) === -1，意思是「游標後面
+     沒有換行」。那判斷的其實是「在最後一個段落裡」：中文的段落一折就是十幾
+     個視覺行，點在最後一段的任何地方都會通過，然後拿**整個 textarea 的底**
+     當成游標那一行的底去算——於是本來根本不必捲的位置也被往上推一大段。
+     使用者回報的「本來就不在鍵盤下面、接近文章尾巴的地方還是會跑上去」
+     就是這個。
+
+     改成比對長度：游標真的在最末端時，textarea 的底才**保證**等於游標那一行
+     的底。這條捷徑本來就是為了「連按 Enter」設計的，那時游標本來就在最末端。 */
+  const atVeryEnd = caret === ta.value.length;
+  if (!atVeryEnd && !accurate) return;                    // 打字途中不做昂貴的量測
 
   /* 真正看得見的底：可視區域與捲動容器取交集。
      visualViewport 才知道鍵盤蓋掉多少，window.innerHeight 不知道。 */
@@ -513,19 +544,17 @@ function ensureCaretRoom(accurate, assumedInset) {
 
   const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 24;
 
-  /* 三條路，成本差很多：
+  /* 哪一種量法，見 caretMeasureMethod()。手指座標排在最前面：它是唯一
+     「不管游標在哪裡都準」的來源，而且零重排。 */
+  const how = caretMeasureMethod(!!accurate, caretPointerFresh(), atVeryEnd);
+  caretMeasureHow = how;
 
-     最後一行  → 那一行的底就是 textarea 的底，一次 getBoundingClientRect。
-     剛剛點過  → 用手指的座標換算，零重排。這是「點中間」的常見情況。
-     其他      → 只好重排（一萬行 106ms）。程式聚焦、鍵盤操作才會走到這裡。 */
   let caretLineBottom;
-  if (onLastLine) {
-    caretLineBottom = ta.getBoundingClientRect().bottom;
-    caretMeasureHow = "last-line";
-  } else if (caretPointerFresh()) {
+  if (how === "pointer") {
     caretLineBottom = caretBottomFromPointer(
       caretPointer.y, caretPointer.scrollTop, scroller.scrollTop, lineHeight);
-    caretMeasureHow = "pointer";
+  } else if (how === "textarea-bottom") {
+    caretLineBottom = ta.getBoundingClientRect().bottom;
   } else {
     const t0 = nowMs();
     caretLineBottom = measureCaretBottom(ta);
