@@ -296,27 +296,45 @@ async function reconcileWithRemote() {
       return;
     }
 
-    /* 兩邊都有變更。原本到這裡就整包二選一了——但「兩邊都有變更」多半是
-       「這台改了第 1 篇、那台改了第 2 篇」，挑哪邊都會丟掉另一台的那一篇。
-
-       先試逐篇合併（js/sync-merge.js）。只有**同一篇兩邊都改**才是真的沒得
-       選，那時才問，而且問的時候講得出是哪幾篇。
-
-       沒有指紋（第一次同步、剛換後端）時 mergeAppData() 回 null，退回原本的
-       整包二選一——沒有祖先就沒辦法分辨「誰改的」，硬合併等於瞎猜。 */
-    const merged = (typeof mergeAppData === "function")
-      ? mergeAppData(loadSyncFingerprint(), appData, remote.data) : null;
-
-    if (merged && !merged.conflicts.length) {
-      applyMergedData(merged, remote);
-      return;
-    }
-
-    openSyncConflictModal(remote, false, merged ? merged.conflicts : null);
+    // 兩邊都有變更 → 先試逐篇合併，真的撞在一起才問（見 mergeOrAsk）
+    mergeOrAsk(remote);
   } catch (e) {
     setSyncStatus("error", e.message || "同步失敗");
   }
 }
+
+/* 本機與雲端分岔了：先試逐篇合併，真的撞在一起才問使用者。
+
+   **每一條發現分岔的路都必須走這裡**，不可以自己直接開衝突視窗。
+
+   這一條踩過：合併本來只接在對帳（reconcileWithRemote）那一條路上，但兩台
+   各改一篇時真正會先走到的是 pushNow() 的版本衝突——A 推成功、版本變 N+1，
+   B 帶著 N 去推就衝突了，而那裡直接跳視窗，合併根本輪不到。使用者回報
+   「兩台各改一篇，還是跳出視窗叫我選一邊」就是這個。
+
+   沒有指紋（第一次同步、剛換後端）時 mergeAppData() 回 null，退回整包二選一
+   ——沒有祖先就分不出「誰改的」，硬合併等於瞎猜。
+
+   回傳有沒有自己解決掉。 */
+function mergeOrAsk(remote) {
+  const merged = (typeof mergeAppData === "function" && remote && remote.data)
+    ? mergeAppData(loadSyncFingerprint(), appData, remote.data) : null;
+
+  if (merged && !merged.conflicts.length && mergePushRetries < MERGE_PUSH_MAX_RETRIES) {
+    applyMergedData(merged, remote);
+    return true;
+  }
+
+  openSyncConflictModal(remote, false, merged ? merged.conflicts : null);
+  return false;
+}
+
+/* 合併完要推回去，而推回去有可能又撞到（另一台在這幾百毫秒間又推了一次）。
+   那時會再合併、再推——正常情況兩三輪內一定收斂，因為每一輪都把對方的東西
+   併進來了。但不能無上限：真的一直撞就停下來問，不要讓兩台裝置在那邊互相
+   推到天荒地老。 */
+let mergePushRetries = 0;
+const MERGE_PUSH_MAX_RETRIES = 3;
 
 /* 套用合併結果。
 
@@ -401,12 +419,15 @@ async function pushNow(silent) {
     const result = await P().push(appData, state.version);
 
     if (result.conflict) {
-      // 雲端被別台裝置改過，先把對方的版本抓回來給使用者比較
+      /* 雲端被別台裝置改過。先把對方那份抓回來試合併——這是兩台各改一篇時
+         真正會走到的路，只跳視窗的話逐篇合併等於沒做（見 mergeOrAsk）。 */
       const remote = await P().pull();
-      openSyncConflictModal(remote);
+      mergePushRetries++;
+      mergeOrAsk(remote);
       return;
     }
 
+    mergePushRetries = 0;
     saveSyncState(result.version, result.at);
     saveSyncFingerprint(appData);
     setLocalDirty(false);

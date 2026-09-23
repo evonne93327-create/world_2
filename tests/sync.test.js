@@ -60,9 +60,13 @@ test("對帳只有一套判斷，開啟與回到前景共用", function() {
   assert.match(init[0], /await reconcileWithRemote\(\)/,
     "initSync() 要走共用的那一支，不要自己再寫一套");
 
-  // 停下來問的那條路不能在重構中掉了
-  assert.match(syncJs, /openSyncConflictModal\(remote\)/,
-    "不能安全採用時要跳出衝突視窗，不可以自己猜");
+  /* 「不能安全採用就停下來問」這條路不能在重構中掉了。
+     現在它走 mergeOrAsk()——合併得起來就自己處理，合併不起來才問。 */
+  assert.match(init[0].length ? syncJs : syncJs, /function mergeOrAsk\(/,
+    "要有那條政策");
+  const policy = syncJs.match(/function mergeOrAsk\(remote\)[\s\S]*?\n}/);
+  assert.ok(policy && /openSyncConflictModal\(/.test(policy[0]),
+    "合併不起來時還是要停下來問，不可以自己猜");
 });
 
 test("回到前景要對帳，不能只是重試上傳", function() {
@@ -173,21 +177,81 @@ test("在 app 裡換地方看的時候也要對帳", function() {
 /* ==========================================================
    逐篇合併有沒有真的接上
    ========================================================== */
-test("對帳要先試逐篇合併，再退回整包二選一", function() {
-  /* 合併引擎測得再細，對帳沒去叫它也是白搭——使用者還是會看到
-     「兩邊都有修改，請選一邊」。 */
-  const fn = syncJs.match(/async function reconcileWithRemote\(\)[\s\S]*?(?=\n\/\*)/);
-  assert.ok(fn, "找不到 reconcileWithRemote()");
+test("每一條發現分岔的路都要先試合併", function() {
+  /* 這一條是踩出來的，而且是最貴的一次：合併本來只接在對帳
+     （reconcileWithRemote）上，但兩台各改一篇時**真正先走到的是
+     pushNow() 的版本衝突**——A 推成功、版本變 N+1，B 帶著舊版本去推就衝突，
+     而那裡直接跳視窗，合併根本輪不到。使用者回報「兩台各改一篇，還是跳出
+     視窗叫我選一邊」就是這個。
 
-  const mergeAt = fn[0].indexOf("mergeAppData(");
-  const modalAt = fn[0].lastIndexOf("openSyncConflictModal(");
-  assert.ok(mergeAt !== -1, "對帳要呼叫 mergeAppData()");
-  assert.ok(modalAt !== -1, "整包二選一那條路要留著當退路");
-  assert.ok(mergeAt < modalAt,
-    "合併要排在跳衝突視窗之前 —— 排在後面就永遠輪不到它");
+     所以不逐一檢查各個呼叫點（那正是漏掉的原因），改成反過來掃：
+     **每一處 openSyncConflictModal() 都必須是已知的例外，否則就是新的漏洞。**
+     以後有人再加一條分岔路卻忘了先合併，這裡就會紅。 */
+  assert.match(syncJs, /function mergeOrAsk\(remote\)/,
+    "「先合併、不行才問」要抽成單一政策");
 
-  assert.match(fn[0], /!merged\.conflicts\.length/,
-    "只有「一項都不衝突」才可以自己套用");
+  const policy = syncJs.match(/function mergeOrAsk\(remote\)[\s\S]*?\n}/);
+  assert.ok(policy, "找不到 mergeOrAsk()");
+  assert.match(policy[0], /mergeAppData\(loadSyncFingerprint\(\)/, "要拿指紋當祖先去合併");
+  assert.match(policy[0], /merged && !merged\.conflicts\.length/,
+    "只有「一項都不衝突」才可以自己套用；而且 merged 可能是 null，要先擋");
+
+  /* 掃過每一處直接開視窗的地方。允許的只有三種：
+     - mergeOrAsk 自己（合併不成才問）
+     - 「雲端回應看起來是舊的」（那是另一個問題，合併救不到）
+     - 重新把還沒解決的衝突擺回使用者面前（pendingConflictRemote） */
+  const code = syncJs.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
+
+  /* 函式定義本身不是呼叫點（這個測試第一次就把它算進去了，紅在自己身上）。 */
+  const calls = [];
+  const re = /openSyncConflictModal\(/g;
+  let m;
+  while ((m = re.exec(code))) {
+    if (code.slice(Math.max(0, m.index - 9), m.index) === "function ") continue;
+    calls.push(code.slice(m.index + "openSyncConflictModal(".length));
+  }
+  assert.ok(calls.length >= 3, "應該抓得到好幾處（實得 " + calls.length + "）");
+
+  calls.forEach(function(rest, i) {
+    const arg = rest.split(")")[0];
+    const ok = /remote, false, merged/.test(arg)      // mergeOrAsk 自己
+            || /remote, true/.test(arg)               // 雲端回應是舊的
+            || /pendingConflictRemote/.test(arg);     // 重新問一次
+    assert.ok(ok,
+      "第 " + (i + 1) + " 處 openSyncConflictModal(" + arg + ") 沒有先試合併。\n" +
+      "發現本機與雲端分岔時一律走 mergeOrAsk()，不要自己直接開視窗 —— " +
+      "只接一半的話，逐篇合併在真正會走到的那條路上等於沒做");
+  });
+});
+
+test("pushNow 撞到版本衝突時要走合併，不是直接跳視窗", function() {
+  /* 兩台各改一篇時，這才是第一個會被觸發的地方（2.5 秒的推送 debounce
+     遠早於任何一次對帳）。 */
+  const fn = syncJs.match(/async function pushNow\(silent\)[\s\S]*?\n}/);
+  assert.ok(fn, "找不到 pushNow()");
+
+  const branch = fn[0].match(/if \(result\.conflict\)[\s\S]*?\n    }/);
+  assert.ok(branch, "找不到 result.conflict 那一段");
+  assert.match(branch[0], /mergeOrAsk\(remote\)/,
+    "推送衝突要先試合併 —— 這裡只跳視窗的話，使用者永遠看不到逐篇合併的效果");
+});
+
+test("合併後重推不可以無上限地互撞", function() {
+  /* 合併完要推回去，而推回去可能又撞到（另一台在這幾百毫秒又推了一次）。
+     正常兩三輪會收斂，但不能沒有上限——兩台裝置互相推到天荒地老比跳視窗
+     還糟。 */
+  assert.match(syncJs, /const MERGE_PUSH_MAX_RETRIES = \d+;/, "要有上限常數");
+  assert.match(syncJs, /mergePushRetries < MERGE_PUSH_MAX_RETRIES/,
+    "超過上限就要停下來問");
+  assert.match(syncJs, /mergePushRetries\+\+/, "撞一次要加一次");
+
+  /* 歸零要在 pushNow 的成功路徑裡找，不能只看整份檔案有沒有這串字——
+     宣告本身就是 `let mergePushRetries = 0;`，那樣寫的話把成功路徑裡那一行
+     刪掉測試照樣綠。（這個陷阱在 caretPointer 那邊踩過一次了。） */
+  const fn = syncJs.match(/async function pushNow\(silent\)[\s\S]*?\n}/);
+  assert.ok(fn, "找不到 pushNow()");
+  assert.match(fn[0], /mergePushRetries = 0;/,
+    "推送成功要歸零 —— 不歸零的話用久了就再也不會合併了");
 });
 
 test("沒有祖先時不可以硬合併", function() {
@@ -198,8 +262,9 @@ test("沒有祖先時不可以硬合併", function() {
   assert.match(merge, /if \(!base \|\| !local \|\| !remote\) return null;/,
     "缺任何一份就要回 null");
 
-  const fn = syncJs.match(/async function reconcileWithRemote\(\)[\s\S]*?(?=\n\/\*)/);
-  assert.match(fn[0], /merged && !merged\.conflicts\.length/,
+  const policy = syncJs.match(/function mergeOrAsk\(remote\)[\s\S]*?\n}/);
+  assert.ok(policy, "找不到 mergeOrAsk()");
+  assert.match(policy[0], /merged && !merged\.conflicts\.length/,
     "要先確認 merged 不是 null 才看 conflicts —— " +
     "少了這道，null 會在讀 .conflicts 時丟例外，同步整個停擺");
 });
