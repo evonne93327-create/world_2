@@ -270,8 +270,13 @@ test("拿起來要看得見，不能只靠震動", function() {
      之後完全沒有任何提示，不會知道現在可以拖了。 */
   assert.match(modalJs, /classList\.add\("drag-armed"\)/,
     "拿起來要掛一個 class");
-  assert.match(css, /\.node-row-outer\.drag-armed/,
-    "style.css 要真的畫得出那個狀態");
+  /* 比整條規則、而且要求它真的畫得出東西。只比選擇器出現過的話，把規則
+     改名但留著下面那條 transition 的清單，這裡還是綠的
+     ——破壞測試那一輪就是這樣漏掉的。 */
+  const rule = css.match(/\.node-row-outer\.drag-armed\s*>\s*\.node-row\s*\{[^}]*\}/);
+  assert.ok(rule, "style.css 要有 .node-row-outer.drag-armed > .node-row 這條規則");
+  assert.match(rule[0], /background|box-shadow|transform/,
+    "那條規則要真的看得出變化，不能是空的");
 
   /* 兩條收尾的路都要把它拿掉，不然那一列會一直浮著。 */
   const attach = codeOnly(modalJs).match(/function attachContextMenu\([\s\S]*?\n\}/);
