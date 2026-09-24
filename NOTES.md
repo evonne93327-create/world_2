@@ -16,7 +16,7 @@
 |---|---|
 | 線上位置 | https://evonne93327-create.github.io/world_2/ |
 | main | `3854360`（PR #52 合併後） |
-| service worker | **v84** |
+| service worker | **v85** |
 | 開發分支 | `claude/ipad-keyboard-button-placement-613jds` |
 | 開著的 PR | 無 |
 
@@ -656,6 +656,17 @@ Android 上也要先長按到系統自己認定是拖曳才會發。所以目錄
 白板項目是用「在原本陣列裡的索引」復原與刪除的——**篩選前先把索引記下來**，
 改用篩選後的索引的話，按「復原」會復原到別的世界觀的那一筆。
 
+**刪掉的世界觀放最上面、照名字分組**（使用者指定）。世界觀刪掉之後名字就不在
+任何地方了，所以 `deleteWorldById()` 在拿掉它**之前**呼叫
+`stampDeletedWorldOnTrash()`，把名字蓋在垃圾桶裡屬於它的每一筆上（含之前就從
+它刪進來的）。**不要改成另外存一份「已刪除的世界觀」清單**——見下面那個同步的坑，
+trash 底下多出來的欄位同步一次就沒了；蓋在每一筆上，它就跟著那一筆被合併。
+
+**已知問題（還沒修）：自動合併會丟掉整個 `trash.canvas`。** `mergeAppData()`
+組 `trash` 時只放了 `docs` 與 `folders`，白板刪掉的節點／連線／便條紙在任何一次
+自動合併之後都會消失。已用最小案例重現過。沒順手修是因為那些項目沒有 id 可以
+拿來合併，不是一行的事，而且那是全專案最危險的一段。
+
 ### 4. 彈窗卡片不要畫預設焦點框
 
 `.modal-card` 的 `tabindex="-1"` 只是給程式聚焦用的錨點，使用者按 Tab
@@ -708,7 +719,7 @@ Android 上也要先長按到系統自己認定是拖曳才會發。所以目錄
 ### 在 repo 裡的
 
 ```bash
-node --test          # 173 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 177 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |
@@ -792,6 +803,7 @@ python3 -m http.server 8899 --bind 127.0.0.1 &
 | CSP（`<meta http-equiv>`） | 要先把滿地的 `onclick=` 屬性清掉才能加 |
 | Phase 2 AI 輔助 | 打算走 Supabase Edge Functions 代理，還沒開始 |
 | 刪掉已合併的舊分支 | 使用者說「等等再刪」 |
+| 自動合併會丟掉 `trash.canvas` | 已重現、已回報，還沒修（見 3l） |
 
 ## 已實機驗證（iPadOS 26 / Safari 26.6，820×1124 直、1180×764 橫）
 
