@@ -101,6 +101,98 @@ function promptEditWorldDesc(worldId) {
  updateWorldBadge();
 }
 
+/* ==========================================================
+   世界觀清單
+
+   側邊那一排（手機上是底部那一列）只看得到圖示，世界觀一多就認不出來
+   哪個是哪個。這個清單把名稱、簡介、文件數、最後更新時間一次攤開。
+
+   兩個入口、同一個面板：
+   - 手機：從底部那一列往上滑
+   - 電腦／平板：點上方那顆「目前的世界觀」徽章
+   ========================================================== */
+
+/* 一個世界觀的統計。純函式，餵陣列進去就能測。
+
+   只算還在的文檔（垃圾桶裡的不算——那是「刪掉了」，不該讓數字看起來
+   沒變）。updatedAt 是 "YYYY-MM-DD HH:mm" 這種固定寬度的字串，
+   直接比字典序就是比時間，不必先 parse 成 Date。 */
+function worldStats(docs, worldId) {
+  let count = 0;
+  let updatedAt = "";
+  (docs || []).forEach(function(d) {
+    if (!d || d.worldId !== worldId) return;
+    count++;
+    const t = typeof d.updatedAt === "string" ? d.updatedAt : "";
+    if (t > updatedAt) updatedAt = t;
+  });
+  return { count: count, updatedAt: updatedAt };
+}
+
+function openWorldListModal() {
+  renderWorldList();
+  document.getElementById("worldListModal").classList.add("active");
+}
+
+function closeWorldListModal() {
+  document.getElementById("worldListModal").classList.remove("active");
+}
+
+/* 一律 createElement + textContent，不要拼 innerHTML：名稱與簡介都是
+   使用者寫的（或匯入來的）字（硬規則 5）。 */
+function renderWorldList() {
+  const list = document.getElementById("worldListBody");
+  if (!list) return;
+  list.innerHTML = "";
+
+  appData.worldviews.forEach(function(world) {
+    const stats = worldStats(appData.docs, world.id);
+
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "world-card" + (world.id === activeWorldId ? " active" : "");
+    card.onclick = function() {
+      closeWorldListModal();
+      selectWorld(world.id);
+    };
+
+    const icon = document.createElement("span");
+    icon.className = "world-card-icon";
+    icon.textContent = world.icon || "🌐";
+
+    const main = document.createElement("span");
+    main.className = "world-card-main";
+
+    const name = document.createElement("span");
+    name.className = "world-card-name";
+    name.textContent = world.name;
+
+    const desc = document.createElement("span");
+    const hasDesc = typeof world.desc === "string" && world.desc.trim();
+    desc.className = "world-card-desc" + (hasDesc ? "" : " is-empty");
+    desc.textContent = hasDesc ? world.desc.trim() : "還沒寫簡介";
+
+    const meta = document.createElement("span");
+    meta.className = "world-card-meta";
+    meta.textContent = stats.count + " 篇文件　·　"
+      + (stats.updatedAt ? "最後更新 " + stats.updatedAt : "還沒有內容");
+
+    main.appendChild(name);
+    main.appendChild(desc);
+    main.appendChild(meta);
+    card.appendChild(icon);
+    card.appendChild(main);
+
+    /* 長按（或右鍵）沿用世界觀原本那份選單：改名、寫簡介、換圖示、刪除。
+       在這裡特別有用——這個畫面本來就是「一次看完所有世界觀」的地方。 */
+    attachContextMenu(card,
+      function() { return buildWorldMenuItems(world); },
+      function() { return (world.icon || "🌐") + " " + world.name; });
+
+    list.appendChild(card);
+  });
+}
+
 function renderSidebarTree() {
  const container = document.getElementById("worldTreeContainer");
  const search = document.getElementById("searchInput").value.trim().toLowerCase();
@@ -366,6 +458,12 @@ function moveItemInto(payload, targetFolderId, targetWorldId) {
 function dropTargetAt(x, y) {
   const el = document.elementFromPoint(x, y);
   if (!el || !el.closest) return null;
+
+  /* 右鍵選單與它的遮罩擋在前面時什麼都不算。正常情況下拖曳開始的那一刻就
+     closeContextMenu() 了（display: none 之後 elementFromPoint 就看不到
+     它們），這裡是防那一天有人幫關閉加上淡出動畫——那時候遮罩會多活幾十
+     毫秒，而它是整片的，手指指到哪裡都會問到它。 */
+  if (el.closest("#customContextMenu, #ctxMenuOverlay")) return null;
 
   const hit = el.closest("[data-folder-id]");
   if (hit) {
@@ -732,6 +830,13 @@ function closeAllBreadcrumbDropdowns() {
  if (barEl) barEl.classList.remove("dropdown-open");
 }
 
+/* 新的世界觀一建好，裡面就有一篇空白文檔。
+
+   沒有這篇的話，建好之後看到的是一個空的編輯區，要先去找「新增文檔」
+   那顆按鈕才能開始寫——而「建一個世界觀」的下一步幾乎一定是「開始寫」。
+   selectWorld() 會打開這個世界觀的第一篇，所以建完就直接停在這篇上。
+
+   文檔的形狀跟「新增文檔」共用 makeNewDoc()，兩邊不會各長各的。 */
 function promptCreateWorldview() {
  const name = prompt("請輸入新世界觀名稱：", "新世界觀");
  if (name && name.trim()) {
@@ -742,6 +847,7 @@ function promptCreateWorldview() {
  canvas: { nodes: [], edges: [] }
  };
  appData.worldviews.push(newWorld);
+ appData.docs.unshift(makeNewDoc(newWorld.id, null));
  selectWorld(newWorld.id);
  saveData();
  }
@@ -808,12 +914,17 @@ function promptCreateFolder(parentId = null, worldId = null) {
  }
 }
 
-function createNewDoc(targetFolderId = null, worldId = null) {
- const wId = worldId || activeWorldId;
- const newDoc = {
- id: "doc_" + Date.now(),
- worldId: wId,
- folderId: targetFolderId,
+/* 一篇空白文檔長什麼樣子，只寫在這裡一份。
+
+   「新增文檔」與「新世界觀附帶的那一篇」都從這裡拿。以前欄位是直接寫在
+   createNewDoc() 裡的，第二個地方要用就只能複製一份——哪天加了新欄位
+   （像 manualTags 當初就是後來加的），複製的那份不會跟著長，那一篇就會
+   在某個地方被當成舊資料處理。 */
+function makeNewDoc(worldId, folderId) {
+ return {
+ id: "doc_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+ worldId: worldId,
+ folderId: folderId || null,
  icon: "📄",
  title: "",
  content: "",
@@ -823,6 +934,11 @@ function createNewDoc(targetFolderId = null, worldId = null) {
  wordCount: 0,
  updatedAt: formatTime(new Date())
  };
+}
+
+function createNewDoc(targetFolderId = null, worldId = null) {
+ const wId = worldId || activeWorldId;
+ const newDoc = makeNewDoc(wId, targetFolderId);
  appData.docs.unshift(newDoc);
  activeWorldId = wId;
  updateWorldBadge();

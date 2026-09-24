@@ -17,6 +17,8 @@ const { loadApp, host, ROOT } = require("./helpers/load-app.js");
 
 const directoryJs = fs.readFileSync(path.join(ROOT, "js", "directory.js"), "utf8");
 const modalJs = fs.readFileSync(path.join(ROOT, "js", "modal.js"), "utf8");
+const mainJs = fs.readFileSync(path.join(ROOT, "js", "main.js"), "utf8");
+const appJs = fs.readFileSync(path.join(ROOT, "js", "app.js"), "utf8");
 const css = fs.readFileSync(path.join(ROOT, "style.css"), "utf8");
 const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
 
@@ -196,17 +198,94 @@ test("拖曳期間的 touchmove 必須是非被動的", function() {
   assert.match(move[0], /dragHooks\.move\(/, "而且要把座標交給拖曳");
 });
 
-test("長按之後才進入拖曳，而且門檻比長按的容忍值小", function() {
+test("拖曳一定要搶在選單前面", function() {
+  /* 第一版是接在長按選單「之後」的，實機上完全不能用：這個 app 的選單在
+     手機版是**從底部滑上來的整片 sheet ＋ 半透明遮罩**，畫面一暗、一整片
+     東西蓋上來，那是「手勢結束了」的訊號，沒有人會想繼續移動手指。
+     使用者的原話是「長按會出現菜單，然後有遮罩所以沒有辦法移動文件」。 */
+  const arm = modalJs.match(/const DRAG_ARM_HOLD_MS = (\d+);/);
+  const menu = modalJs.match(/const LONG_PRESS_DELAY_MS = (\d+);/);
+  assert.ok(arm && menu, "兩個時間都要是具名常數");
+  assert.ok(Number(arm[1]) < Number(menu[1]),
+    "拿起來要早於選單跳出來（實得 " + arm[1] + "ms vs " + menu[1] + "ms）—— " +
+    "不然使用者永遠是先看到選單");
+  assert.ok(Number(arm[1]) >= 200,
+    "太短會把「猶豫一下才開始捲動」誤判成拖曳（實得 " + arm[1] + "ms）");
+
+  const armSlop = modalJs.match(/const DRAG_ARM_SLOP_PX = (\d+);/);
+  const longPressSlop = modalJs.match(/const LONG_PRESS_SLOP_PX = (\d+);/);
+  assert.ok(armSlop && longPressSlop, "位移門檻也要是具名常數");
+  assert.ok(Number(armSlop[1]) < Number(longPressSlop[1]),
+    "LONG_PRESS_SLOP_PX 那個 18px 是為了「拿著一公斤的平板手會晃」而放寬的；" +
+    "用在這裡會把晃動誤判成「要拖了」");
+});
+
+test("拖曳開始時要把選單的計時器取消掉", function() {
+  /* 不取消的話：手指拖到一半，480ms 一到，整片 sheet 還是會冒出來把畫面
+     蓋掉——拖曳明明已經在進行了。 */
+  /* 抓「那個非被動的 touchmove」，不要抓 if (dragHooks) —— 那個字串現在
+     touchstart 裡也有一份（設定拿起來的計時器），會配到錯的區塊。 */
+  const drag = modalJs.match(/element\.addEventListener\("touchmove",[\s\S]*?\{ passive: false \}\);/);
+  assert.ok(drag, "找不到拖曳那個 touchmove");
+  assert.match(drag[0], /dragging = true;[\s\S]*?clearTimeout\(pressTimer\);/,
+    "開始拖的時候要把選單的計時器清掉");
+  assert.match(drag[0], /closeContextMenu\(\)/,
+    "撐過 480ms 才想拖的那條路還是要收得掉選單");
+});
+
+test("一拿起來就要 preventDefault，不可以等超過門檻才擋", function() {
+  /* 這是第一版真正拖不動的技術原因。瀏覽器是看「第一次 touchmove 有沒有被
+     preventDefault」來決定要不要自己接手做捲動；只要放過一次它就接手了，
+     之後再擋都沒用，而且會補一個 touchcancel 把拖曳砍掉。
+
+     合成事件測不出來（不會真的觸發捲動），所以只能比程式碼的順序。 */
+  const drag = codeOnly(modalJs).match(/element\.addEventListener\("touchmove",[\s\S]*?\{ passive: false \}\);/);
+  assert.ok(drag, "找不到拖曳那個 touchmove");
+  const preventAt = drag[0].indexOf("e.preventDefault()");
+  const slopAt = drag[0].indexOf("DRAG_START_SLOP_PX");
+  assert.ok(preventAt !== -1 && slopAt !== -1, "兩段都要在");
+  assert.ok(preventAt < slopAt,
+    "preventDefault() 要排在「還沒超過門檻就 return」那一段之前 —— " +
+    "排在後面的話，第一個 touchmove 會被放行，瀏覽器就接手去捲動了");
+});
+
+test("開始拖之後，後續的 touchmove 還要進得來", function() {
+  /* 這個 bug 是自己寫出來的：開始拖的時候順手把 dragArmed 清掉，於是第二個
+     touchmove 就在開頭的守衛被擋回去——幽靈停在第一次移動的位置不再跟著
+     手指，preventDefault 也不再發生（瀏覽器可以接手捲動）。
+
+     最糟的是它「看起來是成功的」：放手時是用 touchend 的座標去找目標，
+     所以東西還是搬對了。實機上會看到幽靈卡住不動。 */
+  const drag = codeOnly(modalJs).match(/element\.addEventListener\("touchmove",[\s\S]*?\{ passive: false \}\);/);
+  assert.ok(drag, "找不到拖曳那個 touchmove");
+  assert.match(drag[0], /if \(\(!dragArmed && !dragging\)/,
+    "守衛要同時看 dragArmed 與 dragging");
+  assert.ok(!/disarmDrag\(\)/.test(drag[0]),
+    "開始拖的時候只能收掉「浮起來」那個樣子，不可以把狀態歸零 —— " +
+    "歸零在 touchend / touchcancel");
+});
+
+test("拿起來要看得見，不能只靠震動", function() {
+  /* iOS Safari 沒有 navigator.vibrate。只靠震的話，iPhone 使用者在那 300ms
+     之後完全沒有任何提示，不會知道現在可以拖了。 */
+  assert.match(modalJs, /classList\.add\("drag-armed"\)/,
+    "拿起來要掛一個 class");
+  /* 比整條規則、而且要求它真的畫得出東西。只比選擇器出現過的話，把規則
+     改名但留著下面那條 transition 的清單，這裡還是綠的
+     ——破壞測試那一輪就是這樣漏掉的。 */
+  const rule = css.match(/\.node-row-outer\.drag-armed\s*>\s*\.node-row\s*\{[^}]*\}/);
+  assert.ok(rule, "style.css 要有 .node-row-outer.drag-armed > .node-row 這條規則");
+  assert.match(rule[0], /background|box-shadow|transform/,
+    "那條規則要真的看得出變化，不能是空的");
+
+  /* 兩條收尾的路都要把它拿掉，不然那一列會一直浮著。 */
   const attach = codeOnly(modalJs).match(/function attachContextMenu\([\s\S]*?\n\}/);
   assert.ok(attach, "找不到 attachContextMenu()");
-  assert.match(attach[0], /longPressTriggered/,
-    "拖曳要接在長按之後 —— 目錄這一列的手勢已經滿了（點＝開、直拖＝捲動）");
-
-  const slop = modalJs.match(/const DRAG_AFTER_MENU_SLOP_PX = (\d+);/);
-  const longPress = modalJs.match(/const LONG_PRESS_SLOP_PX = (\d+);/);
-  assert.ok(slop && longPress, "兩個門檻都要是具名常數");
-  assert.ok(Number(slop[1]) < Number(longPress[1]),
-    "選單都跳出來了，這時候的移動是刻意的，門檻不該比「按著不動」還寬鬆");
+  ["touchend", "touchcancel"].forEach(function(evt) {
+    const h = attach[0].match(new RegExp('addEventListener\\("' + evt + '"[\\s\\S]*?\\}\\);'));
+    assert.ok(h, "找不到 " + evt);
+    assert.match(h[0], /disarmDrag\(\)/, evt + " 要把「拿起來」的狀態收掉");
+  });
 });
 
 test("拖曳有唯一的收尾出口，touchcancel 也走它", function() {
@@ -258,4 +337,162 @@ test("文檔也有「移動」這條路", function() {
   assert.match(docMenu[0], /promptMoveDoc\(/, "文檔的長按選單裡要有「移動文檔」");
   assert.match(html, /id="moveModalTitle"/,
     "標題要有 id —— 同一個彈窗現在資料夾與文檔共用，字要能換");
+});
+
+/* ---------- 世界觀清單 ---------- */
+
+test("worldStats()：只算還在的文檔，時間取最新的那一筆", function() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js"
+  ]);
+  const docs = [
+    { id: "a", worldId: "w1", updatedAt: "2026-01-05 09:00" },
+    { id: "b", worldId: "w1", updatedAt: "2026-03-20 18:30" },
+    { id: "c", worldId: "w1", updatedAt: "2026-02-11 07:15" },
+    { id: "d", worldId: "w2", updatedAt: "2027-01-01 00:00" }
+  ];
+  const s = host(app.worldStats(docs, "w1"));
+  assert.strictEqual(s.count, 3, "別的世界觀的不要算進來");
+  assert.strictEqual(s.updatedAt, "2026-03-20 18:30",
+    "updatedAt 是固定寬度的字串，比字典序就是比時間");
+
+  assert.deepStrictEqual(host(app.worldStats(docs, "沒這個世界觀")),
+    { count: 0, updatedAt: "" }, "空的要回得出來，不要是 undefined");
+  assert.deepStrictEqual(host(app.worldStats(null, "w1")), { count: 0, updatedAt: "" });
+});
+
+test("worldStats()：缺 updatedAt 的文檔要算進篇數，不要弄壞時間", function() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js"
+  ]);
+  /* 匯入來的、或很早以前建的文檔可能沒有 updatedAt。那時候
+     undefined > "字串" 是 false，所以不會污染結果——但篇數要照算。 */
+  const s = host(app.worldStats([
+    { id: "a", worldId: "w1" },
+    { id: "b", worldId: "w1", updatedAt: "2026-03-20 18:30" },
+    { id: "c", worldId: "w1", updatedAt: null }
+  ], "w1"));
+  assert.strictEqual(s.count, 3);
+  assert.strictEqual(s.updatedAt, "2026-03-20 18:30");
+});
+
+test("世界觀清單一律 createElement + textContent", function() {
+  /* 名稱與簡介都是使用者寫的（或匯入來的）字，拼進 innerHTML 就是一個洞
+     （硬規則 5）。這個畫面一次列出全部的世界觀，等於把每一筆都攤開。 */
+  const body = codeOnly(bodyOf(directoryJs, "renderWorldList"));
+  assert.ok(!/innerHTML\s*=\s*[^"']/.test(body.replace('list.innerHTML = "";', "")),
+    "除了清空以外不可以碰 innerHTML");
+  assert.match(body, /name\.textContent = world\.name/, "名稱走 textContent");
+  assert.match(body, /desc\.textContent =/, "簡介走 textContent");
+});
+
+test("清單的兩個入口都接上了", function() {
+  /* 手機：從底部那一列往上滑；電腦／平板：點上方的世界觀徽章。
+     少接哪一個，那個版面就完全打不開這個畫面。 */
+  assert.match(html, /id="btnB_WorldBadge"[^>]*onclick="openWorldListModal\(\)"/,
+    "上方徽章要點得開清單");
+  assert.ok(!/id="btnB_WorldBadge"[^>]*is-static/.test(html),
+    "既然點得動就不該還掛著 is-static");
+  assert.match(mainJs, /function setupRailSwipeUp\(\)/, "要有往上滑那條路");
+  assert.match(mainJs, /openWorldListModal\(\)/, "滑到底要真的開清單");
+
+  assert.match(appJs, /setupRailSwipeUp\(\);/, "沒有人叫它的話那條路是死的");
+});
+
+test("往上滑：方向不對就整個放手，那一列還要能橫向捲", function() {
+  const body = codeOnly(bodyOf(mainJs, "setupRailSwipeUp"));
+  assert.match(body, /if \(!isMobileLayout\(\)\) return;/,
+    "只有「那一列在底下」時才有這個手勢 —— 桌機版它是左邊的直欄，" +
+    "往上滑在那裡的意思是捲動它自己");
+  assert.match(body, /dy < 0 && Math\.abs\(dy\) > Math\.abs\(dx\) \* RAIL_SWIPE_SLOPE/,
+    "要往上、而且垂直要比水平明顯，才算這個手勢");
+  assert.match(body, /railSwipe = null; return;/,
+    "方向不對要整個放手，不能只是不處理 —— 後面那幾個 touchmove 還會再進來");
+
+  /* 起手點幾乎一定落在某顆世界觀按鈕上。沒有這一段的話，滑開清單的同時
+     會順手切換世界觀（左緣右滑那邊踩過同一個坑）。 */
+  /* 比整行、連條件一起比。只比函式名字的話，有人把它包進 if (false) 裡
+     這條還是綠的（破壞測試那一輪就是這樣漏掉的）。 */
+  assert.match(body, /if \(railSwipe && railSwipe\.claimed\) swallowNextClick\(\);/,
+    "接手過的手勢，收尾要把瀏覽器補上的那一下 click 吃掉");
+
+  assert.match(body, /\{ passive: false \}/,
+    "要擋掉那一列的橫向捲動，touchmove 必須是非被動的");
+});
+
+/* ---------- 新世界觀附帶一篇空白文檔 ---------- */
+
+function worldApp() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js"
+  ]);
+  app.run(`
+    saveData = function() {};
+    renderSidebarTree = function() {};
+    renderBreadcrumb = function() {};
+    var __selected = null;
+    selectWorld = function(id) { __selected = id; };
+    appData = { worldviews: [{ id: "w1", name: "舊的" }], folders: [],
+                docs: [{ id: "d_old", worldId: "w1", folderId: null }], trash: { docs: [], folders: [] } };
+    activeWorldId = "w1";
+  `);
+  return app;
+}
+
+test("新增世界觀之後，裡面就有一篇空白文檔", function() {
+  const app = worldApp();
+  app.run(`prompt = function() { return "  新大陸  "; }; promptCreateWorldview();`);
+
+  const world = host(app.run(`appData.worldviews[appData.worldviews.length - 1]`));
+  assert.strictEqual(world.name, "新大陸");
+
+  const docs = host(app.run(`appData.docs.filter(function(d) { return d.worldId === "${world.id}"; })`));
+  assert.strictEqual(docs.length, 1, "新的世界觀裡要剛好有一篇");
+  assert.strictEqual(docs[0].folderId, null, "放在根目錄，不是某個資料夾裡");
+  assert.strictEqual(docs[0].content, "", "是空白的");
+
+  /* selectWorld() 會打開那個世界觀的第一篇 —— 文檔要在它被呼叫之前就放進去，
+     不然打開的時候裡面還是空的，停在一片空白的編輯區。 */
+  assert.strictEqual(app.run("__selected"), world.id, "建完要切過去");
+  const body = codeOnly(bodyOf(directoryJs, "promptCreateWorldview"));
+  assert.ok(body.indexOf("makeNewDoc(") < body.indexOf("selectWorld("),
+    "文檔要在 selectWorld() 之前放進去 —— 它會打開第一篇");
+
+  assert.strictEqual(app.run(`appData.docs.length`), 2, "舊的那篇不要被動到");
+});
+
+test("按取消或留白就什麼都不建", function() {
+  /* 不然每按一次取消就多一個沒有名字的世界觀，外加一篇孤兒文檔。 */
+  ["null", '""', '"   "'].forEach(function(ret) {
+    const app = worldApp();
+    app.run(`prompt = function() { return ${ret}; }; promptCreateWorldview();`);
+    assert.strictEqual(app.run("appData.worldviews.length"), 1, "prompt 回 " + ret + " 時不該建世界觀");
+    assert.strictEqual(app.run("appData.docs.length"), 1, "prompt 回 " + ret + " 時也不該多一篇文檔");
+  });
+});
+
+test("空白文檔的形狀只寫在 makeNewDoc() 一份", function() {
+  /* 以前欄位是直接寫在 createNewDoc() 裡。第二個地方要用就只能複製一份，
+     哪天加了欄位（manualTags 當初就是後來加的），複製的那份不會跟著長。 */
+  const app = worldApp();
+  const doc = host(app.run(`makeNewDoc("w9", "f1")`));
+  ["id", "worldId", "folderId", "icon", "title", "content", "tags", "manualTags",
+   "images", "wordCount", "updatedAt"].forEach(function(k) {
+    assert.ok(k in doc, "空白文檔要有 " + k);
+  });
+  assert.strictEqual(doc.worldId, "w9");
+  assert.strictEqual(doc.folderId, "f1");
+
+  /* 同一毫秒建兩篇（連點兩下「新增文檔」）不可以撞 id —— 撞了的話兩篇會
+     共用同一份復原紀錄，刪一篇另一篇也跟著不見。 */
+  const a = app.run(`makeNewDoc("w9", null).id`);
+  const b = app.run(`makeNewDoc("w9", null).id`);
+  assert.notStrictEqual(a, b);
+
+  const create = codeOnly(bodyOf(directoryJs, "createNewDoc"));
+  assert.match(create, /makeNewDoc\(/, "「新增文檔」也要從 makeNewDoc() 拿");
+  assert.ok(!/manualTags:/.test(create), "createNewDoc() 裡不該再有一份欄位清單");
 });

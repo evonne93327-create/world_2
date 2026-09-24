@@ -855,12 +855,27 @@ function setupBlankLongPress(view) {
     if (e.touches.length !== 1) { cancel(); return; }
     start(e.touches[0].clientX, e.touches[0].clientY, e.target);
   }, { passive: true });
-  view.addEventListener("touchmove", function(e) {
+
+  /* 「取消」這一半要掛在 window 的捕獲階段，不能掛在 view 上。
+
+     使用者回報：手機上在白板從左緣往右滑打開目錄，會長出一張便利貼。
+     左緣右滑（setupEdgeSwipe）接手之後會 stopPropagation()，免得白板跟著
+     平移——它是掛在 document 的捕獲階段，所以接下來的 touchmove 與
+     touchend 全都到不了 view。這裡收不到「手指移動了」也收不到「手指放開
+     了」，計時器沒人取消，500ms 一到就在起手的位置長出便利貼。
+
+     window 的捕獲階段排在 document 之前，誰 stopPropagation 都擋不到這裡。
+     這一段只看位移、只會取消，不會攔任何東西，所以排在最前面沒有副作用。
+
+     開始（touchstart）留在 view 上是對的：它本來就只該管在白板上起手的
+     手勢，而且起手的那一下沒有人會攔。 */
+  window.addEventListener("touchmove", function(e) {
+    if (!timer) return;
     if (e.touches.length !== 1) { cancel(); return; }
     moved(e.touches[0].clientX, e.touches[0].clientY);
-  }, { passive: true });
-  view.addEventListener("touchend", cancel);
-  view.addEventListener("touchcancel", cancel);
+  }, { capture: true, passive: true });
+  window.addEventListener("touchend", cancel, true);
+  window.addEventListener("touchcancel", cancel, true);
 }
 
 /* ---------- 定位到某個節點 ----------

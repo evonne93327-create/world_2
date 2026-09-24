@@ -106,14 +106,18 @@
     <header class="top-nav-bar">
       <div class="nav-group-left">
         <button class="nav-btn-icon" id="btnA_Hamburger" onclick="toggleSidebarMenu()" title="展開/收納目錄">☰</button>
-        <!-- 只是顯示「現在在哪個世界觀」，點下去不做事。
-             原本點一下會直接跳出圖示選擇器——那個位置太容易誤觸，
-             而且「顯示目前位置」跟「改圖示」是兩件事。
-             要改圖示請長按（或右鍵）左邊世界觀列上的那顆按鈕。 -->
-        <div class="nav-world-btn is-static" id="btnB_WorldBadge" title="目前的世界觀（長按左側的世界觀圖示可以更換圖示）">
+        <!-- 顯示「現在在哪個世界觀」，點下去打開世界觀清單。
+
+             它一度是完全不能點的（`is-static`）：原本點一下會直接跳出圖示
+             選擇器，那個位置太容易誤觸，而「顯示目前位置」跟「改圖示」是
+             兩件事。現在點下去做的是「看看有哪些世界觀」——那正是一個
+             「目前在哪」的徽章該做的事，不是改東西，誤觸也沒有代價。
+             要改圖示仍然是長按（或右鍵）左側那排的圖示。 -->
+        <button type="button" class="nav-world-btn" id="btnB_WorldBadge" title="目前的世界觀（點一下看全部）" onclick="openWorldListModal()">
           <span id="currentWorldIcon">🌐</span>
           <span id="currentWorldName">主世界觀</span>
-        </div>
+          <span class="nav-world-caret" aria-hidden="true">▾</span>
+        </button>
       </div>
 
       <div class="nav-group-center">
@@ -291,6 +295,22 @@
         <button class="btn btn-secondary" onclick="closeIconPickerModal()">取消</button>
         <button class="btn btn-primary" onclick="applyCustomIcon()">確定套用</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 彈窗：世界觀清單
+
+       手機從底部那一列往上滑、電腦點上方的世界觀徽章，兩個入口同一個面板。
+       沿用 .modal-overlay 拿到點遮罩／Escape／Tab 不跑出去；手機版的樣式
+       再把它改成從底下滑上來的抽屜（做法跟右鍵選單一樣）。 -->
+  <div class="modal-overlay world-list-modal" id="worldListModal">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title">🌐 世界觀</div>
+        <button class="icon-sm-btn" title="關閉" onclick="closeWorldListModal()">✕</button>
+      </div>
+      <div class="world-list-body" id="worldListBody"></div>
+      <button type="button" class="btn btn-secondary world-list-add" onclick="closeWorldListModal(); promptCreateWorldview();">＋ 新增世界觀</button>
     </div>
   </div>
 
