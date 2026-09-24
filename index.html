@@ -75,6 +75,11 @@
       <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="executeBatchDelete()">刪除選取項</button>
     </div>
 
+    <!-- 目前世界觀的一句話簡介，放在搜尋欄上面（使用者指定的位置）。
+         點下去就能改；沒寫過時顯示成淡淡的提示，不然這個功能會整個藏在
+         長按選單裡沒人找得到。 -->
+    <button type="button" class="world-desc-line" id="worldDescLine" onclick="promptEditWorldDesc()"></button>
+
     <!-- Google 風格搜尋框 (無底色叉叉) + Hashtag 篩選 -->
     <div class="search-wrap">
       <div class="search-row">
@@ -86,10 +91,6 @@
         <button type="button" id="hashtagFilterBtn" class="icon-sm-btn hashtag-filter-btn" title="Hashtag 篩選" onclick="openHashtagFilterModal()">🏷️</button>
       </div>
     </div>
-
-    <!-- 目前世界觀的一句話簡介。點下去就能改；沒寫過時顯示成淡淡的提示，
-         不然這個功能會整個藏在長按選單裡沒人找得到。 -->
-    <button type="button" class="world-desc-line" id="worldDescLine" onclick="promptEditWorldDesc()"></button>
 
     <!-- 類 Windows 檔案樹狀目錄 -->
     <div class="directory-tree-area" id="worldTreeContainer"></div>
@@ -594,8 +595,8 @@
   <!-- 彈窗：垃圾桶 -->
   <div class="modal-overlay" id="trashModal">
     <div class="modal-card" style="width:480px;">
-      <div class="modal-title">🗑️ 垃圾桶</div>
-      <p style="font-size:12px; color:var(--text-secondary);">已刪除的資料夾與文檔會暫存在這裡，可以復原或永久刪除。<strong>超過 60 天會自動清除</strong>，以免一直佔著儲存空間：</p>
+      <div class="modal-title" id="trashModalTitle">🗑️ 垃圾桶</div>
+      <p style="font-size:12px; color:var(--text-secondary);">每個世界觀的垃圾桶是分開的，這裡只有目前這個世界觀的東西。已刪除的資料夾與文檔會暫存在這裡，可以復原或永久刪除。<strong>超過 60 天會自動清除</strong>，以免一直佔著儲存空間：</p>
       <div class="trash-list" id="trashList"></div>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px;">
         <button class="btn btn-danger" onclick="emptyTrash()">清空垃圾桶</button>

@@ -966,22 +966,57 @@ function closeTrashModal() {
  document.getElementById("trashModal").classList.remove("active");
 }
 
+/* 每個世界觀的垃圾桶是獨立的：這個世界觀的垃圾桶裡，看得到哪些東西。
+
+   資料結構沒有分開（還是一個 appData.trash，同步與合併都不用動），分的
+   是「看得到哪些、清空的時候清哪些」。
+
+   規則：屬於這個世界觀的，**加上世界觀已經被刪掉的**。刪除世界觀時，底下
+   的資料夾與文檔會進垃圾桶，確認框也承諾「可以復原」；它們掛的 worldId
+   已經不存在，只看「屬於這個世界觀」的話它們在任何一個垃圾桶都看不到，
+   只能等 60 天被自動清掉。所以沒有家的就每個垃圾桶都列，復原時會放進
+   目前這個世界觀（restoreDocFromTrash 原本就這樣處理）。 */
+function trashBelongsHere(item, worldId) {
+ if (!item) return false;
+ if (item.worldId === worldId) return true;
+ return !appData.worldviews.some(function(w) { return w.id === item.worldId; });
+}
+
+function trashIsOrphan(item) {
+ return !!item && !appData.worldviews.some(function(w) { return w.id === item.worldId; });
+}
+
 function renderTrashList() {
  const list = document.getElementById("trashList");
  if (!list) return;
  list.innerHTML = "";
 
- const folders = appData.trash.folders || [];
- const docs = appData.trash.docs || [];
- const canvasItems = appData.trash.canvas || [];
+ const world = appData.worldviews.find(w => w.id === activeWorldId);
+ const title = document.getElementById("trashModalTitle");
+ if (title) title.textContent = "🗑️ 垃圾桶　·　" + (world ? (world.icon || "🌐") + " " + world.name : "");
+
+ const here = function(x) { return trashBelongsHere(x, activeWorldId); };
+ const folders = (appData.trash.folders || []).filter(here);
+ const docs = (appData.trash.docs || []).filter(here);
+ /* 白板上刪掉的節點／連線／便條紙。用原本陣列裡的索引來指，因為這三種
+    東西的 id 各自獨立、不保證不重複——所以篩選時要把索引一起帶著。 */
+ const canvasItems = (appData.trash.canvas || [])
+ .map(function(item, index) { return { item: item, index: index }; })
+ .filter(function(e) { return here(e.item); });
 
  if (folders.length === 0 && docs.length === 0 && canvasItems.length === 0) {
- list.innerHTML = '<div class="hashtag-filter-empty">垃圾桶目前是空的</div>';
+ const empty = document.createElement("div");
+ empty.className = "hashtag-filter-empty";
+ empty.textContent = "這個世界觀的垃圾桶目前是空的";
+ list.appendChild(empty);
  return;
  }
 
+ // 世界觀已經不在的，標出來——不然使用者會納悶「這篇怎麼跑到這裡來」
+ const from = function(x) { return trashIsOrphan(x) ? "　·　來自已刪除的世界觀" : ""; };
+
  folders.forEach(function(f) {
- list.appendChild(createTrashRow(f.icon || '📁', f.name || '未命名資料夾', f.deletedAt, function() {
+ list.appendChild(createTrashRow(f.icon || '📁', (f.name || '未命名資料夾') + from(f), f.deletedAt, function() {
  restoreFolderFromTrash(f.id);
  }, function() {
  permanentlyDeleteTrashFolder(f.id);
@@ -989,25 +1024,21 @@ function renderTrashList() {
  });
 
  docs.forEach(function(d) {
- list.appendChild(createTrashRow(d.icon || '📄', d.title || '無標題文檔', d.deletedAt, function() {
+ list.appendChild(createTrashRow(d.icon || '📄', (d.title || '無標題文檔') + from(d), d.deletedAt, function() {
  restoreDocFromTrash(d.id);
  }, function() {
  permanentlyDeleteTrashDoc(d.id);
  }));
  });
 
- /* 白板上刪掉的節點／連線／便條紙。用索引而不是 id 來指，因為這三種
-    東西的 id 各自獨立、不保證不重複。 */
  const canvasIcons = { node: '🔗', edge: '↔️', note: '🗒️' };
- canvasItems.forEach(function(item, index) {
- const world = appData.worldviews.find(w => w.id === item.worldId);
- const where = world ? ('　·　' + (world.icon || '🌐') + ' ' + world.name) : '';
+ canvasItems.forEach(function(e) {
  list.appendChild(createTrashRow(
- canvasIcons[item.kind] || '🧩',
- (item.label || '白板項目') + where,
- item.deletedAt,
- function() { if (restoreCanvasTrashItem(index)) renderTrashList(); },
- function() { permanentlyDeleteCanvasTrashItem(index); }
+ canvasIcons[e.item.kind] || '🧩',
+ (e.item.label || '白板項目') + from(e.item),
+ e.item.deletedAt,
+ function() { if (restoreCanvasTrashItem(e.index)) renderTrashList(); },
+ function() { permanentlyDeleteCanvasTrashItem(e.index); }
  ));
  });
 }
@@ -1115,14 +1146,23 @@ function permanentlyDeleteTrashDoc(docId) {
  renderTrashList();
 }
 
+/* 只清「這個世界觀的垃圾桶裡看得到的」（見 trashBelongsHere）。
+   別的世界觀的垃圾桶不能被順手清掉——那些東西使用者現在根本看不到。 */
 function emptyTrash() {
- const total = (appData.trash.docs || []).length + (appData.trash.folders || []).length +
- (appData.trash.canvas || []).length;
- if (total === 0) { alert("垃圾桶目前是空的。"); return; }
- if (!confirm("確定要清空垃圾桶嗎？裡面的 " + total + " 個項目將會永久刪除，此動作無法復原！")) return;
- appData.trash.docs = [];
- appData.trash.folders = [];
- appData.trash.canvas = [];
+ const here = function(x) { return trashBelongsHere(x, activeWorldId); };
+ const t = appData.trash;
+ const total = (t.docs || []).filter(here).length + (t.folders || []).filter(here).length +
+ (t.canvas || []).filter(here).length;
+ if (total === 0) { alert("這個世界觀的垃圾桶目前是空的。"); return; }
+
+ const world = appData.worldviews.find(w => w.id === activeWorldId);
+ const name = world ? "「" + world.name + "」的" : "";
+ if (!confirm("確定要清空" + name + "垃圾桶嗎？裡面的 " + total + " 個項目將會永久刪除，此動作無法復原！\n（其他世界觀的垃圾桶不受影響）")) return;
+
+ const keep = function(x) { return !here(x); };
+ t.docs = (t.docs || []).filter(keep);
+ t.folders = (t.folders || []).filter(keep);
+ t.canvas = (t.canvas || []).filter(keep);
  saveData();
  renderTrashList();
 }

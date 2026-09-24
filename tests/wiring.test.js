@@ -142,3 +142,33 @@ test("使用者主動按的時候，防重複的那兩道閘門要讓路", funct
   assert.match(js, /showUpdateModal\(true\)/,
     "checkForUpdateNow() 要用 force 叫它");
 });
+
+test("directory.js 不再用瀏覽器內建的 prompt() 問名稱", function() {
+  /* 使用者要的是「預設文字反藍、直接打字就取代」。prompt() 的預設文字選不選
+     是瀏覽器決定的，iOS 不選——所以名稱一律走 openTextInputModal()。
+     哪天有人順手寫回 prompt()，iOS 上又要先手動刪掉「新分類」才能打。 */
+  const dir = fs.readFileSync(path.join(ROOT, "js", "directory.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
+  assert.ok(!/\bprompt\(/.test(dir), "directory.js 裡不該再有 prompt(");
+});
+
+test("輸入彈窗：打開就全選、組字中的 Enter 不送出、不被自動聚焦搶走", function() {
+  const modal = fs.readFileSync(path.join(ROOT, "js", "modal.js"), "utf8");
+  const main = fs.readFileSync(path.join(ROOT, "js", "main.js"), "utf8");
+  const code = modal.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
+
+  assert.match(code, /if \(inputs\[0\]\) focusAndSelect\(inputs\[0\]\);/, "打開時第一欄要全選");
+  assert.match(code, /function focusAndSelect[\s\S]*?input\.select\(\);[\s\S]*?setSelectionRange\(0, input\.value\.length\)/,
+    "select() 在 iOS 不一定生效，要用 setSelectionRange 補");
+
+  /* 用注音選字時按的 Enter 是「確定這個字」。 */
+  assert.match(code, /if \(e\.isComposing \|\| e\.keyCode === 229\) return;/,
+    "組字中的 Enter 不可以送出 —— 不然選完字就建了一個半截名稱的資料夾");
+
+  /* setupModalKeyboard 在觸控裝置上會把焦點移到卡片本身。 */
+  assert.match(main, /if \(active && active !== document\.body && active !== modal && modal\.contains\(active\)\) return;/,
+    "焦點已經在彈窗裡面時不要搶 —— 不然反藍會消失、鍵盤升起又收回");
+
+  assert.match(html, /id="textInputModal"[\s\S]*?onclick="closeTextInputModal\(\)">取消</,
+    "「取消」兩個字不能改：Escape／點遮罩是靠這兩個字找到關閉按鈕的");
+});

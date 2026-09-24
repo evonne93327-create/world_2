@@ -848,3 +848,73 @@ test("移動彈窗：只有目的地在別的世界觀時才問「移動還是�
   assert.match(confirm, /copyItemInto\(/, "選複製要走 copyItemInto()");
   assert.match(confirm, /moveItemInto\(/, "選移動照舊走 moveItemInto()");
 });
+
+/* ---------- 每個世界觀的垃圾桶獨立 ---------- */
+
+function trashApp() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"
+  ]);
+  app.run(`
+    saveData = function() {};
+    renderTrashList = function() {};
+    confirm = function() { return true; };
+    alert = function() {};
+    appData = {
+      worldviews: [{ id: "w1", name: "主" }, { id: "w2", name: "外傳" }],
+      folders: [], docs: [],
+      trash: {
+        docs: [{ id: "a", worldId: "w1" }, { id: "b", worldId: "w2" }, { id: "g", worldId: "已刪除的" }],
+        folders: [{ id: "fa", worldId: "w1" }, { id: "fb", worldId: "w2" }],
+        canvas: [{ kind: "node", worldId: "w1" }, { kind: "note", worldId: "w2" }]
+      }
+    };
+    activeWorldId = "w1";
+  `);
+  return app;
+}
+
+test("trashBelongsHere()：自己的，加上世界觀已經不在的", function() {
+  const app = trashApp();
+  const here = host(app.run(`appData.trash.docs.filter(function(d) { return trashBelongsHere(d, "w1"); }).map(function(d) { return d.id; })`));
+  assert.deepStrictEqual(here, ["a", "g"],
+    "外傳的 b 不能出現在主世界的垃圾桶；世界觀已刪除的 g 要出現 —— " +
+    "刪世界觀時確認框承諾「可以復原」，只看自己的話它在任何垃圾桶都看不到");
+  assert.strictEqual(app.run(`trashIsOrphan({ worldId: "已刪除的" })`), true);
+  assert.strictEqual(app.run(`trashIsOrphan({ worldId: "w2" })`), false);
+});
+
+test("清空垃圾桶只清目前這個世界觀的", function() {
+  const app = trashApp();
+  app.run(`emptyTrash()`);
+  const left = host(app.run(`({
+    docs: appData.trash.docs.map(function(d) { return d.id; }),
+    folders: appData.trash.folders.map(function(f) { return f.id; }),
+    canvas: appData.trash.canvas.map(function(c) { return c.worldId; })
+  })`));
+  assert.deepStrictEqual(left, { docs: ["b"], folders: ["fb"], canvas: ["w2"] },
+    "外傳的全部要留著 —— 使用者現在根本看不到它們，不能被順手清掉");
+});
+
+test("垃圾桶的清單用篩過的、而且白板項目帶著原本的索引", function() {
+  /* 白板項目是用「在原本陣列裡的索引」復原與刪除的。篩選之後如果改用篩選後
+     陣列的索引，按「復原」會復原到別的世界觀的那一筆。 */
+  const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
+  assert.match(body, /\.map\(function\(item, index\) \{ return \{ item: item, index: index \}; \}\)/,
+    "篩選之前先把原本的索引記下來");
+  assert.match(body, /restoreCanvasTrashItem\(e\.index\)/, "復原用原本的索引");
+  assert.match(body, /permanentlyDeleteCanvasTrashItem\(e\.index\)/, "刪除也是");
+  assert.match(body, /trashBelongsHere\(x, activeWorldId\)/, "三種都要篩");
+  assert.ok(!/innerHTML\s*=\s*'/.test(body), "空的提示也走 textContent");
+});
+
+/* ---------- 一句話簡介在搜尋欄上面 ---------- */
+
+test("一句話簡介在搜尋欄上面", function() {
+  const desc = html.indexOf('id="worldDescLine"');
+  const search = html.indexOf('class="search-wrap"');
+  const tree = html.indexOf('id="worldTreeContainer"');
+  assert.ok(desc !== -1 && search !== -1 && tree !== -1);
+  assert.ok(desc < search && search < tree, "順序要是：簡介 → 搜尋欄 → 目錄樹（使用者指定的位置）");
+});
