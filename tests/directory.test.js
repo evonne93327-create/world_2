@@ -198,17 +198,89 @@ test("拖曳期間的 touchmove 必須是非被動的", function() {
   assert.match(move[0], /dragHooks\.move\(/, "而且要把座標交給拖曳");
 });
 
-test("長按之後才進入拖曳，而且門檻比長按的容忍值小", function() {
+test("拖曳一定要搶在選單前面", function() {
+  /* 第一版是接在長按選單「之後」的，實機上完全不能用：這個 app 的選單在
+     手機版是**從底部滑上來的整片 sheet ＋ 半透明遮罩**，畫面一暗、一整片
+     東西蓋上來，那是「手勢結束了」的訊號，沒有人會想繼續移動手指。
+     使用者的原話是「長按會出現菜單，然後有遮罩所以沒有辦法移動文件」。 */
+  const arm = modalJs.match(/const DRAG_ARM_HOLD_MS = (\d+);/);
+  const menu = modalJs.match(/const LONG_PRESS_DELAY_MS = (\d+);/);
+  assert.ok(arm && menu, "兩個時間都要是具名常數");
+  assert.ok(Number(arm[1]) < Number(menu[1]),
+    "拿起來要早於選單跳出來（實得 " + arm[1] + "ms vs " + menu[1] + "ms）—— " +
+    "不然使用者永遠是先看到選單");
+  assert.ok(Number(arm[1]) >= 200,
+    "太短會把「猶豫一下才開始捲動」誤判成拖曳（實得 " + arm[1] + "ms）");
+
+  const armSlop = modalJs.match(/const DRAG_ARM_SLOP_PX = (\d+);/);
+  const longPressSlop = modalJs.match(/const LONG_PRESS_SLOP_PX = (\d+);/);
+  assert.ok(armSlop && longPressSlop, "位移門檻也要是具名常數");
+  assert.ok(Number(armSlop[1]) < Number(longPressSlop[1]),
+    "LONG_PRESS_SLOP_PX 那個 18px 是為了「拿著一公斤的平板手會晃」而放寬的；" +
+    "用在這裡會把晃動誤判成「要拖了」");
+});
+
+test("拖曳開始時要把選單的計時器取消掉", function() {
+  /* 不取消的話：手指拖到一半，480ms 一到，整片 sheet 還是會冒出來把畫面
+     蓋掉——拖曳明明已經在進行了。 */
+  /* 抓「那個非被動的 touchmove」，不要抓 if (dragHooks) —— 那個字串現在
+     touchstart 裡也有一份（設定拿起來的計時器），會配到錯的區塊。 */
+  const drag = modalJs.match(/element\.addEventListener\("touchmove",[\s\S]*?\{ passive: false \}\);/);
+  assert.ok(drag, "找不到拖曳那個 touchmove");
+  assert.match(drag[0], /dragging = true;[\s\S]*?clearTimeout\(pressTimer\);/,
+    "開始拖的時候要把選單的計時器清掉");
+  assert.match(drag[0], /closeContextMenu\(\)/,
+    "撐過 480ms 才想拖的那條路還是要收得掉選單");
+});
+
+test("一拿起來就要 preventDefault，不可以等超過門檻才擋", function() {
+  /* 這是第一版真正拖不動的技術原因。瀏覽器是看「第一次 touchmove 有沒有被
+     preventDefault」來決定要不要自己接手做捲動；只要放過一次它就接手了，
+     之後再擋都沒用，而且會補一個 touchcancel 把拖曳砍掉。
+
+     合成事件測不出來（不會真的觸發捲動），所以只能比程式碼的順序。 */
+  const drag = codeOnly(modalJs).match(/element\.addEventListener\("touchmove",[\s\S]*?\{ passive: false \}\);/);
+  assert.ok(drag, "找不到拖曳那個 touchmove");
+  const preventAt = drag[0].indexOf("e.preventDefault()");
+  const slopAt = drag[0].indexOf("DRAG_START_SLOP_PX");
+  assert.ok(preventAt !== -1 && slopAt !== -1, "兩段都要在");
+  assert.ok(preventAt < slopAt,
+    "preventDefault() 要排在「還沒超過門檻就 return」那一段之前 —— " +
+    "排在後面的話，第一個 touchmove 會被放行，瀏覽器就接手去捲動了");
+});
+
+test("開始拖之後，後續的 touchmove 還要進得來", function() {
+  /* 這個 bug 是自己寫出來的：開始拖的時候順手把 dragArmed 清掉，於是第二個
+     touchmove 就在開頭的守衛被擋回去——幽靈停在第一次移動的位置不再跟著
+     手指，preventDefault 也不再發生（瀏覽器可以接手捲動）。
+
+     最糟的是它「看起來是成功的」：放手時是用 touchend 的座標去找目標，
+     所以東西還是搬對了。實機上會看到幽靈卡住不動。 */
+  const drag = codeOnly(modalJs).match(/element\.addEventListener\("touchmove",[\s\S]*?\{ passive: false \}\);/);
+  assert.ok(drag, "找不到拖曳那個 touchmove");
+  assert.match(drag[0], /if \(\(!dragArmed && !dragging\)/,
+    "守衛要同時看 dragArmed 與 dragging");
+  assert.ok(!/disarmDrag\(\)/.test(drag[0]),
+    "開始拖的時候只能收掉「浮起來」那個樣子，不可以把狀態歸零 —— " +
+    "歸零在 touchend / touchcancel");
+});
+
+test("拿起來要看得見，不能只靠震動", function() {
+  /* iOS Safari 沒有 navigator.vibrate。只靠震的話，iPhone 使用者在那 300ms
+     之後完全沒有任何提示，不會知道現在可以拖了。 */
+  assert.match(modalJs, /classList\.add\("drag-armed"\)/,
+    "拿起來要掛一個 class");
+  assert.match(css, /\.node-row-outer\.drag-armed/,
+    "style.css 要真的畫得出那個狀態");
+
+  /* 兩條收尾的路都要把它拿掉，不然那一列會一直浮著。 */
   const attach = codeOnly(modalJs).match(/function attachContextMenu\([\s\S]*?\n\}/);
   assert.ok(attach, "找不到 attachContextMenu()");
-  assert.match(attach[0], /longPressTriggered/,
-    "拖曳要接在長按之後 —— 目錄這一列的手勢已經滿了（點＝開、直拖＝捲動）");
-
-  const slop = modalJs.match(/const DRAG_AFTER_MENU_SLOP_PX = (\d+);/);
-  const longPress = modalJs.match(/const LONG_PRESS_SLOP_PX = (\d+);/);
-  assert.ok(slop && longPress, "兩個門檻都要是具名常數");
-  assert.ok(Number(slop[1]) < Number(longPress[1]),
-    "選單都跳出來了，這時候的移動是刻意的，門檻不該比「按著不動」還寬鬆");
+  ["touchend", "touchcancel"].forEach(function(evt) {
+    const h = attach[0].match(new RegExp('addEventListener\\("' + evt + '"[\\s\\S]*?\\}\\);'));
+    assert.ok(h, "找不到 " + evt);
+    assert.match(h[0], /disarmDrag\(\)/, evt + " 要把「拿起來」的狀態收掉");
+  });
 });
 
 test("拖曳有唯一的收尾出口，touchcancel 也走它", function() {

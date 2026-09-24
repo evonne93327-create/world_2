@@ -459,6 +459,12 @@ function dropTargetAt(x, y) {
   const el = document.elementFromPoint(x, y);
   if (!el || !el.closest) return null;
 
+  /* 右鍵選單與它的遮罩擋在前面時什麼都不算。正常情況下拖曳開始的那一刻就
+     closeContextMenu() 了（display: none 之後 elementFromPoint 就看不到
+     它們），這裡是防那一天有人幫關閉加上淡出動畫——那時候遮罩會多活幾十
+     毫秒，而它是整片的，手指指到哪裡都會問到它。 */
+  if (el.closest("#customContextMenu, #ctxMenuOverlay")) return null;
+
   const hit = el.closest("[data-folder-id]");
   if (hit) {
     const isRow = hit.classList.contains("node-row-outer");

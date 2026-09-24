@@ -336,6 +336,21 @@ aside.sidebar-directory.collapsed {
   -webkit-user-select: none;
 }
 
+/* 「拿起來了，現在移動就是拖曳」。
+
+   沒有這個回饋的話，那 300ms 的等待對使用者來說什麼都沒發生——他不會知道
+   還要再等一下、也不會知道已經可以拖了，只會覺得「長按就是跳選單」。
+   震動只有支援的裝置有（iOS Safari 沒有 navigator.vibrate），所以看得見的
+   變化是必要的，不能只靠震。 */
+.node-row-outer.drag-armed > .node-row {
+  background: var(--select-bg);
+  color: var(--select-text);
+  box-shadow: var(--shadow-lg);
+  transform: scale(1.03);
+}
+.node-row-outer.drag-armed > .node-row,
+.node-row-outer > .node-row { transition: transform 0.12s ease, box-shadow 0.12s ease; }
+
 /* 「放開就會掉進這裡」。資料夾那一列與整棵樹的空白處共用同一個樣式。 */
 .drop-hover > .node-row,
 .directory-tree-area.drop-hover {

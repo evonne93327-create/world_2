@@ -619,19 +619,37 @@ function cancelDragBeforeMenu() {
  if (typeof cancelCanvasDragForMenu === "function") cancelCanvasDragForMenu();
 }
 
-/* 長按叫出選單之後，手指沒放開又開始移動 —— 那是「拿起來拖」。
+/* 按住一下下就「拿起來」，這時候移動＝拖曳。
 
-   為什麼綁在長按之後、而不是另外找一個手勢：目錄這一列的手勢已經滿了。
-   點＝打開、長按＝選單、直向拖＝捲動側欄、從螢幕左緣橫拖＝開目錄。
-   直接拿「按住就拖」會吃掉捲動，拿橫向又跟邊緣手勢打架。iOS 自己的
-   相簿、檔案 app 就是這個順序：長按跳出選單，手指繼續移動就變成拖曳。
+   第一版是接在**長按選單之後**的：選單跳出來、手指不放繼續移動就變成拖曳
+   （iOS 相簿是這個順序）。實機上不通，使用者回報「長按會出現菜單，然後有
+   遮罩所以沒有辦法移動文件」。原因是這個 app 的選單在手機版**不是**開在手指
+   底下的小方塊，而是**從底部滑上來的整片 sheet ＋ 半透明遮罩**——畫面一暗、
+   一整片東西蓋上來，那是「這段手勢結束了」的訊號，沒有人會想繼續移動手指。
+   把拖曳藏在那後面等於沒做。
 
-   門檻比 LONG_PRESS_SLOP_PX 小：選單已經跳出來了，這時候的移動是刻意的，
-   不必再容忍「拿著一公斤的機器手會晃」那種抖動。 */
-const DRAG_AFTER_MENU_SLOP_PX = 10;
+   所以拖曳要**搶在選單前面**：
+
+     0ms ──── 300ms ──────── 480ms
+     按下     拿起來(震一下)   選單
+
+   - 300ms 之前就移動 → 那是要捲動側欄，照舊
+   - 停穩 300ms → 震一下＋那一列浮起來，「拿起來了」；之後移動就是拖曳，
+     而且會把選單的計時器取消掉，選單根本不會出現
+   - 停穩但一直不動 → 480ms 照舊跳選單（選單那條路完全沒變）
+   - 撐過 480ms 看到選單才想拖 → 還是可以，選單會自己收掉
+
+   兩個門檻的取捨：300ms 要短到「還沒看到選單就能開始拖」，又要長到不會把
+   猶豫一下才開始的捲動誤判成拖曳（真正要捲的人幾乎都在 100ms 內就動了）。
+   位移容忍值比 LONG_PRESS_SLOP_PX 小很多：那個 18px 是為了「拿著一公斤的
+   平板手會晃」而放寬的，但這裡晃動會被誤判成「要拖了」，寧可嚴一點——
+   反正沒拿起來就只是照常捲動，沒有損失。 */
+const DRAG_ARM_HOLD_MS = 300;    // 停穩多久算「拿起來」
+const DRAG_ARM_SLOP_PX = 8;      // 這段期間晃超過這麼多就當成要捲動
+const DRAG_START_SLOP_PX = 8;    // 拿起來之後移動超過這麼多才真的開始拖
 
 /* dragHooks（選填）：{ start(x, y), move(x, y), end(x, y), cancel() }
-   給得出這幾個的元素，長按之後手指一移動就會進入拖曳。 */
+   給得出這幾個的元素，按住一下下再移動就會進入拖曳。 */
 function attachContextMenu(element, itemsFn, titleFn, dragHooks) {
  if (!element) return;
 
@@ -643,17 +661,50 @@ function attachContextMenu(element, itemsFn, titleFn, dragHooks) {
  });
 
  let pressTimer = null;
+ let armTimer = null;
+ let dragArmed = false;
+ let dragging = false;
  let longPressTriggered = false;
  let startX = 0, startY = 0;
+
+ function clearTouchTimers() {
+ clearTimeout(pressTimer);
+ clearTimeout(armTimer);
+ pressTimer = null;
+ armTimer = null;
+ }
+
+ function disarmDrag() {
+ dragArmed = false;
+ element.classList.remove("drag-armed");
+ }
 
  element.addEventListener("touchstart", function(e) {
  if (e.touches.length !== 1) return;
  e.stopPropagation();
+ clearTouchTimers();
+ disarmDrag();
  longPressTriggered = false;
  startX = e.touches[0].clientX;
  startY = e.touches[0].clientY;
+
+ /* 拿起來。純粹是狀態＋回饋，不動畫面上任何別的東西——使用者到這裡
+    還是可以直接放手（那就當成一般的點擊）。 */
+ if (dragHooks) {
+ armTimer = setTimeout(function() {
+ armTimer = null;
+ dragArmed = true;
+ if (navigator.vibrate) { try { navigator.vibrate(8); } catch (err) {} }
+ element.classList.add("drag-armed");
+ }, DRAG_ARM_HOLD_MS);
+ }
+
  pressTimer = setTimeout(function() {
+ pressTimer = null;
  longPressTriggered = true;
+ /* 選單接手了，那一列就不要再浮著——但 dragArmed 留著：撐過 480ms
+    才想拖的人還是拖得動（選單會在拖曳開始時自己收掉）。 */
+ element.classList.remove("drag-armed");
  if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) {} }
  cancelDragBeforeMenu();
  showContextMenu(e, itemsFn(), titleFn ? titleFn() : null);
@@ -663,10 +714,16 @@ function attachContextMenu(element, itemsFn, titleFn, dragHooks) {
  }, { passive: true });
 
  element.addEventListener("touchmove", function(e) {
- if (!pressTimer) return;
+ if (!pressTimer && !armTimer) return;
  const dx = Math.abs(e.touches[0].clientX - startX);
  const dy = Math.abs(e.touches[0].clientY - startY);
- if (dx > LONG_PRESS_SLOP_PX || dy > LONG_PRESS_SLOP_PX) {
+
+ // 還沒停穩就動了 → 這是要捲動側欄，不要拿起來
+ if (armTimer && (dx > DRAG_ARM_SLOP_PX || dy > DRAG_ARM_SLOP_PX)) {
+ clearTimeout(armTimer);
+ armTimer = null;
+ }
+ if (pressTimer && (dx > LONG_PRESS_SLOP_PX || dy > LONG_PRESS_SLOP_PX)) {
  clearTimeout(pressTimer);
  pressTimer = null;
  }
@@ -675,29 +732,49 @@ function attachContextMenu(element, itemsFn, titleFn, dragHooks) {
  /* 拖曳那條路要擋掉預設行為（否則側欄會跟著手指捲動），所以必須是
     非被動的監聽器。刻意另外掛一個、不去動上面那個 passive 的：
     上面那個白板也在用，改成非被動會讓整片白板的捲動都付出代價。 */
- let dragging = false;
  if (dragHooks) {
  element.addEventListener("touchmove", function(e) {
- if (!longPressTriggered || e.touches.length !== 1) return;
+ /* dragging 也要看。開始拖之後 dragArmed 曾經被清掉過一次，結果第二個
+    touchmove 就在這裡被擋回去了：幽靈停在第一次移動的位置不再跟著手指，
+    而放手時是用 touchend 的座標去找目標，所以「東西還是搬對了」——
+    看起來像成功，實際上整段拖曳是瞎的。 */
+ if ((!dragArmed && !dragging) || e.touches.length !== 1) return;
  const t = e.touches[0];
 
+ /* 一拿起來就擋，**不要等超過門檻才擋**。
+
+    瀏覽器是看「第一次 touchmove 有沒有被 preventDefault」來決定要不要
+    自己接手做捲動的。只要放過一次，它就接手了：之後再怎麼擋都沒用，
+    而且它會補一個 touchcancel 過來，把拖到一半的狀態直接砍掉。
+    第一版就是在門檻內先 return，所以實機上拖不動。
+
+    合成事件測不出這件事（它不會真的觸發捲動），所以那個 bug 在測試裡
+    是綠的——「因為錯的理由而通過」的標準案例。 */
+ e.preventDefault();
+
  if (!dragging) {
- if (Math.abs(t.clientX - startX) <= DRAG_AFTER_MENU_SLOP_PX &&
- Math.abs(t.clientY - startY) <= DRAG_AFTER_MENU_SLOP_PX) return;
+ if (Math.abs(t.clientX - startX) <= DRAG_START_SLOP_PX &&
+ Math.abs(t.clientY - startY) <= DRAG_START_SLOP_PX) return;
  dragging = true;
- closeContextMenu();        // 選單就開在手指底下，拖曳開始就沒有它的事了
+ /* 選單不要再跳出來了。拖曳已經開始，480ms 到的時候冒出一整片
+    sheet 只會把畫面蓋掉。 */
+ clearTimeout(pressTimer);
+ pressTimer = null;
+ closeContextMenu();        // 已經跳出來的話（撐過 480ms 才動）收掉
+ /* 只收掉「浮起來」那個樣子，不要動 dragArmed —— 見上面那段註解。
+    真正的歸零在 touchend / touchcancel。 */
+ element.classList.remove("drag-armed");
  dragHooks.start(t.clientX, t.clientY);
  }
 
- e.preventDefault();
  e.stopPropagation();
  dragHooks.move(t.clientX, t.clientY);
  }, { passive: false });
  }
 
  element.addEventListener("touchend", function(e) {
- clearTimeout(pressTimer);
- pressTimer = null;
+ clearTouchTimers();
+ disarmDrag();
  if (dragging) {
  dragging = false;
  e.preventDefault();
@@ -713,8 +790,8 @@ function attachContextMenu(element, itemsFn, titleFn, dragHooks) {
  });
 
  element.addEventListener("touchcancel", function() {
- clearTimeout(pressTimer);
- pressTimer = null;
+ clearTouchTimers();
+ disarmDrag();
  /* 系統把手勢收走了（來電、多指、下拉通知）。拖到一半不能就這樣留著：
     幽靈會永遠掛在畫面上，而且下一次觸碰會接續到半途的狀態。 */
  if (dragging) {
