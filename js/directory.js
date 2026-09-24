@@ -44,7 +44,7 @@ function renderWorldRail() {
  appData.worldviews.forEach(function(world) {
  const btn = document.createElement("button");
  btn.className = "world-rail-btn " + (world.id === activeWorldId ? "active" : "");
- btn.title = world.name;
+ btn.title = world.desc ? (world.name + " — " + world.desc) : world.name;
  btn.textContent = world.icon || "🌐";
 
  btn.onclick = function() {
@@ -63,13 +63,49 @@ function updateWorldBadge() {
  document.getElementById("currentWorldIcon").textContent = icon;
  document.getElementById("currentWorldName").textContent = world.name;
  }
+ renderWorldDesc();
  renderWorldRail();
+}
+
+/* 目前世界觀的一句話簡介。
+
+   一律用 textContent：這是使用者（或匯入檔）寫的字，拼進 innerHTML 就是
+   一個洞（硬規則 5）。沒寫過的時候留一行淡的提示，讓人知道這裡可以寫。 */
+function renderWorldDesc() {
+ const line = document.getElementById("worldDescLine");
+ if (!line) return;
+ const world = appData.worldviews.find(w => w.id === activeWorldId);
+ const desc = (world && typeof world.desc === "string") ? world.desc.trim() : "";
+ line.textContent = desc || "＋ 一句話簡介";
+ line.classList.toggle("is-empty", !desc);
+ line.title = desc ? (desc + "（點一下可以改）") : "幫這個世界觀寫一句話簡介";
+}
+
+/* 沒指定就改目前這個世界觀（側欄那一行點下去走的是這條）。
+
+   用 prompt() 是跟著旁邊的「重新命名」走的——這個 app 的輕量輸入都用它。
+   差別在這裡要分得出「按取消」（null）跟「清空」（空字串）：簡介本來就
+   可以清掉，不能像改名那樣把空字串當成取消。 */
+function promptEditWorldDesc(worldId) {
+ const id = worldId || activeWorldId;
+ const world = appData.worldviews.find(w => w.id === id);
+ if (!world) return;
+
+ const next = prompt("一句話簡介（清空就留白）：", world.desc || "");
+ if (next === null) return;
+
+ const val = next.trim().slice(0, WORLD_DESC_MAX_LEN);
+ if (val) world.desc = val; else delete world.desc;
+
+ saveData();
+ updateWorldBadge();
 }
 
 function renderSidebarTree() {
  const container = document.getElementById("worldTreeContainer");
  const search = document.getElementById("searchInput").value.trim().toLowerCase();
  container.innerHTML = "";
+ setupTreeRootDropZone(container);
 
  renderBreadcrumb();
 
@@ -81,6 +117,30 @@ function renderSidebarTree() {
  }
 
  renderFolderLevel(currentWorld.id, null, container, search);
+}
+
+/* 整棵樹的容器自己也是一個放置目標＝「這個世界觀的根目錄」。
+
+   原本只有資料夾那幾列收得到 drop，所以東西一旦拖進資料夾，在桌機上就再也
+   拖不回最外層了（只能走「移動」彈窗）。用的是跟觸控同一套 dropTargetAt()，
+   所以拖到「某個資料夾底下的文檔」上也會正確地落進那個資料夾，而不是根目錄。
+
+   用屬性指派（on...）而不是 addEventListener：renderSidebarTree() 每次重畫
+   都會經過這裡，屬性指派覆蓋掉舊的，不會越疊越多。 */
+function setupTreeRootDropZone(container) {
+ if (!container) return;
+
+ container.ondragover = function(e) { e.preventDefault(); };
+ container.ondragleave = function() { container.classList.remove("drop-hover"); };
+ container.ondrop = function(e) {
+ e.preventDefault();
+ container.classList.remove("drop-hover");
+ try {
+ const target = dropTargetAt(e.clientX, e.clientY);
+ moveItemInto(JSON.parse(e.dataTransfer.getData("text/plain")),
+ target ? target.folderId : null, activeWorldId);
+ } catch (err) {}
+ };
 }
 
 function folderHasChildren(folderId) {
@@ -123,6 +183,7 @@ function renderFolderLevel(worldId, parentId, parentElement, search) {
  const isCollapsed = !!collapsedFolders[folder.id];
  const folderRow = document.createElement("div");
  folderRow.className = "node-row-outer";
+ folderRow.dataset.folderId = folder.id;     // 觸控拖曳靠這個找放置目標
  folderRow.draggable = true;
 
  folderRow.ondragstart = function(e) {
@@ -135,19 +196,26 @@ function renderFolderLevel(worldId, parentId, parentElement, search) {
  rowStateClass += " batch-checked";
  }
 
+ /* 點整列就收合／展開，不必瞄準那顆三角形。
+
+    三角形只有十幾像素寬，用手指幾乎點不中；使用者要的是「點資料夾本人也
+    可以收合／展開」。選取（決定新文檔開在哪一層）跟收合併成同一下，
+    跟檔案總管、VS Code 的側欄一樣。
+
+    沒有子項目的就不切換：它沒有東西可以收，切了只會讓箭頭閃一下。
+
+    原本的 ondblclick 拿掉了——單擊已經在做同一件事，留著的話雙擊會變成
+    切三次（click、click、dblclick），使用者看到的是隨機的開合。 */
  folderRow.onclick = function(e) {
- if (e.target.closest('.folder-caret') || e.target.closest('.node-icon')) return;
+ if (e.target.closest('.folder-caret')) return;
  if (isBatchDeleteMode) {
  toggleBatchItemSelection('folder', folder.id);
  return;
  }
  activeFolderId = folder.id;
- renderSidebarTree();
- };
-
- folderRow.ondblclick = function(e) {
- if (isBatchDeleteMode) return;
+ if (folderHasChildren(folder.id)) {
  collapsedFolders[folder.id] = !collapsedFolders[folder.id];
+ }
  renderSidebarTree();
  };
 
@@ -165,9 +233,9 @@ caretHtml +
  '</div>' +
  '</div>';
 
- /* 圖示刻意不掛自己的 onclick：點它就跟點這一列一樣（展開／收合資料夾）。
-    原本點圖示會直接跳出圖示選擇器，在目錄裡上下滑動時很容易誤觸。
-    要改圖示請長按（或右鍵）這一列，從選單裡選「更換圖示」。 */
+ /* 圖示刻意不掛自己的 onclick、也不被上面那個 onclick 擋掉：點它就跟點這
+    一列一樣（收合／展開）。原本點圖示會直接跳出圖示選擇器，在目錄裡上下
+    滑動時很容易誤觸。要改圖示請長按（或右鍵）這一列，選「更換圖示」。 */
 
  if (hasChildren) {
  const caretSpan = folderRow.querySelector('.folder-caret');
@@ -180,38 +248,19 @@ caretHtml +
  }
  }
 
- attachContextMenu(folderRow, function() { return buildFolderMenuItems(folder); }, function() { return (folder.icon || '📁') + ' ' + folder.name; });
+ attachContextMenu(folderRow,
+ function() { return buildFolderMenuItems(folder); },
+ function() { return (folder.icon || '📁') + ' ' + folder.name; },
+ touchDragHooks("folder", folder.id, (folder.icon || '📁') + ' ' + folder.name));
 
- folderRow.ondragover = function(e) { e.preventDefault(); folderRow.style.background = "var(--select-bg)"; };
- folderRow.ondragleave = function() { folderRow.style.background = ""; };
+ folderRow.ondragover = function(e) { e.preventDefault(); folderRow.classList.add("drop-hover"); };
+ folderRow.ondragleave = function() { folderRow.classList.remove("drop-hover"); };
  folderRow.ondrop = function(e) {
  e.preventDefault();
  e.stopPropagation();
- folderRow.style.background = "";
+ folderRow.classList.remove("drop-hover");
  try {
- const dragPayload = JSON.parse(e.dataTransfer.getData("text/plain"));
- if (dragPayload.type === "doc") {
- const doc = appData.docs.find(d => d.id === dragPayload.id);
- if (doc) {
- doc.folderId = folder.id;
- doc.worldId = worldId;
- saveData();
- renderSidebarTree();
- renderBreadcrumb();
- }
- } else if (dragPayload.type === "folder") {
- const movingFolderId = dragPayload.id;
- if (movingFolderId !== folder.id && !isDescendantOf(movingFolderId, folder.id)) {
- const f = appData.folders.find(x => x.id === movingFolderId);
- if (f) {
- f.parentId = folder.id;
- f.worldId = worldId;
- saveData();
- renderSidebarTree();
- renderBreadcrumb();
- }
- }
- }
+ moveItemInto(JSON.parse(e.dataTransfer.getData("text/plain")), folder.id, worldId);
  } catch(err) {}
  };
 
@@ -219,6 +268,10 @@ caretHtml +
 
  const childrenDiv = document.createElement("div");
  childrenDiv.className = "folder-children";
+ /* 也標上 id：手指落在「這個資料夾底下的某一篇文檔」上時，closest() 會
+    往上找到這裡，等於丟進同一個資料夾。目標區域因此從一列變成一整塊，
+    在手機上差很多。 */
+ childrenDiv.dataset.folderId = folder.id;
  if (isCollapsed && !search) childrenDiv.style.display = "none";
 
  renderFolderLevel(worldId, folder.id, childrenDiv, search);
@@ -261,6 +314,176 @@ function isDescendantOf(parentCheckId, targetFolderId) {
  return false;
 }
 
+/* ==========================================================
+   搬移：桌機的 HTML5 拖放與手機的觸控拖曳共用這一段
+
+   為什麼要有觸控這條路：HTML5 的 draggable / dragstart / drop **在觸控
+   裝置上根本不會觸發**（iOS Safari 完全不支援，Android 上也要先長按到
+   系統認定是拖曳）。所以目錄樹在手機上只是看起來可以拖，實際上動不了——
+   使用者回報的「手機端不能直接拖拽移動文件位置」就是這個。
+   ========================================================== */
+
+/* 真正把東西搬過去。兩條路（滑鼠放開、手指放開）都走這裡，規則才只有一份。
+
+   回傳有沒有真的動到——沒動到就不要存檔、不要重畫，也不要震動回饋，
+   不然「放回原處」看起來會像做了什麼事。 */
+function moveItemInto(payload, targetFolderId, targetWorldId) {
+  if (!payload || !payload.id) return false;
+  const folderId = targetFolderId || null;
+  const worldId = targetWorldId || activeWorldId;
+
+  if (payload.type === "doc") {
+    const doc = appData.docs.find(d => d.id === payload.id);
+    if (!doc) return false;
+    if ((doc.folderId || null) === folderId && doc.worldId === worldId) return false;
+    doc.folderId = folderId;
+    doc.worldId = worldId;
+  } else if (payload.type === "folder") {
+    const f = appData.folders.find(x => x.id === payload.id);
+    if (!f) return false;
+    // 不能搬進自己，也不能搬進自己的子孫——那會把那一支從樹上切下來，
+    // 資料還在但畫不出來，看起來就是憑空消失
+    if (payload.id === folderId) return false;
+    if (folderId && isDescendantOf(payload.id, folderId)) return false;
+    if ((f.parentId || null) === folderId && f.worldId === worldId) return false;
+    f.parentId = folderId;
+    f.worldId = worldId;
+  } else {
+    return false;
+  }
+
+  saveData();
+  renderSidebarTree();
+  renderBreadcrumb();
+  return true;
+}
+
+/* 手指底下是哪個資料夾。
+
+   highlight 跟 folderId 分開回傳：手指落在「某個資料夾底下的文檔」上時，
+   folderId 來自那個容器（.folder-children），但該亮起來的是資料夾那一列。
+   回 null 代表這裡不能放（例如浮在側欄外面）。 */
+function dropTargetAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el || !el.closest) return null;
+
+  const hit = el.closest("[data-folder-id]");
+  if (hit) {
+    const isRow = hit.classList.contains("node-row-outer");
+    return {
+      folderId: hit.dataset.folderId,
+      highlight: isRow ? hit : hit.previousElementSibling
+    };
+  }
+
+  // 樹的空白處＝這個世界觀的根目錄。桌機版原本沒有這個目標，
+  // 也就是說東西一旦拖進資料夾就拖不回最外層了
+  const tree = el.closest("#worldTreeContainer");
+  if (tree) return { folderId: null, highlight: tree };
+
+  return null;
+}
+
+/* 拖到側欄上下邊緣時自動捲動。
+
+   拖曳期間 touchmove 被 preventDefault 了（不然側欄會跟著手指捲），所以
+   原生的捲動在這段時間是停的——沒有這一段，收在畫面外的資料夾就永遠
+   放不進去。手指停在邊緣不動也要繼續捲，所以用計時器而不是靠移動事件。 */
+const DRAG_EDGE_PX = 48;
+const DRAG_SCROLL_STEP_PX = 10;
+const DRAG_SCROLL_TICK_MS = 16;
+
+let touchDragState = null;
+
+function touchDragHooks(type, id, label) {
+  return {
+    start: function(x, y) { startTouchDrag(type, id, label, x, y); },
+    move: moveTouchDrag,
+    end: endTouchDrag,
+    cancel: cancelTouchDrag
+  };
+}
+
+function startTouchDrag(type, id, label, x, y) {
+  // 批次刪除模式下整棵樹是拿來勾選的，這時候拖曳只會讓人誤會
+  if (isBatchDeleteMode) return;
+  cancelTouchDrag();                       // 上一次沒收乾淨的話先收掉
+
+  const ghost = document.createElement("div");
+  ghost.className = "drag-ghost";
+  ghost.textContent = label;               // 使用者寫的名字 → textContent（硬規則 5）
+  document.body.appendChild(ghost);
+
+  touchDragState = { type: type, id: id, ghost: ghost, highlight: null, scrollDir: 0, scrollTimer: null };
+  document.documentElement.classList.add("is-touch-dragging");
+  if (navigator.vibrate) { try { navigator.vibrate(8); } catch (e) {} }
+  moveTouchDrag(x, y);
+}
+
+function moveTouchDrag(x, y) {
+  const st = touchDragState;
+  if (!st) return;
+  /* 用 transform 而不是 left/top：拖曳期間每一次移動都要重畫，transform
+     不會觸發版面重排。 -50%/-140% 是把幽靈提到手指上方，不然它整片都被
+     手指蓋住，而且會擋住 elementFromPoint 要看的地方。 */
+  st.ghost.style.transform = "translate(" + x + "px, " + y + "px) translate(-50%, -140%)";
+  setDropHighlight(dropTargetAt(x, y));
+  updateDragAutoScroll(y);
+}
+
+function setDropHighlight(target) {
+  const st = touchDragState;
+  if (!st) return;
+  const next = target ? target.highlight : null;
+  if (next === st.highlight) return;
+  if (st.highlight) st.highlight.classList.remove("drop-hover");
+  if (next) next.classList.add("drop-hover");
+  st.highlight = next;
+}
+
+function updateDragAutoScroll(y) {
+  const st = touchDragState;
+  const tree = document.getElementById("worldTreeContainer");
+  if (!st || !tree) return;
+
+  const r = tree.getBoundingClientRect();
+  let dir = 0;
+  if (y < r.top + DRAG_EDGE_PX) dir = -1;
+  else if (y > r.bottom - DRAG_EDGE_PX) dir = 1;
+  if (dir === st.scrollDir) return;
+
+  st.scrollDir = dir;
+  if (st.scrollTimer) { clearInterval(st.scrollTimer); st.scrollTimer = null; }
+  if (!dir) return;
+  st.scrollTimer = setInterval(function() {
+    tree.scrollTop += dir * DRAG_SCROLL_STEP_PX;
+  }, DRAG_SCROLL_TICK_MS);
+}
+
+function endTouchDrag(x, y) {
+  const st = touchDragState;
+  if (!st) return;
+  const target = dropTargetAt(x, y);
+  const payload = { type: st.type, id: st.id };
+  cancelTouchDrag();
+  if (!target) return;
+  if (moveItemInto(payload, target.folderId, activeWorldId)) {
+    if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) {} }
+  }
+}
+
+/* 收尾只有這一個出口：放開、系統收走手勢、重新開始一次拖曳，全部走這裡。
+   漏掉任何一條，幽靈就會留在畫面上，而且側欄會一直自動捲。 */
+function cancelTouchDrag() {
+  const st = touchDragState;
+  if (!st) return;
+  if (st.scrollTimer) clearInterval(st.scrollTimer);
+  if (st.highlight) st.highlight.classList.remove("drop-hover");
+  if (st.ghost && st.ghost.parentNode) st.ghost.parentNode.removeChild(st.ghost);
+  document.documentElement.classList.remove("is-touch-dragging");
+  touchDragState = null;
+}
+
 function createDocRowElement(doc) {
  const row = document.createElement("div");
  row.className = "node-row-outer";
@@ -275,7 +498,6 @@ function createDocRowElement(doc) {
  e.dataTransfer.setData("text/plain", JSON.stringify({ type: "doc", id: doc.id }));
  };
  row.onclick = function(e) {
- if (e.target.closest('.node-icon')) return;
  if (isBatchDeleteMode) {
  toggleBatchItemSelection('doc', doc.id);
  return;
@@ -303,9 +525,13 @@ function createDocRowElement(doc) {
  '<div style="font-size:10px; color:var(--text-muted);">' + (doc.wordCount || 0) + '字</div>' +
  '</div>';
 
- /* 同上：圖示不攔點擊，點它就是開這篇文檔。改圖示走長按的選單。 */
+ /* 同上：圖示不攔點擊，點它就是開這篇文檔（以前它會被擋掉，點了沒反應，
+    跟旁邊的文字點起來不一樣）。改圖示走長按的選單。 */
 
- attachContextMenu(row, function() { return buildDocMenuItems(doc); }, function() { return (doc.icon || '📄') + ' ' + (doc.title || '無標題文檔'); });
+ attachContextMenu(row,
+ function() { return buildDocMenuItems(doc); },
+ function() { return (doc.icon || '📄') + ' ' + (doc.title || '無標題文檔'); },
+ touchDragHooks("doc", doc.id, (doc.icon || '📄') + ' ' + displayTitle));
  return row;
 }
 

@@ -619,7 +619,20 @@ function cancelDragBeforeMenu() {
  if (typeof cancelCanvasDragForMenu === "function") cancelCanvasDragForMenu();
 }
 
-function attachContextMenu(element, itemsFn, titleFn) {
+/* 長按叫出選單之後，手指沒放開又開始移動 —— 那是「拿起來拖」。
+
+   為什麼綁在長按之後、而不是另外找一個手勢：目錄這一列的手勢已經滿了。
+   點＝打開、長按＝選單、直向拖＝捲動側欄、從螢幕左緣橫拖＝開目錄。
+   直接拿「按住就拖」會吃掉捲動，拿橫向又跟邊緣手勢打架。iOS 自己的
+   相簿、檔案 app 就是這個順序：長按跳出選單，手指繼續移動就變成拖曳。
+
+   門檻比 LONG_PRESS_SLOP_PX 小：選單已經跳出來了，這時候的移動是刻意的，
+   不必再容忍「拿著一公斤的機器手會晃」那種抖動。 */
+const DRAG_AFTER_MENU_SLOP_PX = 10;
+
+/* dragHooks（選填）：{ start(x, y), move(x, y), end(x, y), cancel() }
+   給得出這幾個的元素，長按之後手指一移動就會進入拖曳。 */
+function attachContextMenu(element, itemsFn, titleFn, dragHooks) {
  if (!element) return;
 
  element.addEventListener("contextmenu", function(e) {
@@ -659,9 +672,40 @@ function attachContextMenu(element, itemsFn, titleFn) {
  }
  }, { passive: true });
 
+ /* 拖曳那條路要擋掉預設行為（否則側欄會跟著手指捲動），所以必須是
+    非被動的監聽器。刻意另外掛一個、不去動上面那個 passive 的：
+    上面那個白板也在用，改成非被動會讓整片白板的捲動都付出代價。 */
+ let dragging = false;
+ if (dragHooks) {
+ element.addEventListener("touchmove", function(e) {
+ if (!longPressTriggered || e.touches.length !== 1) return;
+ const t = e.touches[0];
+
+ if (!dragging) {
+ if (Math.abs(t.clientX - startX) <= DRAG_AFTER_MENU_SLOP_PX &&
+ Math.abs(t.clientY - startY) <= DRAG_AFTER_MENU_SLOP_PX) return;
+ dragging = true;
+ closeContextMenu();        // 選單就開在手指底下，拖曳開始就沒有它的事了
+ dragHooks.start(t.clientX, t.clientY);
+ }
+
+ e.preventDefault();
+ e.stopPropagation();
+ dragHooks.move(t.clientX, t.clientY);
+ }, { passive: false });
+ }
+
  element.addEventListener("touchend", function(e) {
  clearTimeout(pressTimer);
  pressTimer = null;
+ if (dragging) {
+ dragging = false;
+ e.preventDefault();
+ e.stopPropagation();
+ const t = e.changedTouches && e.changedTouches[0];
+ dragHooks.end(t ? t.clientX : 0, t ? t.clientY : 0);
+ return;
+ }
  if (longPressTriggered) {
  e.preventDefault();
  e.stopPropagation();
@@ -671,6 +715,12 @@ function attachContextMenu(element, itemsFn, titleFn) {
  element.addEventListener("touchcancel", function() {
  clearTimeout(pressTimer);
  pressTimer = null;
+ /* 系統把手勢收走了（來電、多指、下拉通知）。拖到一半不能就這樣留著：
+    幽靈會永遠掛在畫面上，而且下一次觸碰會接續到半途的狀態。 */
+ if (dragging) {
+ dragging = false;
+ if (dragHooks.cancel) dragHooks.cancel();
+ }
  });
 }
 
@@ -705,6 +755,7 @@ function setupDirectoryContextMenu() {
 function buildWorldMenuItems(world) {
  return [
  { icon: "✏️", label: "重新命名", action: function() { promptRenameItem("world", world.id, world.name); } },
+ { icon: "📝", label: "一句話簡介", action: function() { promptEditWorldDesc(world.id); } },
  { icon: "🎨", label: "更換圖示", action: function() { openIconPicker("world", world.id); } },
  { type: "divider" },
  { icon: "📁", label: "新增資料夾", action: function() { promptCreateFolder(null, world.id); } },
@@ -732,6 +783,7 @@ function buildDocMenuItems(doc) {
  { icon: "✏️", label: "重新命名", action: function() { promptRenameItem("doc", doc.id, doc.title || ""); } },
  { icon: "🎨", label: "更換圖示", action: function() { openIconPicker("doc", doc.id); } },
  { type: "divider" },
+ { icon: "🔀", label: "移動文檔", action: function() { promptMoveDoc(doc.id); } },
  { icon: "🗑️", label: "刪除文檔", danger: true, action: function() { deleteDocById(doc.id); } }
  ];
 }
@@ -1070,9 +1122,29 @@ function openColorPicker(tag, anchorElement) {
 }
 
 function promptMoveFolder(folderId) {
- moveFolderTargetId = folderId;
+ openMoveModal({ type: "folder", id: folderId });
+}
+
+/* 文檔也走同一個彈窗。
+
+   拖曳（滑鼠或手指）是快的那條路，但它要求兩端同時看得到——文檔在最底下、
+   目標資料夾收在最上面時，拖起來很痛苦。這個選單項目是那種情況的退路，
+   而且它在任何裝置上都一定會動。 */
+function promptMoveDoc(docId) {
+ openMoveModal({ type: "doc", id: docId });
+}
+
+function openMoveModal(ref) {
+ moveTargetRef = ref;
  const select = document.getElementById("moveTargetSelect");
  select.innerHTML = "";
+
+ const title = document.getElementById("moveModalTitle");
+ if (title) {
+ title.textContent = ref.type === "doc"
+ ? "🔀 移動文檔或更改所屬世界觀"
+ : "🔀 移動資料夾或更改所屬世界觀";
+ }
 
  appData.worldviews.forEach(function(w) {
  const opt = document.createElement("option");
@@ -1081,13 +1153,15 @@ function promptMoveFolder(folderId) {
  select.appendChild(opt);
  });
 
+ /* 資料夾不能搬進自己或自己的子孫（見 moveItemInto 的註解）；
+    文檔沒有這個限制，任何資料夾都收得下。 */
  appData.folders.forEach(function(f) {
- if (f.id !== folderId && f.parentId !== folderId && !isDescendantOf(folderId, f.id)) {
+ if (ref.type === "folder" &&
+ (f.id === ref.id || f.parentId === ref.id || isDescendantOf(ref.id, f.id))) return;
  const opt = document.createElement("option");
  opt.value = JSON.stringify({ worldId: f.worldId, parentId: f.id });
  opt.textContent = "📁 " + f.name;
  select.appendChild(opt);
- }
  });
 
  document.getElementById("moveModal").classList.add("active");
@@ -1099,15 +1173,11 @@ document.getElementById("moveModal").classList.remove("active");
 
 function confirmMoveFolder() {
  const select = document.getElementById("moveTargetSelect");
- if (!select.value || !moveFolderTargetId) return;
+ if (!select.value || !moveTargetRef) return;
  const target = JSON.parse(select.value);
- const folder = appData.folders.find(f => f.id === moveFolderTargetId);
- if (folder) {
- folder.worldId = target.worldId;
- folder.parentId = target.parentId;
- saveData();
- renderSidebarTree();
- renderBreadcrumb();
- }
+ /* 搬移的規則（含「不能搬進自己的子孫」）只寫在 moveItemInto() 裡一份，
+    拖曳與這個彈窗都走它。 */
+ moveItemInto({ type: moveTargetRef.type, id: moveTargetRef.id },
+ target.parentId, target.worldId);
  closeMoveModal();
 }

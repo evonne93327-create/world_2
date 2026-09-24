@@ -722,17 +722,108 @@ function trimHistoryMemory(protectDocId) {
   }
 }
 
+/* 連按復原之後，等手停下來多久才檢查游標還看不看得見。
+
+   為什麼要等：每按一次復原都去量一次游標、需要的話捲一下，連按五次就是
+   捲五次，而且每次的落點都不一樣——那就是使用者說的「多次復原會跳動，
+   就算是同一行」。量測本身也不便宜（見 measureCaretBottom 的註解，
+   一萬行約 106ms），連按時每一步都付一次會變成卡頓。
+
+   數字跟鍵盤那邊的 KB_SETTLE_MS 是同一個量級：夠長，蓋得過連按；
+   夠短，放手之後不會覺得畫面「慢半拍才跟上」。 */
+const UNDO_CARET_SETTLE_MS = 200;
+let undoCaretTimer = null;
+
+function scheduleUndoCaretCheck() {
+  clearTimeout(undoCaretTimer);
+  undoCaretTimer = setTimeout(revealCaretIfOffscreen, UNDO_CARET_SETTLE_MS);
+}
+
+/* 編輯區「現在真的看得見」的上下緣。
+
+   跟 ensureCaretRoom() 裡那一段刻意分開寫：那邊還要處理「鍵盤還沒升起、
+   但我們知道它大概會蓋掉多少」的預估，這裡沒有那個問題（復原是按按鈕，
+   不會伴隨鍵盤動畫）。把兩邊硬湊成一個函式只會讓那條被測得很細的鍵盤
+   路徑多背一個參數。 */
+function visibleEditorBand(scroller) {
+  const r = scroller.getBoundingClientRect();
+  const vv = window.visualViewport;
+  const viewBottom = vv ? (vv.offsetTop + vv.height) : window.innerHeight;
+  let bottom = Math.min(r.bottom, viewBottom);
+
+  // 浮動的復原／快速跳轉那一排擋住哪裡，看得見的底就到哪裡
+  const bar = document.querySelector(".undoredo-sticky-bar");
+  if (bar) {
+    const br = bar.getBoundingClientRect();
+    if (br.height > 0 && br.top < bottom) bottom = br.top;
+  }
+  return { top: Math.max(r.top, vv ? vv.offsetTop : 0), bottom: bottom };
+}
+
+/* 要捲多少才看得到游標。看得見就回 0。
+
+   拆成純函式是因為「看得見就不要動」是這次修正的**全部重點**，而它在
+   瀏覽器裡很難驗——要有真的版面、真的鍵盤。抽出來之後可以直接餵座標測。
+
+   捲的話捲到中間附近，不是剛好露出來：停在邊緣的話，下一個動作（鍵盤升起、
+   再按一次復原）很容易又把它推出去，變成一直在小幅度地跳。 */
+function caretScrollCorrection(caretTop, caretBottom, bandTop, bandBottom) {
+  if (caretTop >= bandTop && caretBottom <= bandBottom) return 0;
+  return caretBottom - (bandTop + (bandBottom - bandTop) / 2);
+}
+
+/* 游標還在看得見的範圍裡就什麼都不做——這是「不要跳」的關鍵。
+   真的被捲出去了（復原到很遠的一次編輯）才捲回來。 */
+function revealCaretIfOffscreen() {
+  const ta = document.getElementById("docContentInput");
+  const scroller = document.querySelector(".editor-content-area");
+  if (!ta || !scroller) return;
+
+  const caretBottom = measureCaretBottom(ta);
+  if (caretBottom === null || caretBottom === undefined) return;
+
+  const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 24;
+  const band = visibleEditorBand(scroller);
+  const delta = caretScrollCorrection(caretBottom - lineHeight, caretBottom, band.top, band.bottom);
+  if (!delta) return;
+
+  /* 沒有動畫。這是硬限制，不是還沒做：見 NOTES 3d-2，動畫過的捲動會
+     把「工具列被吃掉」那個 bug 帶回來。 */
+  scroller.scrollTop += delta;
+}
+
 function applyHistorySnapshot(doc, content, selection) {
+  /* 復原不該讓畫面動。
+
+     textarea.value 整個換掉、再 focus() + setSelectionRange()，瀏覽器會自己
+     去「把游標捲進視野」——就算游標根本還在原來那一行，它挑的落點也跟原本
+     不一樣，於是每按一次復原畫面就彈一下。把捲動位置記下來，全部做完之後
+     放回去；真的需要移動的情況交給 scheduleUndoCaretCheck()（它等手停下來
+     才看一次）。 */
+  const scroller = document.querySelector(".editor-content-area");
+  const keepScrollTop = scroller ? scroller.scrollTop : null;
+
   doc.content = content;
   const textarea = document.getElementById("docContentInput");
+  /* 換內容之前先把現在的游標記下來。寫入 .value 會把游標推到結尾（規格就是
+     這樣寫的），之後再讀就只讀得到結尾，下面那個「不知道就別動」的退路
+     會變成「一律跳到結尾」。 */
+  const priorStart = textarea.selectionStart || 0;
+  const priorEnd = textarea.selectionEnd || 0;
   textarea.value = content;
   autoGrowTextarea(textarea);
 
   /* 還原游標。內容換過了，位置要夾在新長度裡面，否則會丟出例外或跳到怪地方。
-     沒有記錄到選取範圍的（例如從別的裝置同步過來的舊資料）就放在結尾。 */
+
+     沒有記錄到選取範圍時（最底下那一格快照就是這樣——ensureDocHistory() 建的
+     時候還沒有游標可記；從別的裝置同步過來的舊資料也是），原本是「放到結尾」。
+     那會讓「一路復原到底」的最後一下把畫面甩到文章最末端，正是使用者說的
+     跳動。不知道游標在哪，就不要動它：留在原處，只夾進新的長度裡。 */
   const max = content.length;
-  const start = selection ? Math.min(Math.max(0, selection[0]), max) : max;
-  const end = selection ? Math.min(Math.max(start, selection[1]), max) : max;
+  const fallbackStart = Math.min(priorStart, max);
+  const fallbackEnd = Math.min(Math.max(priorEnd, fallbackStart), max);
+  const start = selection ? Math.min(Math.max(0, selection[0]), max) : fallbackStart;
+  const end = selection ? Math.min(Math.max(start, selection[1]), max) : fallbackEnd;
   try {
     textarea.focus();
     textarea.setSelectionRange(start, end);
@@ -755,6 +846,10 @@ function applyHistorySnapshot(doc, content, selection) {
     document.getElementById("quickJumpWordCount").textContent = doc.wordCount;
     document.getElementById("quickJumpUpdatedAt").textContent = doc.updatedAt;
   }
+
+  /* 放在最後：上面每一個重畫都可能動到版面高度，早一步還原會被它們蓋掉。 */
+  if (scroller && keepScrollTop !== null) scroller.scrollTop = keepScrollTop;
+  scheduleUndoCaretCheck();
 
   saveData();
 }
@@ -925,6 +1020,11 @@ function renderDocImages(images) {
     const img = document.createElement("img");
     img.src = imgSrc;
     img.alt = "圖片";
+    /* 縮圖只有幾十像素高，照片裡有什麼根本看不出來。點下去放大檢視。
+       掛在 <img> 上而不是外面那個框：框的右上角是刪除鈕，點刪除不該先
+       彈出一張大圖。 */
+    img.title = "點一下放大";
+    img.onclick = function() { openImageViewer(index); };
 
     const del = document.createElement("button");
     del.className = "img-del-btn";
@@ -935,6 +1035,99 @@ function renderDocImages(images) {
     box.appendChild(img);
     box.appendChild(del);
     strip.appendChild(box);
+  });
+}
+
+/* ==========================================================
+   圖片檢視
+
+   索引是「目前這篇文檔的 images 陣列裡的第幾張」，不是圖片內容——
+   翻頁時要重新去 appData 拿，中途換了文檔或刪了圖都還是對的。
+   ========================================================== */
+let imgViewerIndex = -1;
+
+function currentDocImages() {
+  const doc = appData.docs.find(d => d.id === activeDocId);
+  return (doc && Array.isArray(doc.images)) ? doc.images : [];
+}
+
+function openImageViewer(index) {
+  const images = currentDocImages();
+  if (index < 0 || index >= images.length) return;
+  imgViewerIndex = index;
+  renderImageViewer();
+  document.getElementById("imgViewerModal").classList.add("active");
+}
+
+function renderImageViewer() {
+  const images = currentDocImages();
+  const img = document.getElementById("imgViewerImage");
+  const count = document.getElementById("imgViewerCount");
+  const prev = document.getElementById("imgViewerPrev");
+  const next = document.getElementById("imgViewerNext");
+  if (!img) return;
+
+  const src = images[imgViewerIndex];
+  /* 白名單再擋一次。這些字串走過匯入、同步兩條路進來，而這裡是它們
+     第二個會被放進 <img src> 的地方（硬規則：來路不明的不進 src）。 */
+  if (!isSafeImageSrc(src)) { closeImageViewer(); return; }
+
+  img.src = src;
+  if (count) count.textContent = images.length > 1
+    ? (imgViewerIndex + 1) + " / " + images.length : "";
+
+  // 只有一張時不要留兩顆按不動的箭頭
+  const many = images.length > 1;
+  if (prev) prev.style.display = many ? "" : "none";
+  if (next) next.style.display = many ? "" : "none";
+}
+
+/* 前後翻。到頭了就繞回去——只有一兩張的時候，繞回去比「按了沒反應」好懂。 */
+function stepImageViewer(delta) {
+  const images = currentDocImages();
+  if (images.length <= 1) return;
+  imgViewerIndex = (imgViewerIndex + delta + images.length) % images.length;
+  renderImageViewer();
+}
+
+function closeImageViewer() {
+  const modal = document.getElementById("imgViewerModal");
+  if (modal) modal.classList.remove("active");
+  // 真正的收尾在 setupImageViewer() 的觀察器裡，見那裡的註解
+}
+
+/* 收尾：把 src 清掉。一張壓過的照片是幾百 KB 的 base64，留著等於整份
+   data URI 一直掛在 DOM 上。 */
+function releaseImageViewer() {
+  const img = document.getElementById("imgViewerImage");
+  if (img) img.removeAttribute("src");
+  imgViewerIndex = -1;
+}
+
+function imageViewerOpen() {
+  const modal = document.getElementById("imgViewerModal");
+  return !!modal && modal.classList.contains("active");
+}
+
+/* 左右鍵翻頁。關掉走的是 .modal-overlay 本來就有的那一套（Escape、點遮罩），
+   這裡只補它沒有的部分。
+
+   收尾為什麼要用觀察器，不寫在 closeImageViewer() 裡：Escape 與點遮罩走的是
+   共用的 dismissModal()，它只會把 .active 拿掉，根本不會經過我們的函式。
+   一開始就是這樣寫的，結果關掉之後那份 base64 還掛在 <img> 上。
+   盯著 class 變化收尾，無論從哪一條路關掉都一定收得到。 */
+function setupImageViewer() {
+  const modal = document.getElementById("imgViewerModal");
+  if (!modal) return;
+
+  new MutationObserver(function() {
+    if (!modal.classList.contains("active")) releaseImageViewer();
+  }).observe(modal, { attributes: true, attributeFilter: ["class"] });
+
+  document.addEventListener("keydown", function(e) {
+    if (!imageViewerOpen()) return;
+    if (e.key === "ArrowLeft") { e.preventDefault(); stepImageViewer(-1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); stepImageViewer(1); }
   });
 }
 

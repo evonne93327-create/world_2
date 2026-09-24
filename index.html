@@ -87,6 +87,10 @@
       </div>
     </div>
 
+    <!-- 目前世界觀的一句話簡介。點下去就能改；沒寫過時顯示成淡淡的提示，
+         不然這個功能會整個藏在長按選單裡沒人找得到。 -->
+    <button type="button" class="world-desc-line" id="worldDescLine" onclick="promptEditWorldDesc()"></button>
+
     <!-- 類 Windows 檔案樹狀目錄 -->
     <div class="directory-tree-area" id="worldTreeContainer"></div>
 
@@ -290,10 +294,22 @@
     </div>
   </div>
 
-  <!-- 彈窗：移動資料夾 -->
+  <!-- 彈窗：圖片檢視（點縮圖放大來看）
+
+       沿用 .modal-overlay：點遮罩關掉、Escape 關掉、Tab 不跑出去，
+       還有鍵盤升起時的 top/bottom 讓位，全部都已經寫在那個 class 上了。 -->
+  <div class="modal-overlay img-viewer" id="imgViewerModal">
+    <img id="imgViewerImage" class="img-viewer-photo" alt="圖片">
+    <button type="button" class="img-viewer-btn img-viewer-close" title="關閉" onclick="closeImageViewer()">✕</button>
+    <button type="button" class="img-viewer-btn img-viewer-prev" id="imgViewerPrev" title="上一張" onclick="stepImageViewer(-1)">‹</button>
+    <button type="button" class="img-viewer-btn img-viewer-next" id="imgViewerNext" title="下一張" onclick="stepImageViewer(1)">›</button>
+    <div class="img-viewer-count" id="imgViewerCount"></div>
+  </div>
+
+  <!-- 彈窗：移動資料夾／文檔（標題會依對象改寫） -->
   <div class="modal-overlay" id="moveModal">
     <div class="modal-card">
-      <div class="modal-title">🔀 移動資料夾或更改所屬世界觀</div>
+      <div class="modal-title" id="moveModalTitle">🔀 移動資料夾或更改所屬世界觀</div>
       <p style="font-size:12px; color:var(--text-secondary);">選擇目的地：</p>
       <select id="moveTargetSelect" class="form-input"></select>
       <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">

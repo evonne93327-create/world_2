@@ -51,6 +51,13 @@ function isSafeImageSrc(src) {
   return typeof src === "string" && src.length < 12 * 1024 * 1024 && SAFE_IMAGE_SRC.test(src);
 }
 
+/* 世界觀的「一句話簡介」上限。
+
+   它顯示在側欄一行、以及滑鼠提示裡，太長會把版面撐開。一句話的長度，
+   不是簡介欄。放在這裡而不是 directory.js：匯入那條路（import-export.js）
+   也要用它截斷，而測試沙箱不載 directory.js。 */
+const WORLD_DESC_MAX_LEN = 60;
+
 /* 匯入進來的圖片陣列一律過這一關，留下看得懂的、丟掉可疑的 */
 function sanitizeImageList(list) {
   if (!Array.isArray(list)) return [];

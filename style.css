@@ -273,10 +273,76 @@ aside.sidebar-directory.collapsed {
   transform: scale(1.15);
 }
 
+/* 世界觀的一句話簡介。
+
+   它是一顆按鈕（點下去可以改），所以要把按鈕的預設外觀整個抹掉，不然側欄
+   中間會多出一塊灰色圓角方塊。text-align 也要自己設——按鈕預設置中。
+
+   一句話就是一行：超過就省略號，不要讓它把側欄撐成兩三行。 */
+.world-desc-line {
+  display: block;
+  width: 100%;
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--bg-sidebar);
+  padding: var(--sp-6) var(--sp-12);
+  font: inherit;
+  font-size: var(--fs-12);
+  color: var(--text-secondary);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.world-desc-line:hover { background: var(--bg-sunken); color: var(--text-primary); }
+.world-desc-line.is-empty { color: var(--text-muted); font-style: italic; }
+
 .directory-tree-area {
   flex: 1;
   overflow-y: auto;
   padding: var(--sp-6) var(--sp-8);
+}
+
+/* 拖曳中跟著手指跑的那張小牌子。
+
+   pointer-events 一定要關掉：拖放的目標是用 elementFromPoint() 找的，
+   幽靈就在手指正下方，開著的話每次問到的都是幽靈自己。 */
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 300;
+  pointer-events: none;
+  max-width: 60vw;
+  padding: var(--sp-6) var(--sp-12);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  font-size: var(--fs-12);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.95;
+}
+
+/* 拖曳期間不要讓長按變成選字（iOS 會跳出選字工具列，見硬規則 3b） */
+:root.is-touch-dragging,
+:root.is-touch-dragging * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 「放開就會掉進這裡」。資料夾那一列與整棵樹的空白處共用同一個樣式。 */
+.drop-hover > .node-row,
+.directory-tree-area.drop-hover {
+  background: var(--select-bg);
+  color: var(--select-text);
+  outline: 2px dashed var(--select-border);
+  outline-offset: -2px;
 }
 
 .search-pin-wrap {
@@ -1210,6 +1276,68 @@ main.content-workspace {
   padding: var(--sp-16);
 }
 .modal-overlay.active { display: flex; }
+
+/* 圖片檢視：整片黑底、照片置中撐到最大，沒有卡片。
+
+   .modal-card 的排版規則（固定寬度、內距、圓角）對一張照片全是干擾，
+   所以這一個直接把照片放在遮罩裡，用 flex 置中。 */
+.img-viewer {
+  background: rgba(0,0,0,0.88);
+  backdrop-filter: none;
+  padding: 0;
+}
+.img-viewer:focus { outline: none; }   /* 見硬規則 4：程式聚焦用的錨點不要畫框 */
+.img-viewer-photo {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  /* 遮罩是用「點到的是遮罩本身才關」判斷的，照片自己要吃得到點擊，
+     不然點在照片上也會關掉 */
+  pointer-events: auto;
+}
+.img-viewer-btn {
+  position: absolute;
+  appearance: none;
+  border: none;
+  background: rgba(0,0,0,0.45);
+  color: #FFFFFF;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.img-viewer-btn:hover { background: rgba(0,0,0,0.7); }
+.img-viewer-close {
+  top: calc(var(--sp-12) + var(--safe-t));
+  right: var(--sp-12);
+  width: var(--icon-40);
+  height: var(--icon-40);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-18);
+}
+.img-viewer-prev, .img-viewer-next {
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--icon-40);
+  height: 64px;
+  font-size: var(--fs-22);
+}
+.img-viewer-prev { left: var(--sp-8); }
+.img-viewer-next { right: var(--sp-8); }
+.img-viewer-count {
+  position: absolute;
+  bottom: calc(var(--sp-16) + var(--safe-b));
+  left: 50%;
+  transform: translateX(-50%);
+  color: rgba(255,255,255,0.85);
+  font-size: var(--fs-12);
+  pointer-events: none;
+}
+
+/* 縮圖看得出來是可以點的 */
+.img-preview-box img { cursor: zoom-in; }
 .modal-card {
   background: var(--bg-card);
   border-radius: var(--radius-lg);

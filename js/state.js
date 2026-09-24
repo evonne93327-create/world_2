@@ -201,7 +201,9 @@ let isBatchDeleteMode = false;
 let batchSelectedFolders = new Set();
 let batchSelectedDocs = new Set();
 let iconPickerContext = { type: null, id: null };
-let moveFolderTargetId = null;
+/* 「移動」彈窗現在資料夾與文檔共用，所以要連型別一起記。
+   { type: "folder" | "doc", id } */
+let moveTargetRef = null;
 let connectingSourceNodeId = null;
 let collapsedFolders = {};
 let docHistory = {}; 
