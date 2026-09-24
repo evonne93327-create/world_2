@@ -1185,3 +1185,21 @@ test("垃圾桶：「現有的世界觀」上面有一條線", function() {
   assert.match(body, /heading\("現有的世界觀", "trash-section-title"\)/,
     "「現有的世界觀」要用區塊標題的樣式，那條線才套得上");
 });
+
+test("垃圾桶：刪掉的世界觀，項數放在第二行、用補充說明的小字", function() {
+  /* 原本接在名稱後面（「龍之谷 · 4 項」），手機上一行放不下，被截成「· 1…」。 */
+  const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
+  assert.match(body, /g\.restoreCount \? g\.restoreCount \+ " 項" : ""\)/,
+    "項數要當成第二行（createTrashRow 的 sub）傳進去，不是接在名稱後面");
+  assert.ok(!/"　·　" \+ g\.restoreCount/.test(body), "不要再接在名稱後面");
+
+  const row = codeOnly(bodyOf(modalJs, "createTrashRow"));
+  assert.match(row, /subSpan\.className = "trash-item-sub"/);
+  assert.match(row, /subSpan\.textContent = sub/, "用 textContent");
+
+  const rule = css.match(/\.trash-item-sub\s*\{[^}]*\}/);
+  assert.ok(rule, "要有 .trash-item-sub");
+  assert.match(rule[0], /font-size:\s*var\(--fs-10\)/, "補充說明的字級，跟刪除時間同一級");
+  assert.match(css, /\.trash-item-text\s*\{[^}]*min-width:\s*0/,
+    "包起來那一欄要 min-width: 0，不然名稱的省略號不會生效");
+});

@@ -1059,11 +1059,10 @@ function renderTrashList() {
  if (gone.length) {
  heading("刪除的世界觀", "trash-section-title");
  gone.forEach(function(g) {
- const label = (g.name || "（名稱沒有留下來的世界觀）") +
- (g.restoreCount ? "　·　" + g.restoreCount + " 項" : "");
- list.appendChild(createTrashRow(g.icon || "🌐", label, g.deletedAt,
+ list.appendChild(createTrashRow(g.icon || "🌐", g.name || "（名稱沒有留下來的世界觀）", g.deletedAt,
  function() { restoreWorldFromTrash(g.worldId); },
- function() { permanentlyDeleteTrashWorld(g.worldId); }));
+ function() { permanentlyDeleteTrashWorld(g.worldId); },
+ g.restoreCount ? g.restoreCount + " 項" : ""));
  });
  // 上面有「刪除的世界觀」時才需要這個標題，把兩區分開
  if (alive.length) heading("現有的世界觀", "trash-section-title");
@@ -1140,7 +1139,9 @@ function permanentlyDeleteCanvasTrashItem(index) {
  renderTrashList();
 }
 
-function createTrashRow(icon, name, deletedAt, onRestore, onPermanentDelete) {
+/* sub（選填）：名稱底下的第二行，用補充說明的小字。刪掉的世界觀用它寫
+   「N 項」——原本接在名稱後面，手機上一行放不下，被截成「· 1…」。 */
+function createTrashRow(icon, name, deletedAt, onRestore, onPermanentDelete, sub) {
  const row = document.createElement("div");
  row.className = "trash-item";
 
@@ -1151,6 +1152,19 @@ function createTrashRow(icon, name, deletedAt, onRestore, onPermanentDelete) {
  const nameSpan = document.createElement("span");
  nameSpan.className = "trash-item-name";
  nameSpan.textContent = name;
+
+ /* 有第二行時，名稱與第二行包成一欄，佔住原本名稱的位置（flex: 1），
+    名稱自己的省略號照舊。 */
+ let textBox = nameSpan;
+ if (sub) {
+ textBox = document.createElement("span");
+ textBox.className = "trash-item-text";
+ const subSpan = document.createElement("span");
+ subSpan.className = "trash-item-sub";
+ subSpan.textContent = sub;
+ textBox.appendChild(nameSpan);
+ textBox.appendChild(subSpan);
+ }
 
  const metaSpan = document.createElement("span");
  metaSpan.className = "trash-item-meta";
@@ -1175,7 +1189,7 @@ function createTrashRow(icon, name, deletedAt, onRestore, onPermanentDelete) {
  actions.appendChild(delBtn);
 
  row.appendChild(iconSpan);
- row.appendChild(nameSpan);
+ row.appendChild(textBox);
  row.appendChild(metaSpan);
  row.appendChild(actions);
  return row;

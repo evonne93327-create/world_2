@@ -10,7 +10,7 @@
    本機 localStorage，網路只負責抓靜態檔。換來的是「更新一定拿得到」。
    ========================================================== */
 
-const VERSION = 'v89';
+const VERSION = 'v90';
 const CACHE = 'worldbuilder-' + VERSION;
 
 // 離線時要能完整開起來所需的檔案

@@ -1688,6 +1688,18 @@ main.content-workspace {
   white-space: nowrap;
   font-weight: 600;
 }
+.trash-item-text {
+  flex: 1;
+  min-width: 0;       /* 沒有這一行，裡面名稱的省略號不會生效 */
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+/* 補充說明的小字，跟旁邊的刪除時間同一級 */
+.trash-item-sub {
+  font-size: var(--fs-10);
+  color: var(--text-muted);
+}
 .trash-item-meta {
   font-size: var(--fs-10);
   color: var(--text-muted);
