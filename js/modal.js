@@ -1139,8 +1139,13 @@ function permanentlyDeleteCanvasTrashItem(index) {
  renderTrashList();
 }
 
-/* sub（選填）：名稱底下的第二行，用補充說明的小字。刪掉的世界觀用它寫
-   「N 項」——原本接在名稱後面，手機上一行放不下，被截成「· 1…」。 */
+/* 每一列兩行：第一行是名稱，第二行用補充說明的小字寫刪除時間。
+
+   sub（選填）放在時間前面，刪掉的世界觀用它寫「N 項」：「4 項 · 2026-09-24 16:42」。
+
+   以前時間是擠在名稱右邊的一欄，加上兩顆按鈕，手機上名稱只剩幾個字的寬度，
+   世界觀的「· N 項」更是直接被截成「· 1…」（使用者要求：時間與項數都放
+   第二行，所有刪掉的東西都一樣）。 */
 function createTrashRow(icon, name, deletedAt, onRestore, onPermanentDelete, sub) {
  const row = document.createElement("div");
  row.className = "trash-item";
@@ -1153,22 +1158,19 @@ function createTrashRow(icon, name, deletedAt, onRestore, onPermanentDelete, sub
  nameSpan.className = "trash-item-name";
  nameSpan.textContent = name;
 
- /* 有第二行時，名稱與第二行包成一欄，佔住原本名稱的位置（flex: 1），
-    名稱自己的省略號照舊。 */
+ /* 名稱與第二行包成一欄，佔住整個中間（flex: 1），名稱自己的省略號照舊。
+    兩樣都沒有（很舊的資料沒記刪除時間）就不留一行空白。 */
+ const second = [sub, deletedAt].filter(Boolean).join("　·　");
  let textBox = nameSpan;
- if (sub) {
+ if (second) {
  textBox = document.createElement("span");
  textBox.className = "trash-item-text";
  const subSpan = document.createElement("span");
  subSpan.className = "trash-item-sub";
- subSpan.textContent = sub;
+ subSpan.textContent = second;
  textBox.appendChild(nameSpan);
  textBox.appendChild(subSpan);
  }
-
- const metaSpan = document.createElement("span");
- metaSpan.className = "trash-item-meta";
- metaSpan.textContent = deletedAt || "";
 
  const actions = document.createElement("div");
  actions.className = "trash-item-actions";
@@ -1190,7 +1192,6 @@ function createTrashRow(icon, name, deletedAt, onRestore, onPermanentDelete, sub
 
  row.appendChild(iconSpan);
  row.appendChild(textBox);
- row.appendChild(metaSpan);
  row.appendChild(actions);
  return row;
 }

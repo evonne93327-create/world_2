@@ -1195,11 +1195,50 @@ test("垃圾桶：刪掉的世界觀，項數放在第二行、用補充說明�
 
   const row = codeOnly(bodyOf(modalJs, "createTrashRow"));
   assert.match(row, /subSpan\.className = "trash-item-sub"/);
-  assert.match(row, /subSpan\.textContent = sub/, "用 textContent");
+  assert.match(row, /subSpan\.textContent = second/, "用 textContent");
 
   const rule = css.match(/\.trash-item-sub\s*\{[^}]*\}/);
   assert.ok(rule, "要有 .trash-item-sub");
   assert.match(rule[0], /font-size:\s*var\(--fs-10\)/, "補充說明的字級，跟刪除時間同一級");
   assert.match(css, /\.trash-item-text\s*\{[^}]*min-width:\s*0/,
     "包起來那一欄要 min-width: 0，不然名稱的省略號不會生效");
+});
+
+test("垃圾桶：每一列的刪除時間都在第二行，不再擠在名稱右邊", function() {
+  /* 使用者：「時間也放在第二行，其他刪掉的檔案也一樣」。以前時間是名稱右邊
+     的一欄，加上兩顆按鈕，手機上名稱只剩幾個字的寬度。 */
+  const row = codeOnly(bodyOf(modalJs, "createTrashRow"));
+  assert.match(row, /const second = \[sub, deletedAt\]\.filter\(Boolean\)\.join\("　·　"\);/,
+    "第二行＝（項數）· 刪除時間；項數在前");
+  assert.ok(!/trash-item-meta/.test(row), "不要再有名稱右邊那一欄時間");
+  assert.ok(!/row\.appendChild\(metaSpan\)/.test(row));
+  assert.ok(!/\.trash-item-meta\s*\{/.test(css), "用不到的樣式一起拿掉");
+});
+
+test("垃圾桶：第二行的內容（實際畫出來）", function() {
+  const app = loadApp(["js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+                       "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"]);
+  /* 沙箱的 createElement 是空殼，自己做一個會記住子節點的版本來看結構。 */
+  const out = host(app.run(`(function() {
+    document.createElement = function(tag) {
+      return { tag: tag, className: "", textContent: "", style: {}, children: [],
+               appendChild: function(c) { this.children.push(c); } };
+    };
+    function texts(row) {
+      var box = row.children[1];
+      return box.children.length ? box.children.map(function(c) { return c.className + "=" + c.textContent; })
+                                 : [box.className + "=" + box.textContent];
+    }
+    return {
+      doc: texts(createTrashRow("📄", "赤龍", "2026-09-24 16:42", null, null)),
+      world: texts(createTrashRow("🐉", "龍之谷", "2026-09-24 16:42", null, null, "4 項")),
+      bare: texts(createTrashRow("📄", "沒記時間的舊資料", "", null, null)),
+      children: createTrashRow("📄", "x", "t", null, null).children.map(function(c) { return c.className; })
+    };
+  })()`));
+  assert.deepStrictEqual(out.doc, ["trash-item-name=赤龍", "trash-item-sub=2026-09-24 16:42"]);
+  assert.deepStrictEqual(out.world, ["trash-item-name=龍之谷", "trash-item-sub=4 項　·　2026-09-24 16:42"]);
+  assert.deepStrictEqual(out.bare, ["trash-item-name=沒記時間的舊資料"], "沒有時間就不留一行空白");
+  assert.deepStrictEqual(out.children, ["trash-item-icon", "trash-item-text", "trash-item-actions"],
+    "一列就是：圖示、兩行文字、按鈕");
 });

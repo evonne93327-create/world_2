@@ -1695,16 +1695,10 @@ main.content-workspace {
   flex-direction: column;
   gap: var(--sp-1);
 }
-/* 補充說明的小字，跟旁邊的刪除時間同一級 */
+/* 第二行：刪除時間（刪掉的世界觀前面還有「N 項」），補充說明的小字 */
 .trash-item-sub {
   font-size: var(--fs-10);
   color: var(--text-muted);
-}
-.trash-item-meta {
-  font-size: var(--fs-10);
-  color: var(--text-muted);
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 .trash-item-actions {
   display: flex;
