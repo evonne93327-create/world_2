@@ -336,7 +336,9 @@ test("往上滑：方向不對就整個放手，那一列還要能橫向捲", fu
 
   /* 起手點幾乎一定落在某顆世界觀按鈕上。沒有這一段的話，滑開清單的同時
      會順手切換世界觀（左緣右滑那邊踩過同一個坑）。 */
-  assert.match(body, /swallowNextClick\(\)/,
+  /* 比整行、連條件一起比。只比函式名字的話，有人把它包進 if (false) 裡
+     這條還是綠的（破壞測試那一輪就是這樣漏掉的）。 */
+  assert.match(body, /if \(railSwipe && railSwipe\.claimed\) swallowNextClick\(\);/,
     "接手過的手勢，收尾要把瀏覽器補上的那一下 click 吃掉");
 
   assert.match(body, /\{ passive: false \}/,

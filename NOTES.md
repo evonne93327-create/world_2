@@ -16,7 +16,7 @@
 |---|---|
 | 線上位置 | https://evonne93327-create.github.io/world_2/ |
 | main | `3854360`（PR #52 合併後） |
-| service worker | **v76** |
+| service worker | **v77** |
 | 開發分支 | `claude/ipad-keyboard-button-placement-613jds` |
 | 開著的 PR | 無 |
 
@@ -474,6 +474,20 @@ iOS 自己的相簿與檔案 app 就是這個順序，不必教。實作上是
 先過濾掉**來擋的——那等於把規則寄放在 UI 上，換一個入口就沒人擋。繞成圈的
 資料夾不會報錯，它只是從根目錄走不到，那一整支在畫面上憑空消失。
 
+### 3h-2. 新的滑動手勢照 `setupEdgeSwipe()` 的形狀寫
+
+「從底部那一列往上滑打開世界觀清單」是第二個這種手勢。三件事直接照抄
+左緣右滑那一套，因為那裡每一條都是踩過才有的：
+
+1. **在 `touchmove` 才決定要不要接手，不在 `touchstart`。** 在 touchstart
+   就攔掉的話，點那一列上的按鈕會被吃掉。
+2. **方向不對就 `railSwipe = null`，不是 `return`。** 一次滑動會送好幾個
+   touchmove，只是不處理的話後面那幾個還會再進來判斷一次。
+3. **接手過就 `swallowNextClick()`。** 起手點幾乎一定落在某顆世界觀按鈕上，
+   沒有這一段的話，滑開清單的同時會順手切換世界觀。
+
+另外 `{ passive: false }` 才擋得掉那一列本來的橫向捲動。
+
 ### 3i. 復原會跳動，是因為瀏覽器自己去「把游標捲進視野」
 
 使用者回報「多次復原會跳動，就算是同一行」。兩個原因疊在一起：
@@ -565,7 +579,7 @@ iOS 自己的相簿與檔案 app 就是這個順序，不必教。實作上是
 ### 在 repo 裡的
 
 ```bash
-node --test          # 124 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 129 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |
@@ -577,7 +591,7 @@ node --test          # 124 項。注意：不要寫 node --test tests/，Node 22
 | `tests/wiring.test.js` | `onclick="foo()"` 有沒有對應的函式、鍵盤診斷的入口有沒有接上 |
 | `tests/sync.test.js` | 對帳的時機與接線；每一條都是「不做會弄丟資料」 |
 | `tests/sync-merge.test.js` | 逐篇三方合併的規則。全專案最危險的一段，測得最細 |
-| `tests/directory.test.js` | 目錄的搬移規則、整列收合、觸控拖曳有沒有接上 |
+| `tests/directory.test.js` | 目錄的搬移規則、整列收合、觸控拖曳、世界觀清單 |
 | `tests/editor.test.js` | 復原的捲動位置、圖片檢視的收尾、世界觀簡介 |
 | `tests/helpers/load-app.js` | `node:vm` 沙箱；跨 realm 的 `deepStrictEqual` 會因為 prototype 不同而失敗，所以有個 `host()` 做 JSON round-trip；另有 `run()` 可以在沙箱**裡面**執行程式碼 |
 
