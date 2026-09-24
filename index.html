@@ -302,6 +302,23 @@
     </div>
   </div>
 
+  <!-- 彈窗：輸入名稱（新增資料夾、重新命名、新增世界觀、一句話簡介）
+
+       取代瀏覽器內建的 prompt()：那個的預設文字在 iOS 上不會反藍，得先手動
+       刪掉才能打；而且它只有一個欄位。欄位由 openTextInputModal() 動態產生。
+       「取消」按鈕的字不要改——Escape／點遮罩走的 dismissModal() 是靠
+       按鈕上的「取消」兩個字找到它的。 -->
+  <div class="modal-overlay" id="textInputModal">
+    <div class="modal-card">
+      <div class="modal-title" id="textInputTitle"></div>
+      <div class="text-input-fields" id="textInputFields"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn btn-secondary" onclick="closeTextInputModal()">取消</button>
+        <button class="btn btn-primary" id="textInputOkBtn" onclick="submitTextInputModal()">確定</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 彈窗：批量投射白板
 
        只列目前這個世界觀的文檔（白板一個世界觀一張）。依資料夾排，資料夾

@@ -437,6 +437,12 @@ function worldApp() {
     renderBreadcrumb = function() {};
     var __selected = null;
     selectWorld = function(id) { __selected = id; };
+    /* 彈窗在沙箱裡畫不出來。記下它收到的參數，測試自己扮演「按下按鈕」：
+       __submit(["名稱", "簡介"]) 就是填好之後按「建立」。 */
+    var __modal = null, __invalid = [];
+    openTextInputModal = function(opts) { __modal = opts; };
+    markTextInputInvalid = function(i) { __invalid.push(i || 0); };
+    function __submit(values) { return __modal.onSubmit(values); }
     appData = { worldviews: [{ id: "w1", name: "舊的" }], folders: [],
                 docs: [{ id: "d_old", worldId: "w1", folderId: null }], trash: { docs: [], folders: [] } };
     activeWorldId = "w1";
@@ -446,10 +452,11 @@ function worldApp() {
 
 test("新增世界觀之後，裡面就有一篇空白文檔", function() {
   const app = worldApp();
-  app.run(`prompt = function() { return "  新大陸  "; }; promptCreateWorldview();`);
+  app.run(`promptCreateWorldview(); __submit(["  新大陸  ", "  龍的故鄉  "]);`);
 
   const world = host(app.run(`appData.worldviews[appData.worldviews.length - 1]`));
   assert.strictEqual(world.name, "新大陸");
+  assert.strictEqual(world.desc, "龍的故鄉", "同一個彈窗裡填的簡介也要存進去");
 
   const docs = host(app.run(`appData.docs.filter(function(d) { return d.worldId === "${world.id}"; })`));
   assert.strictEqual(docs.length, 1, "新的世界觀裡要剛好有一篇");
@@ -459,21 +466,52 @@ test("新增世界觀之後，裡面就有一篇空白文檔", function() {
   /* selectWorld() 會打開那個世界觀的第一篇 —— 文檔要在它被呼叫之前就放進去，
      不然打開的時候裡面還是空的，停在一片空白的編輯區。 */
   assert.strictEqual(app.run("__selected"), world.id, "建完要切過去");
-  const body = codeOnly(bodyOf(directoryJs, "promptCreateWorldview"));
+  const body = codeOnly(bodyOf(directoryJs, "createWorldview"));
   assert.ok(body.indexOf("makeNewDoc(") < body.indexOf("selectWorld("),
     "文檔要在 selectWorld() 之前放進去 —— 它會打開第一篇");
 
   assert.strictEqual(app.run(`appData.docs.length`), 2, "舊的那篇不要被動到");
 });
 
-test("按取消或留白就什麼都不建", function() {
+test("按取消或名稱留白就什麼都不建", function() {
   /* 不然每按一次取消就多一個沒有名字的世界觀，外加一篇孤兒文檔。 */
-  ["null", '""', '"   "'].forEach(function(ret) {
+
+  // 按取消：onSubmit 根本不會被呼叫
+  const cancel = worldApp();
+  cancel.run(`promptCreateWorldview();`);
+  assert.strictEqual(cancel.run("appData.worldviews.length"), 1);
+
+  ['""', '"   "'].forEach(function(name) {
     const app = worldApp();
-    app.run(`prompt = function() { return ${ret}; }; promptCreateWorldview();`);
-    assert.strictEqual(app.run("appData.worldviews.length"), 1, "prompt 回 " + ret + " 時不該建世界觀");
-    assert.strictEqual(app.run("appData.docs.length"), 1, "prompt 回 " + ret + " 時也不該多一篇文檔");
+    const kept = app.run(`promptCreateWorldview(); __submit([${name}, "簡介"]);`);
+    assert.strictEqual(kept, false,
+      "名稱留白時 onSubmit 要回 false —— 彈窗留著讓他補，不是關掉然後什麼都沒發生");
+    assert.deepStrictEqual(host(app.run("__invalid")), [0], "名稱那一欄要標出來");
+    assert.strictEqual(app.run("appData.worldviews.length"), 1, "名稱是 " + name + " 時不該建世界觀");
+    assert.strictEqual(app.run("appData.docs.length"), 1, "也不該多一篇文檔");
   });
+});
+
+test("新增世界觀的彈窗：名稱預設「新世界觀」、第二欄是簡介", function() {
+  const app = worldApp();
+  const fields = host(app.run(`promptCreateWorldview(); __modal.fields`));
+  assert.strictEqual(fields.length, 2, "名稱與簡介在同一個彈窗裡");
+  assert.strictEqual(fields[0].value, "新世界觀", "預設名稱（打開時會反藍，直接打字就取代）");
+  assert.strictEqual(fields[1].value, "", "簡介預設空白");
+  assert.ok(fields[1].maxLength > 0, "簡介要有長度上限 —— 它顯示在側欄一行裡");
+});
+
+test("新增資料夾：預設「新分類」、留白不建", function() {
+  const app = worldApp();
+  const fields = host(app.run(`promptCreateFolder(null, "w1"); __modal.fields`));
+  assert.deepStrictEqual(fields.map(function(f) { return f.value; }), ["新分類"]);
+
+  assert.strictEqual(app.run(`__submit(["   "])`), false, "留白要留著彈窗");
+  assert.strictEqual(app.run("appData.folders.length"), 0);
+
+  app.run(`__submit(["  騎士團  "])`);
+  const f = host(app.run("appData.folders[0]"));
+  assert.deepStrictEqual([f.name, f.worldId, f.parentId], ["騎士團", "w1", null]);
 });
 
 test("空白文檔的形狀只寫在 makeNewDoc() 一份", function() {

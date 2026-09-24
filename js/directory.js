@@ -83,22 +83,30 @@ function renderWorldDesc() {
 
 /* 沒指定就改目前這個世界觀（側欄那一行點下去走的是這條）。
 
-   用 prompt() 是跟著旁邊的「重新命名」走的——這個 app 的輕量輸入都用它。
-   差別在這裡要分得出「按取消」（null）跟「清空」（空字串）：簡介本來就
-   可以清掉，不能像改名那樣把空字串當成取消。 */
+   按「取消」＝不動；按「儲存」但留白＝清掉。簡介本來就可以清掉，不能像
+   改名那樣把空字串當成取消。 */
 function promptEditWorldDesc(worldId) {
  const id = worldId || activeWorldId;
  const world = appData.worldviews.find(w => w.id === id);
  if (!world) return;
 
- const next = prompt("一句話簡介（清空就留白）：", world.desc || "");
- if (next === null) return;
-
- const val = next.trim().slice(0, WORLD_DESC_MAX_LEN);
- if (val) world.desc = val; else delete world.desc;
-
+ openTextInputModal({
+ title: "📝 一句話簡介",
+ fields: [{ label: (world.icon || "🌐") + " " + world.name, value: world.desc || "",
+ placeholder: "清空就留白", maxLength: WORLD_DESC_MAX_LEN }],
+ okText: "儲存",
+ onSubmit: function(values) {
+ applyWorldDesc(world, values[0]);
  saveData();
  updateWorldBadge();
+ }
+ });
+}
+
+/* 寫入簡介：去頭尾空白、截長度，空的就把欄位拿掉（不要留一個空字串）。 */
+function applyWorldDesc(world, raw) {
+ const val = String(raw || "").trim().slice(0, WORLD_DESC_MAX_LEN);
+ if (val) world.desc = val; else delete world.desc;
 }
 
 /* ==========================================================
@@ -1015,19 +1023,37 @@ function closeAllBreadcrumbDropdowns() {
 
    文檔的形狀跟「新增文檔」共用 makeNewDoc()，兩邊不會各長各的。 */
 function promptCreateWorldview() {
- const name = prompt("請輸入新世界觀名稱：", "新世界觀");
- if (name && name.trim()) {
+ openTextInputModal({
+ title: "🌐 新增世界觀",
+ fields: [
+ { label: "名稱", value: "新世界觀" },
+ { label: "一句話簡介（可以留白）", value: "", placeholder: "例如：劍與魔法的帝國",
+ maxLength: WORLD_DESC_MAX_LEN }
+ ],
+ okText: "建立",
+ onSubmit: function(values) {
+ const name = values[0].trim();
+ if (!name) { markTextInputInvalid(0); return false; }   // 名稱不能空，留著讓他補
+ createWorldview(name, values[1]);
+ }
+ });
+}
+
+/* 真的建。拆出來是因為 openTextInputModal 是非同步的（按了按鈕才回來），
+   而測試要能直接呼叫它。 */
+function createWorldview(name, desc) {
  const newWorld = {
  id: "w_" + Date.now(),
- name: name.trim(),
+ name: name,
  icon: "🌐",
  canvas: { nodes: [], edges: [] }
  };
+ applyWorldDesc(newWorld, desc);
  appData.worldviews.push(newWorld);
  appData.docs.unshift(makeNewDoc(newWorld.id, null));
  selectWorld(newWorld.id);
  saveData();
- }
+ return newWorld;
 }
 
 function createFolderInCurrentContext() {
@@ -1076,19 +1102,32 @@ function createDocInCurrentContext() {
  createNewDoc(resolveNewDocFolderId(), activeWorldId);
 }
 
+/* 預設名稱「新分類」一打開就是反藍的，直接打字就取代掉。 */
 function promptCreateFolder(parentId = null, worldId = null) {
- const name = prompt("請輸入資料夾名稱：", "新分類");
- if (name && name.trim()) {
- appData.folders.push({
- id: "f_" + Date.now(),
- worldId: worldId || activeWorldId,
- parentId: parentId,
- name: name.trim(),
- icon: "📁"
+ openTextInputModal({
+ title: "📁 新增資料夾",
+ fields: [{ label: "名稱", value: "新分類" }],
+ okText: "建立",
+ onSubmit: function(values) {
+ const name = values[0].trim();
+ if (!name) { markTextInputInvalid(0); return false; }
+ createFolder(name, parentId, worldId);
+ }
  });
+}
+
+function createFolder(name, parentId, worldId) {
+ const folder = {
+ id: newItemId("f_"),
+ worldId: worldId || activeWorldId,
+ parentId: parentId || null,
+ name: name,
+ icon: "📁"
+ };
+ appData.folders.push(folder);
  saveData();
  renderSidebarTree();
- }
+ return folder;
 }
 
 /* 一篇空白文檔長什麼樣子，只寫在這裡一份。
@@ -1127,9 +1166,19 @@ function createNewDoc(targetFolderId = null, worldId = null) {
 }
 
 function promptRenameItem(type, id, currentName) {
- const newName = prompt("請輸入新的名稱：", currentName);
- if (newName && newName.trim() && newName.trim() !== currentName) {
- const val = newName.trim();
+ openTextInputModal({
+ title: "✏️ 重新命名",
+ fields: [{ label: "名稱", value: currentName || "" }],
+ okText: "確定",
+ onSubmit: function(values) {
+ const val = values[0].trim();
+ if (!val) { markTextInputInvalid(0); return false; }
+ if (val !== currentName) renameItem(type, id, val);
+ }
+ });
+}
+
+function renameItem(type, id, val) {
  if (type === 'world') {
  const w = appData.worldviews.find(x => x.id === id);
  if (w) w.name = val;
@@ -1149,7 +1198,6 @@ function promptRenameItem(type, id, currentName) {
  updateWorldBadge();
  // 白板上的節點顯示的就是這個標題，正在看白板時要一起更新
  refreshCanvasIfVisible();
- }
 }
 
 function toggleBatchDeleteMode() {

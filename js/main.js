@@ -390,6 +390,14 @@ function setupModalKeyboard() {
 
     new MutationObserver(function() {
       if (!modal.classList.contains("active")) return;
+
+      /* 開彈窗的人已經刻意把焦點放在裡面了（輸入名稱的彈窗會直接聚焦並
+         全選名稱欄，讓人一打字就取代），這裡就不要再搶。不然在觸控裝置上
+         下面那段會把焦點移到卡片本身——名稱欄的反藍跟著消失，而且軟體
+         鍵盤剛升起又收回去。 */
+      const active = document.activeElement;
+      if (active && active !== document.body && active !== modal && modal.contains(active)) return;
+
       // 記住是從哪裡打開的，關掉之後要還回去
       if (!focusBeforeModal) focusBeforeModal = document.activeElement;
 

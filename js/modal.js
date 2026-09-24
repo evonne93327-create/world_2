@@ -1391,3 +1391,115 @@ function confirmMoveFolder() {
  renderSidebarTree();
  }
 }
+
+/* ==========================================================
+   輸入名稱的彈窗（取代瀏覽器內建的 prompt()）
+
+   為什麼不用 prompt()：
+   - 使用者要的是「預設文字反藍，直接打字就取代」。prompt() 的預設文字
+     選不選取是瀏覽器自己決定的，iOS 是游標停在最後、不選取，得先手動
+     刪掉「新分類」才能打。那個行為程式碼碰不到。
+   - 新增世界觀要同時填名稱與一句話簡介，prompt() 只有一個欄位。
+
+   觸控裝置上這個彈窗**會**主動聚焦並叫出鍵盤，跟 setupModalKeyboard()
+   的規則相反。那條規則的理由是「很多彈窗一打開先想看內容、未必要打字」；
+   這個彈窗唯一的用途就是打字，不聚焦反而要多點一下。聚焦一定要在點擊
+   的同一個呼叫堆疊裡同步做，iOS 才肯叫出鍵盤。
+
+   用法：
+     openTextInputModal({
+       title: "📁 新增資料夾",
+       fields: [{ label: "名稱", value: "新分類" }, ...],   // 一或兩欄
+       okText: "建立",
+       onSubmit: function(values) { ...; return true; }     // 回 false＝不關
+     });
+   ========================================================== */
+let textInputSubmit = null;
+
+function openTextInputModal(opts) {
+  const modal = document.getElementById("textInputModal");
+  const box = document.getElementById("textInputFields");
+  if (!modal || !box) return;
+
+  document.getElementById("textInputTitle").textContent = opts.title || "";
+  document.getElementById("textInputOkBtn").textContent = opts.okText || "確定";
+  textInputSubmit = opts.onSubmit || null;
+
+  box.innerHTML = "";
+  const inputs = (opts.fields || []).map(function(f, i) {
+    const wrap = document.createElement("label");
+    wrap.className = "text-input-field";
+    const cap = document.createElement("span");
+    cap.className = "text-input-label";
+    cap.textContent = f.label || "";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "form-input";
+    input.value = f.value || "";
+    input.placeholder = f.placeholder || "";
+    if (f.maxLength) input.maxLength = f.maxLength;
+    input.dataset.index = String(i);
+    wrap.appendChild(cap);
+    wrap.appendChild(input);
+    box.appendChild(wrap);
+    return input;
+  });
+
+  inputs.forEach(function(input, i) {
+    input.addEventListener("input", function() { input.classList.remove("is-invalid"); });
+    input.addEventListener("keydown", function(e) {
+      if (e.key !== "Enter") return;
+      /* 用注音、倉頡選字時按的 Enter 是「確定這個字」，不是「送出」。
+         不擋的話打「騎士」選完字就直接建立了一個叫「qi shi」或半截的資料夾。
+         keyCode 229 是部分瀏覽器（含 iOS）在組字中給的值。 */
+      if (e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      if (i < inputs.length - 1) focusAndSelect(inputs[i + 1]);   // 還有下一欄就跳過去
+      else submitTextInputModal();
+    });
+  });
+
+  // 關掉之後焦點要還回去（setupModalKeyboard 的規矩），先記下來再聚焦
+  if (typeof focusBeforeModal !== "undefined" && !focusBeforeModal) focusBeforeModal = document.activeElement;
+  modal.classList.add("active");
+  if (inputs[0]) focusAndSelect(inputs[0]);
+}
+
+/* 聚焦並全選。select() 在 iOS 上不一定生效，setSelectionRange 補一次；
+   下一格再補一次是因為 iOS 升鍵盤的過程中會把選取範圍重設掉。那一次只在
+   使用者還沒動過內容時才做，免得把他剛打的字又選起來。 */
+function focusAndSelect(input) {
+  const original = input.value;
+  input.focus();
+  input.select();
+  try { input.setSelectionRange(0, input.value.length); } catch (e) {}
+  requestAnimationFrame(function() {
+    if (document.activeElement !== input || input.value !== original) return;
+    try { input.setSelectionRange(0, input.value.length); } catch (e) {}
+  });
+}
+
+function textInputValues() {
+  return Array.from(document.querySelectorAll("#textInputFields input"))
+    .map(function(x) { return x.value; });
+}
+
+function submitTextInputModal() {
+  const fn = textInputSubmit;
+  if (fn && fn(textInputValues()) === false) return;     // 呼叫端說還不能關（例如名稱留白）
+  closeTextInputModal();
+}
+
+function closeTextInputModal() {
+  textInputSubmit = null;
+  const modal = document.getElementById("textInputModal");
+  if (modal) modal.classList.remove("active");
+}
+
+/* 呼叫端拒絕送出時用：把那一欄標紅並重新選起來。 */
+function markTextInputInvalid(index) {
+  const input = document.querySelectorAll("#textInputFields input")[index || 0];
+  if (!input) return;
+  input.classList.add("is-invalid");
+  focusAndSelect(input);
+}

@@ -164,14 +164,16 @@ test("簡介一律用 textContent", function() {
   assert.ok(!/innerHTML/.test(body), "不可以拼 innerHTML");
 });
 
-test("簡介分得出「按取消」跟「清空」", function() {
-  /* 旁邊的重新命名是 if (newName && ...)，把空字串當成取消——對名字是對的。
-     簡介本來就可以清掉，照抄那個寫法就會變成「清不掉」。 */
+test("簡介：按取消不動，留白儲存才是清掉", function() {
+  /* 旁邊的重新命名把空字串當成錯誤（名稱不能空）。簡介本來就可以清掉，
+     照抄那個寫法就會變成「清不掉」。 */
   const body = codeOnly(bodyOf(directoryJs, "promptEditWorldDesc"));
-  assert.match(body, /if \(next === null\) return;/,
-    "prompt() 回 null 才是取消");
-  assert.match(body, /delete world\.desc/, "留白就要把它刪掉");
-  assert.match(body, /WORLD_DESC_MAX_LEN/, "長度要截 —— 它顯示在側欄一行裡");
+  assert.match(body, /openTextInputModal\(/, "用自己的輸入彈窗，不是 prompt()");
+  assert.ok(!/markTextInputInvalid/.test(body), "簡介留白不算錯，不能擋");
+
+  const apply = codeOnly(bodyOf(directoryJs, "applyWorldDesc"));
+  assert.match(apply, /delete world\.desc/, "留白就要把它刪掉");
+  assert.match(apply, /WORLD_DESC_MAX_LEN/, "長度要截 —— 它顯示在側欄一行裡");
 });
 
 test("WORLD_DESC_MAX_LEN 要定義在匯入那條路也看得到的地方", function() {
