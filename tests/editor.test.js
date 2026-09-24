@@ -56,7 +56,11 @@ test("復原之後要把捲動位置放回去，而且放在所有重畫之後",
   const body = codeOnly(bodyOf(documentsJs, "applyHistorySnapshot"));
   assert.match(body, /const keepScrollTop = scroller \? scroller\.scrollTop : null;/,
     "換內容之前要先記住捲動位置");
-  assert.match(body, /scroller\.scrollTop = keepScrollTop/, "做完要放回去");
+  /* 比整行、連條件一起比。只比 `scroller.scrollTop = keepScrollTop` 的話，
+     有人把它包進 if (false) 或別的條件裡，這條還是綠的
+     ——破壞測試那一輪就是這樣漏掉的。 */
+  assert.match(body, /if \(scroller && keepScrollTop !== null\) scroller\.scrollTop = keepScrollTop;/,
+    "做完要放回去，而且只被「有沒有這個容器」擋著");
 
   const restoreAt = body.indexOf("scroller.scrollTop = keepScrollTop");
   const lastRender = Math.max(
