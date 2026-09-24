@@ -640,6 +640,21 @@
     </div>
   </div>
 
+  <!-- 逐筆衝突：同一筆兩邊都改了。沒撞到的照常同步，這幾筆等使用者一筆一筆選 -->
+  <div class="modal-overlay" id="syncRecordConflictModal">
+    <div class="modal-card" style="width:460px;">
+      <div class="modal-title">❗ 同步衝突</div>
+      <div style="font-size:13px; line-height:1.7;">下面這幾項在這台和雲端都被改過。還沒決定之前，這幾項<b>暫停同步</b>：這台保留這台的版本、雲端保留雲端的版本；其他的照常同步。</div>
+      <div id="syncRecordConflictList" class="sync-record-list"></div>
+      <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
+        <button class="btn btn-secondary" onclick="backupBeforeResolving()">💾 先把這台的資料存成檔案</button>
+        <button class="btn btn-secondary" id="syncRecordAllRemote" onclick="resolveAllRecordConflicts('remote')">☁️ 全部用雲端的</button>
+        <button class="btn btn-secondary" id="syncRecordAllLocal" onclick="resolveAllRecordConflicts('local')">💻 全部用這台的</button>
+        <button class="btn btn-secondary" onclick="closeRecordConflictModal()">稍後再決定</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 小工具按下去之後的短暫提示。用浮出而不是 alert：不用再點一次關掉 -->
   <div class="doc-tool-hint" id="docToolHint" role="status" aria-live="polite"></div>
 

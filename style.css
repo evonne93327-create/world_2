@@ -2693,3 +2693,35 @@ button, input, select, textarea { color: inherit; }
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* 逐筆衝突：一筆一列，名稱在上、三個選擇在下（手機上擠不下一行） */
+.sync-record-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  max-height: 320px;
+  overflow-y: auto;
+  margin: var(--sp-8) 0;
+}
+.sync-record-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  padding: var(--sp-8) var(--sp-10);
+  background: var(--bg-sunken);
+  border-radius: var(--radius-sm);
+}
+.sync-record-name {
+  font-size: var(--fs-12);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.sync-record-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+}
+.sync-record-actions .btn {
+  flex: 1 1 auto;
+  font-size: var(--fs-12);
+}

@@ -114,37 +114,55 @@ test("對帳前要先把還在 debounce 裡的編輯存起來", function() {
 /* ==========================================================
    另外兩個對帳的時機
    ========================================================== */
-test("app 一直開著沒動的時候也要自己去對一次", function() {
+test("停止操作滿 3 分鐘就自己去對一次（下載）", function() {
   /* 放在桌上開著，中間在另一台改了東西——沒切到背景、沒換文檔，
-     visibilitychange 不會發，沒有任何事件會通知我們。只能自己定期掃。 */
+     visibilitychange 不會發，沒有任何事件會通知我們。使用者指定：停止操作
+     3 分鐘後自動同步一次。 */
   const recovery = syncJs.match(/function initSyncRecovery\(\)[\s\S]*?\n}/);
   assert.ok(recovery, "找不到 initSyncRecovery()");
 
-  const poll = recovery[0].match(/setInterval\(function\(\)[\s\S]*?SYNC_POLL_INTERVAL_MS\)/);
-  assert.ok(poll, "要有一個定期對帳的計時器");
-  assert.match(poll[0], /maybeReconcileNow\(\)/, "掃的時候要真的去對帳");
+  const poll = recovery[0].match(/setInterval\(function\(\)[\s\S]*?SYNC_IDLE_CHECK_MS\)/);
+  assert.ok(poll, "要有一個檢查閒置的計時器");
+  assert.match(poll[0], /shouldIdleSync\(Date\.now\(\) - lastActivityAt, lastActivityAt, idleSyncDoneFor, SYNC_IDLE_MS\)/,
+    "看的是「距離最後一次操作多久」，不是固定每幾分鐘");
+  assert.match(poll[0], /if \(maybeReconcileNow\(\)\) idleSyncDoneFor = lastActivityAt;/,
+    "真的對到了才記「這段閒置做過了」—— 沒對成（正在同步）要下一輪再試");
 
   /* 藏在背景時不掃：看不到的東西不需要更新，而且 iOS 會把背景分頁的計時器
      凍結，掃了也是白掃。回到前景時 visibilitychange 那條會補上。 */
   assert.match(poll[0], /visibilityState !== "visible"/,
     "背景時不要掃 —— 白花 API 額度");
+
+  const idle = syncJs.match(/const SYNC_IDLE_MS = ([^;]+);/);
+  assert.ok(idle, "要有具名常數");
+  assert.strictEqual(Function("return (" + idle[1] + ");")(), 3 * 60 * 1000, "使用者指定 3 分鐘");
 });
 
-test("定期對帳的間隔要明顯比重試上傳長", function() {
-  /* 重試上傳只有在本機真的有東西要推時才動作，成本是零；定期對帳每次都是
-     一發真的 API 請求，太頻繁會吃掉 Supabase 的免費額度與 Drive 的配額。 */
-  const poll = syncJs.match(/const SYNC_POLL_INTERVAL_MS = ([^;]+);/);
-  const retry = syncJs.match(/const SYNC_RETRY_INTERVAL_MS = ([^;]+);/);
-  assert.ok(poll && retry, "兩個間隔都要有具名常數");
+test("shouldIdleSync：同一段閒置只下載一次", function() {
+  const f = app.shouldIdleSync;
+  const T = 180000;
+  assert.strictEqual(f(T - 1, 100, -1, T), false, "還沒滿 3 分鐘");
+  assert.strictEqual(f(T, 100, -1, T), true, "滿了");
+  assert.strictEqual(f(T * 5, 100, 100, T), false,
+    "這段閒置已經做過了 —— 放著一整晚不可以每 3 分鐘打一發 API");
+  assert.strictEqual(f(T, 200, 100, T), true, "又動過、又停滿 3 分鐘 → 再一次");
+});
 
-  const evalMs = function(expr) { return Function("return (" + expr + ");")(); };
-  const pollMs = evalMs(poll[1]);
-  const retryMs = evalMs(retry[1]);
+test("對帳前先只問版本，一樣就不下載整包", function() {
+  /* 雲端是整包存成一列，下載就是整個資料庫。閒置、切回來的對帳大多數時候
+     雲端根本沒變，先問版本（幾十個位元組）就夠了。 */
+  const fn = syncJs.match(/async function reconcileWithRemote\(\)[\s\S]*?\n}/);
+  assert.ok(fn, "找不到 reconcileWithRemote()");
+  const peekAt = fn[0].indexOf("P().peek()");
+  const pullAt = fn[0].indexOf("pullFreshEnough()");
+  assert.ok(peekAt !== -1 && pullAt !== -1 && peekAt < pullAt, "先 peek 再決定要不要 pull");
+  assert.match(fn[0], /String\(head\.version\) === String\(known\.version\)/,
+    "跟上次同步記下的版本比（Drive 的版本是字串、Supabase 的是數字）");
 
-  assert.ok(pollMs > retryMs,
-    "定期對帳不該比重試上傳還頻繁 —— 一個免費、一個要花 API 額度");
-  assert.ok(pollMs >= 60 * 1000, "低於一分鐘太耗額度");
-  assert.ok(pollMs <= 15 * 60 * 1000, "超過十五分鐘就失去「自己會更新」的意義了");
+  const api = fs.readFileSync(path.join(ROOT, "js", "api.js"), "utf8");
+  assert.match(api, /select=version,updated_at"/, "Supabase 的 peek 不可以帶 data 欄位");
+  const gd = fs.readFileSync(path.join(ROOT, "js", "gdrive.js"), "utf8");
+  assert.match(gd, /peek: async function\(\)/, "Drive 也要有");
 });
 
 test("在 app 裡換地方看的時候也要對帳", function() {
@@ -192,9 +210,13 @@ test("每一條發現分岔的路都要先試合併", function() {
 
   const policy = syncJs.match(/function mergeOrAsk\(remote\)[\s\S]*?\n}/);
   assert.ok(policy, "找不到 mergeOrAsk()");
-  assert.match(policy[0], /mergeAppData\(loadSyncFingerprint\(\)/, "要拿指紋當祖先去合併");
-  assert.match(policy[0], /merged && !merged\.conflicts\.length/,
-    "只有「一項都不衝突」才可以自己套用；而且 merged 可能是 null，要先擋");
+  assert.match(policy[0], /mergeAppData\(loadSyncFingerprint\(\), appData, remote\.data, before\)/,
+    "要拿指紋當祖先去合併，並帶上還沒決定的衝突（不然推完一輪之後會被當成只有本機改）");
+  assert.match(policy[0], /if \(merged && mergePushRetries < MERGE_PUSH_MAX_RETRIES\)/,
+    "merged 可能是 null（沒有祖先），要先擋");
+  assert.match(policy[0], /saveRecordConflicts\(merged\.conflicts\)/,
+    "撞在一起的那幾筆要記下來等使用者選");
+  assert.match(policy[0], /openRecordConflictModal\(\)/, "有新的衝突要問");
 
   /* 掃過每一處直接開視窗的地方。允許的只有三種：
      - mergeOrAsk 自己（合併不成才問）
@@ -227,8 +249,8 @@ test("每一條發現分岔的路都要先試合併", function() {
 test("pushNow 撞到版本衝突時要走合併，不是直接跳視窗", function() {
   /* 兩台各改一篇時，這才是第一個會被觸發的地方（2.5 秒的推送 debounce
      遠早於任何一次對帳）。 */
-  const fn = syncJs.match(/async function pushNow\(silent\)[\s\S]*?\n}/);
-  assert.ok(fn, "找不到 pushNow()");
+  const fn = syncJs.match(/async function pushData\(data\)[\s\S]*?\n}/);
+  assert.ok(fn, "找不到 pushData()");
 
   const branch = fn[0].match(/if \(result\.conflict\)[\s\S]*?\n    }/);
   assert.ok(branch, "找不到 result.conflict 那一段");
@@ -248,8 +270,8 @@ test("合併後重推不可以無上限地互撞", function() {
   /* 歸零要在 pushNow 的成功路徑裡找，不能只看整份檔案有沒有這串字——
      宣告本身就是 `let mergePushRetries = 0;`，那樣寫的話把成功路徑裡那一行
      刪掉測試照樣綠。（這個陷阱在 caretPointer 那邊踩過一次了。） */
-  const fn = syncJs.match(/async function pushNow\(silent\)[\s\S]*?\n}/);
-  assert.ok(fn, "找不到 pushNow()");
+  const fn = syncJs.match(/async function pushData\(data\)[\s\S]*?\n}/);
+  assert.ok(fn, "找不到 pushData()");
   assert.match(fn[0], /mergePushRetries = 0;/,
     "推送成功要歸零 —— 不歸零的話用久了就再也不會合併了");
 });
@@ -264,7 +286,7 @@ test("沒有祖先時不可以硬合併", function() {
 
   const policy = syncJs.match(/function mergeOrAsk\(remote\)[\s\S]*?\n}/);
   assert.ok(policy, "找不到 mergeOrAsk()");
-  assert.match(policy[0], /merged && !merged\.conflicts\.length/,
+  assert.match(policy[0], /if \(merged && mergePushRetries/,
     "要先確認 merged 不是 null 才看 conflicts —— " +
     "少了這道，null 會在讀 .conflicts 時丟例外，同步整個停擺");
 });
@@ -277,13 +299,21 @@ test("每一個「本機與雲端一致」的時刻都要重記指紋", function
 
   [
     ["function adoptRemote\\(", "採用雲端之後"],
-    ["async function pushNow\\(", "推送成功之後"],
+    ["async function pushData\\(", "推送成功之後"],
     ["async function resolveConflictUseLocal\\(", "以本機覆蓋雲端之後"]
   ].forEach(function(pair) {
     const fn = syncJs.match(new RegExp(pair[0] + "[\\s\\S]*?\\n}"));
     assert.ok(fn, "找不到 " + pair[0]);
     assert.match(fn[0], /saveSyncFingerprint\(/, pair[1] + "要重記指紋");
   });
+
+  /* 推上去的是 data（有還沒決定的衝突時是 upload，不是 appData），指紋要記
+     推上去的那一份——那才是「雲端現在的樣子」。記成 appData 的話，衝突那幾筆
+     的祖先會變成這台的版本，一旦沒有衝突記號擋著，雲端那一版就會被當成
+     「只有雲端改」而蓋掉這台的。 */
+  const push = syncJs.match(/async function pushData\(data\)[\s\S]*?\n}/);
+  assert.ok(push, "找不到 pushData()");
+  assert.match(push[0], /saveSyncFingerprint\(data\);/, "指紋記推上去的那一份");
 });
 
 test("指紋只存雜湊，不存整包快照", function() {
@@ -300,7 +330,10 @@ test("指紋只存雜湊，不存整包快照", function() {
 test("合併完要推回去，不然另一台拿不到這台的那幾篇", function() {
   const fn = syncJs.match(/function applyMergedData\([\s\S]*?\n}/);
   assert.ok(fn, "找不到 applyMergedData()");
-  assert.match(fn[0], /pushNow\(/, "合併結果要推上去");
+  assert.match(fn[0], /pushData\(merged\.upload\)/,
+    "推的是 upload —— 推 appData 的話，還沒決定的那幾筆會把雲端的蓋掉");
+  assert.match(fn[0], /saveSyncFingerprint\(merged\.upload\)/,
+    "沒東西要推時，指紋記雲端現在的樣子（upload），不是這台的");
   assert.match(fn[0], /changedFromRemote/,
     "跟雲端一樣時就不要白推一次");
   assert.match(fn[0], /saveSyncState\(remote\.version, remote\.at\)/,

@@ -210,6 +210,17 @@ const syncData = {
     });
   },
 
+  /* 只問雲端現在是第幾版、什麼時候更新的，不帶資料。對帳前先問這個，
+     跟上次同步記下的一樣就不用把整包抓下來。 */
+  peek: async function() {
+    return withFreshSession(async function() {
+      const res = await supabaseFetch(
+        "/rest/v1/world_data?select=version,updated_at", { method: "GET" }, true);
+      const rows = await res.json();
+      return rows.length ? rows[0] : null;
+    });
+  },
+
   /* 寫入雲端。expectedVersion 是這台裝置上次同步到的版本：
      null 代表「我以為雲端還沒有資料」，其他值代表「我以為雲端還停在這一版」。
      實際版本對不上就回 {conflict:true}，交給上層去問使用者，
@@ -295,6 +306,11 @@ const supabaseProvider = {
   pull: async function() {
     const row = await syncData.pull();
     return row ? { data: row.data, version: row.version, at: row.updated_at } : null;
+  },
+
+  peek: async function() {
+    const row = await syncData.peek();
+    return row ? { version: row.version, at: row.updated_at } : null;
   },
 
   push: async function(data, expectedVersion) {

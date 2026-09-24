@@ -2,9 +2,15 @@
    雲端同步 — 流程控制 (sync.js)
 
    整包 appData 存成雲端的一列。這個做法跟現有架構完全吻合
-   （saveData() 本來就是唯一的存檔出口），代價是衝突只能以
-   「整包」為單位處理，沒辦法逐篇文件合併。
-   因此這裡的原則是：寧可停下來問使用者，也絕不默默覆蓋。
+   （saveData() 本來就是唯一的存檔出口）。衝突是逐筆判斷的
+   （一篇文檔、一個資料夾、白板上的一個物件…，見 js/sync-merge.js）：
+   沒撞到的自動同步，撞到的那幾筆暫停、列出來讓使用者選。
+   原則是：寧可停下來問使用者，也絕不默默覆蓋。
+
+   同步時間：每次上傳或下載成功，把雲端回傳的版本號與更新時間
+   （Supabase 的 updated_at）記在 localStorage，只留最新一筆（見
+   api.js 的 saveSyncState）。「雲端有沒有變」就是拿雲端現在的版本跟
+   這一筆比。
    ========================================================== */
 
 const SYNC_DIRTY_KEY = "world_sync_dirty_v1";
@@ -25,6 +31,35 @@ function isLocalDirty() {
 function setLocalDirty(dirty) {
   if (dirty) safeStorageSet(SYNC_DIRTY_KEY, "1");
   else safeStorageRemove(SYNC_DIRTY_KEY);
+}
+
+/* ---------- 逐筆衝突（還沒決定的那幾筆） ----------
+
+   存進 localStorage：重開 app 之後還是要記得那幾筆還沒決定，否則下一輪
+   合併會把它們當成「只有本機改」而把這台的版本推上去（見 sync-merge.js
+   的 CONFLICT_SENTINEL）。只存 { kind, id, title }，不存內容。 */
+const SYNC_RECORD_CONFLICTS_KEY = "wb_sync_record_conflicts";
+
+function loadRecordConflicts() {
+  try {
+    const v = JSON.parse(safeStorageGet(SYNC_RECORD_CONFLICTS_KEY));
+    return Array.isArray(v) ? v : [];
+  } catch (e) { return []; }
+}
+
+function saveRecordConflicts(list) {
+  if (list && list.length) {
+    safeStorageSet(SYNC_RECORD_CONFLICTS_KEY, JSON.stringify(list.map(function(c) {
+      return { kind: c.kind, id: c.id, title: c.title };
+    })));
+  } else {
+    safeStorageRemove(SYNC_RECORD_CONFLICTS_KEY);
+  }
+  if (typeof renderSyncIndicator === "function") renderSyncIndicator();
+}
+
+function hasRecordConflicts() {
+  return loadRecordConflicts().length > 0;
 }
 
 function setSyncStatus(status, detail) {
@@ -192,6 +227,7 @@ function adoptRemote(row) {
   saveSyncState(row.version, row.at);
   saveSyncFingerprint(appData);
   setLocalDirty(false);
+  saveRecordConflicts([]);   // 整包採用雲端之後，兩邊一致，沒有什麼好選的了
   lastPushedPayload = JSON.stringify(appData);
 
   // 直接寫回 localStorage，不要走 saveData()，否則會又標成髒的、又排一次推送
@@ -241,6 +277,18 @@ async function reconcileWithRemote() {
   lastReconcileAt = Date.now();
   setSyncStatus("syncing", "正在對帳…");
   try {
+    /* 先只問雲端現在是第幾版（幾十個位元組），跟上次同步記下的一樣就不用
+       把整包抓下來。閒置時、切回來時的對帳大多是這種情況。 */
+    const known = loadSyncState();
+    if (typeof P().peek === "function" && known.version !== null && known.version !== undefined) {
+      const head = await P().peek();
+      if (head && String(head.version) === String(known.version)) {
+        if (isLocalDirty()) await pushNow(true);
+        else setSyncStatus("idle", "已是最新");
+        return;
+      }
+    }
+
     const fresh = await pullFreshEnough();
     const remote = fresh.row;
     const state = loadSyncState();
@@ -284,13 +332,17 @@ async function reconcileWithRemote() {
        「沒有待上傳的修改」只代表沒東西要推，不代表本機的資料不值錢。
 
        改成：只有在確定不會毀掉東西的時候才安靜採用，其餘一律跳出來問。 */
-    if (localLooksUntouched()) {
+    /* 還有沒決定的衝突時不可以整包採用：那幾筆這台的版本還沒上去，
+       整包換成雲端的就沒了。一律走合併。 */
+    const undecided = hasRecordConflicts();
+
+    if (!undecided && localLooksUntouched()) {
       adoptRemote(remote);
       setSyncStatus("idle", "已從雲端更新");
       return;
     }
 
-    if (!isLocalDirty() && !remoteWouldLoseContent(remote)) {
+    if (!undecided && !isLocalDirty() && !remoteWouldLoseContent(remote)) {
       adoptRemote(remote);
       setSyncStatus("idle", "已從雲端更新");
       return;
@@ -303,7 +355,7 @@ async function reconcileWithRemote() {
   }
 }
 
-/* 本機與雲端分岔了：先試逐篇合併，真的撞在一起才問使用者。
+/* 本機與雲端分岔了：逐筆合併，撞在一起的那幾筆列出來問使用者。
 
    **每一條發現分岔的路都必須走這裡**，不可以自己直接開衝突視窗。
 
@@ -312,17 +364,30 @@ async function reconcileWithRemote() {
    B 帶著 N 去推就衝突了，而那裡直接跳視窗，合併根本輪不到。使用者回報
    「兩台各改一篇，還是跳出視窗叫我選一邊」就是這個。
 
+   有撞在一起的也照樣套用：沒撞到的照常同步，撞到的那幾筆兩邊都不動
+   （這台顯示這台的、推上去的是雲端原本的，見 mergeAppData 的 data／upload），
+   記進 loadRecordConflicts()，等使用者選。有新的衝突才跳視窗——同一批
+   已經問過、按了「稍後再決定」的，不要每次同步都再跳一次。
+
    沒有指紋（第一次同步、剛換後端）時 mergeAppData() 回 null，退回整包二選一
    ——沒有祖先就分不出「誰改的」，硬合併等於瞎猜。
 
-   回傳有沒有自己解決掉。 */
+   回傳有沒有全部自己解決掉。 */
 function mergeOrAsk(remote) {
+  const before = loadRecordConflicts();
   const merged = (typeof mergeAppData === "function" && remote && remote.data)
-    ? mergeAppData(loadSyncFingerprint(), appData, remote.data) : null;
+    ? mergeAppData(loadSyncFingerprint(), appData, remote.data, before) : null;
 
-  if (merged && !merged.conflicts.length && mergePushRetries < MERGE_PUSH_MAX_RETRIES) {
+  if (merged && mergePushRetries < MERGE_PUSH_MAX_RETRIES) {
+    saveRecordConflicts(merged.conflicts);
     applyMergedData(merged, remote);
-    return true;
+    if (!merged.conflicts.length) return true;
+    const seen = {};
+    before.forEach(function(c) { seen[c.kind + ":" + c.id] = true; });
+    if (merged.conflicts.some(function(c) { return !seen[c.kind + ":" + c.id]; })) {
+      openRecordConflictModal();
+    }
+    return false;
   }
 
   openSyncConflictModal(remote, false, merged ? merged.conflicts : null);
@@ -343,9 +408,13 @@ const MERGE_PUSH_MAX_RETRIES = 3;
    髒的並推回去——不推的話，另一台永遠拿不到這台的那幾篇。
 
    版本要記成 remote 的：我們是站在雲端那一版上面合併出來的，推送時的條件式
-   更新才對得上。指紋則等推送成功之後再記（pushNow 裡做），因為在推上去之前
-   「本機與雲端一致」還不成立。 */
+   更新才對得上。指紋則等推送成功之後再記（pushData 裡做），因為在推上去之前
+   「本機與雲端一致」還不成立。
+
+   推上去的是 merged.upload 不是 appData：兩者只差在還沒決定的衝突，那幾筆
+   雲端要保留雲端原本的版本。指紋也跟著記 upload（＝雲端現在的樣子）。 */
 function applyMergedData(merged, remote) {
+  const activeBefore = activeDocSnapshot();
   appData = merged.data;
   saveSyncState(remote.version, remote.at);
   safeStorageSet("novel_multi_world_data_v5", JSON.stringify(appData));
@@ -359,15 +428,20 @@ function applyMergedData(merged, remote) {
     activeWorldId = appData.worldviews[0].id;
   }
 
-  renderWorldRail();
-  renderSidebarTree();
-  updateWorldBadge();
-  if (activeDocId) loadDocToEditor(activeDocId);
-  if (activeView === 'canvas') renderCanvas();
+  /* 合併結果跟這台原本的一樣（只是把這台的東西推上去）就不要重畫。
+     有還沒決定的衝突時，每一次上傳都會走到這裡——重新載入編輯器會把正在
+     打的字、游標位置打斷。正在看的那篇沒變也不要重新載入它。 */
+  if (merged.changedFromLocal) {
+    renderWorldRail();
+    renderSidebarTree();
+    updateWorldBadge();
+    if (activeDocId && activeDocSnapshot() !== activeBefore) loadDocToEditor(activeDocId);
+    if (activeView === 'canvas') renderCanvas();
+  }
 
   if (!merged.changedFromRemote) {
-    // 合併結果跟雲端一樣（只有雲端改過），沒什麼好推的
-    saveSyncFingerprint(appData);
+    // 要推的跟雲端一樣（只有雲端改過，或本機的修改都在還沒決定的那幾筆裡）
+    saveSyncFingerprint(merged.upload);
     setLocalDirty(false);
     lastPushedPayload = JSON.stringify(appData);
     setSyncStatus("idle", "已從雲端更新");
@@ -376,7 +450,12 @@ function applyMergedData(merged, remote) {
 
   setLocalDirty(true);
   setSyncStatus("syncing", "已合併，上傳中…");
-  pushNow(true);
+  pushData(merged.upload);
+}
+
+function activeDocSnapshot() {
+  const d = activeDocId && appData.docs ? appData.docs.find(x => x.id === activeDocId) : null;
+  return (activeDocId || "") + ":" + (d ? JSON.stringify(d) : "");
 }
 
 /* ---------- 推送 ---------- */
@@ -413,10 +492,34 @@ async function pushNow(silent) {
     return;
   }
 
+  /* 有還沒決定的衝突：不能直接把 appData 推上去（那幾筆會蓋掉雲端的）。
+     先把雲端抓下來走合併，推的是合併出來的 upload。 */
+  if (hasRecordConflicts()) {
+    setSyncStatus("syncing", "上傳中…");
+    try {
+      /* 跟對帳一樣要擋「讀到比上次同步還舊的」：拿舊的去合併，版本會被記回
+         舊的那一號，接著推上去就把雲端倒退了。 */
+      const fresh = await pullFreshEnough();
+      const remote = fresh.row;
+      if (remote && fresh.stale) { openSyncConflictModal(remote, true); return; }
+      if (remote) { mergeOrAsk(remote); return; }
+      saveRecordConflicts([]);   // 雲端整個沒資料了，沒有東西會被蓋掉
+    } catch (e) {
+      setSyncStatus("error", e.message || "上傳失敗");
+      return;
+    }
+  }
+
+  await pushData(appData);
+}
+
+/* 真的推一份上去。data 通常就是 appData；有還沒決定的衝突時是合併出來的
+   upload（那幾筆保留雲端的版本）。 */
+async function pushData(data) {
   setSyncStatus("syncing", "上傳中…");
   try {
     const state = loadSyncState();
-    const result = await P().push(appData, state.version);
+    const result = await P().push(data, state.version);
 
     if (result.conflict) {
       /* 雲端被別台裝置改過。先把對方那份抓回來試合併——這是兩台各改一篇時
@@ -429,10 +532,10 @@ async function pushNow(silent) {
 
     mergePushRetries = 0;
     saveSyncState(result.version, result.at);
-    saveSyncFingerprint(appData);
+    saveSyncFingerprint(data);
     setLocalDirty(false);
-    lastPushedPayload = payload;
-    setSyncStatus("idle", silent ? "已同步" : "已同步");
+    lastPushedPayload = JSON.stringify(appData);
+    setSyncStatus("idle", "已同步");
   } catch (e) {
     // 推送失敗時 dirty 旗標保持著，下次還會再試
     setSyncStatus("error", e.message || "上傳失敗");
@@ -466,9 +569,18 @@ function flushPendingPush() {
    條件是「本機真的有還沒推上去的東西」，沒有的話什麼都不做。 */
 const SYNC_RETRY_INTERVAL_MS = 60 * 1000;
 
-/* 定期對帳的間隔。比重試上傳長很多——重試只有在本機真的有東西要推時才動作，
-   成本是零；這裡每次都是一發真的 API 請求。 */
-const SYNC_POLL_INTERVAL_MS = 3 * 60 * 1000;
+/* 停止操作滿這麼久，就自動下載（對帳）一次。使用者指定 3 分鐘。
+
+   「一次」：同一段閒置只做一次，之後要等使用者又動了、再停滿 3 分鐘才會
+   再做。放著不動一整晚不會每 3 分鐘打一發 API。 */
+const SYNC_IDLE_MS = 3 * 60 * 1000;
+const SYNC_IDLE_CHECK_MS = 15 * 1000;
+let idleSyncDoneFor = -1;
+
+function shouldIdleSync(idleMs, activityAt, doneFor, threshold) {
+  if (idleMs < threshold) return false;
+  return activityAt !== doneFor;
+}
 
 function retryPushIfNeeded() {
   if (!syncIsActive()) return;
@@ -544,18 +656,18 @@ function initSyncRecovery() {
   /* App 一直開著沒動的情況：放在桌上開著，中間在另一台改了東西。
 
      沒有任何事件會通知我們——沒切到背景、沒換文檔，visibilitychange 不會發。
-     只能自己定期掃。
+     所以停止操作滿 SYNC_IDLE_MS 就自己去對一次（lastActivityAt 是閒置備份
+     提醒那邊在記的，見 markUserActivity）。
 
-     間隔比「重試上傳」長很多：重試只有在本機真的有東西要推時才會動作，
-     成本是零；這裡每次都是一發真的 API 請求，太頻繁會吃掉 Supabase 的免費
-     額度與 Google Drive 的配額。
+     沒對成（正在同步、剛對過）就下一輪再試，對成了這段閒置就不再做。
 
      藏在背景時不掃：看不到的東西不需要更新，而且 iOS 本來就會把背景分頁的
      計時器凍結，掃了也是白掃。回到前景時 visibilitychange 那條會補上。 */
   setInterval(function() {
     if (document.visibilityState !== "visible") return;
-    maybeReconcileNow();
-  }, SYNC_POLL_INTERVAL_MS);
+    if (!shouldIdleSync(Date.now() - lastActivityAt, lastActivityAt, idleSyncDoneFor, SYNC_IDLE_MS)) return;
+    if (maybeReconcileNow()) idleSyncDoneFor = lastActivityAt;
+  }, SYNC_IDLE_CHECK_MS);
 }
 
 /* 在 app 裡換了地方看——換文檔、切白板、打開目錄欄。
@@ -624,7 +736,7 @@ function conflictListHtml(conflicts) {
 
   const shown = conflicts.slice(0, CONFLICT_LIST_MAX);
   const rest = conflicts.length - shown.length;
-  const kindLabel = { doc: "📄", folder: "📁", world: "🌐", trashDoc: "🗑️", trashFolder: "🗑️", trashCanvas: "🗑️", trashWorld: "🗑️" };
+  const kindLabel = RECORD_KIND_ICON;
 
   return '<div style="margin:8px 0; padding:8px 10px; background:var(--bg-sunken);' +
          ' border-radius:8px; font-size:12px; line-height:1.8;">' +
@@ -672,6 +784,7 @@ async function resolveConflictUseLocal() {
     saveSyncState(result.version, result.at);
     saveSyncFingerprint(appData);
     setLocalDirty(false);
+    saveRecordConflicts([]);
     lastPushedPayload = JSON.stringify(appData);
     pendingConflictRemote = null;
     pendingConflictStale = false;
@@ -679,6 +792,130 @@ async function resolveConflictUseLocal() {
   } catch (e) {
     setSyncStatus("error", e.message || "覆蓋失敗");
   }
+}
+
+/* ==========================================================
+   逐筆衝突的視窗
+
+   每一筆一列，三個選項：用這台的／用雲端的／兩份都留（只有兩邊都還在的
+   文檔才有）。選了那一筆才重新跟著同步；沒選的那幾筆繼續暫停，其他的照常。
+
+   標題是使用者自己打的字，一律 textContent（NOTES 硬規則 5）。
+   ========================================================== */
+
+const RECORD_KIND_ICON = {
+  doc: "📄", folder: "📁", world: "🌐", canvasNode: "🧩", canvasEdge: "🔗", canvasNote: "🗒️",
+  trashDoc: "🗑️", trashFolder: "🗑️", trashCanvas: "🗑️", trashWorld: "🗑️"
+};
+
+let recordResolving = false;
+
+function openRecordConflictModal() {
+  renderRecordConflictModal();
+  const modal = document.getElementById("syncRecordConflictModal");
+  if (modal && hasRecordConflicts()) modal.classList.add("active");
+}
+
+function closeRecordConflictModal() {
+  const modal = document.getElementById("syncRecordConflictModal");
+  if (modal) modal.classList.remove("active");
+}
+
+function renderRecordConflictModal() {
+  const list = document.getElementById("syncRecordConflictList");
+  if (!list) return;
+  const conflicts = loadRecordConflicts();
+  if (!conflicts.length) { closeRecordConflictModal(); return; }
+
+  list.innerHTML = "";
+  conflicts.forEach(function(c) {
+    const row = document.createElement("div");
+    row.className = "sync-record-row";
+
+    const name = document.createElement("div");
+    name.className = "sync-record-name";
+    name.textContent = (RECORD_KIND_ICON[c.kind] || "•") + " " + String(c.title || c.id);
+    row.appendChild(name);
+
+    const actions = document.createElement("div");
+    actions.className = "sync-record-actions";
+    function addBtn(text, choice) {
+      const b = document.createElement("button");
+      b.className = "btn btn-secondary";
+      b.textContent = text;
+      b.disabled = recordResolving;
+      b.onclick = function() { resolveRecordConflicts([c], choice); };
+      actions.appendChild(b);
+    }
+    addBtn("💻 用這台的", "local");
+    addBtn("☁️ 用雲端的", "remote");
+    if (c.kind === "doc") addBtn("📑 兩份都留", "both");
+    row.appendChild(actions);
+    list.appendChild(row);
+  });
+
+  ["syncRecordAllLocal", "syncRecordAllRemote"].forEach(function(id) {
+    const b = document.getElementById(id);
+    if (b) b.disabled = recordResolving;
+  });
+}
+
+/* 套用使用者的選擇。choice 是 "local" | "remote" | "both"。
+
+   先抓一次雲端最新的：「用雲端的」要拿的是雲端現在的版本，不是剛才看到的；
+   「用這台的」要把祖先記成雲端現在的樣子，下一輪合併才會把這台的推上去。
+   雲端在這之間又被改了，那一筆會再變成衝突——那也是對的。
+
+   同步時間在這之後才更新（mergeOrAsk → 推送成功時）。 */
+async function resolveRecordConflicts(targets, choice) {
+  if (recordResolving || !targets.length || !syncIsActive()) return;
+  recordResolving = true;
+  renderRecordConflictModal();
+  setSyncStatus("syncing", "套用你的選擇…");
+  try {
+    if (typeof flushPendingContentPersist === "function") flushPendingContentPersist();
+    const fresh = await pullFreshEnough();
+    if (!fresh.row || fresh.stale) {
+      setSyncStatus("error", "暫時讀不到雲端最新的版本，請稍後再選一次");
+      return;
+    }
+    const remote = fresh.row;
+
+    let data = appData;
+    let fp = loadSyncFingerprint() || {};
+    targets.forEach(function(c) {
+      /* 兩份都留：兩邊都還在才做得出副本。只剩一邊（另一邊刪了）的話，
+         「兩份都留」能留的就是還在的那一份——這台有就用這台的，否則用雲端的。 */
+      let pick = choice;
+      if (choice === "both" && !(getRecord(data, c.kind, c.id) && getRecord(remote.data, c.kind, c.id))) {
+        pick = getRecord(data, c.kind, c.id) ? "local" : "remote";
+      }
+      const r = applyRecordChoice(data, fp, remote.data, c, pick,
+        pick === "both" ? newItemId("doc_") : null);
+      data = r.data;
+      fp = r.fp;
+    });
+
+    const done = {};
+    targets.forEach(function(c) { done[c.kind + ":" + c.id] = true; });
+    saveRecordConflicts(loadRecordConflicts().filter(function(c) { return !done[c.kind + ":" + c.id]; }));
+
+    appData = data;
+    safeStorageSet(SYNC_FP_KEY, JSON.stringify(fp));
+    safeStorageSet("novel_multi_world_data_v5", JSON.stringify(appData));
+    setLocalDirty(true);
+    mergePushRetries = 0;
+    mergeOrAsk(remote);
+  } catch (e) {
+    setSyncStatus("error", e.message || "套用失敗");
+  } finally {
+    recordResolving = false;
+    renderRecordConflictModal();
+  }
+}
+
+function resolveAllRecordConflicts(choice) {
+  resolveRecordConflicts(loadRecordConflicts(), choice);
 }
 
 /* 在做出取捨前，先把本機這份存成檔案，後悔了還有得救 */
@@ -733,8 +970,12 @@ function renderSyncModal() {
     syncStatusLine() +
     '<div style="font-size:13px; margin-bottom:12px;">目前帳號：<b>' + escapeHtml(account) + '</b></div>' +
     '<p style="font-size:12px; color:var(--text-secondary); line-height:1.7;">' +
-    '修改後會自動上傳。整包資料一起同步，所以<b>兩台裝置同時編輯時只能擇一保留</b>，' +
-    '遇到這種情況會跳出來問你，不會默默覆蓋。</p>' +
+    '修改後會自動上傳；停止操作 3 分鐘後會自動下載一次。兩台裝置改到<b>同一筆</b>' +
+    '（同一篇文檔、白板上同一個物件…）時會列出來問你，其他的照常同步，不會默默覆蓋。</p>' +
+    (hasRecordConflicts()
+      ? '<button class="btn btn-danger" style="margin-bottom:8px;" onclick="closeSyncModal(); openRecordConflictModal()">❗ 有 ' +
+        loadRecordConflicts().length + ' 項衝突等你決定</button>'
+      : '') +
     '<div id="syncModalMsg" style="font-size:12px; margin-top:8px;"></div>' +
     '<div style="display:flex; gap:8px; margin-top:8px;">' +
     '<button class="btn btn-primary" onclick="pushNow(false)">立即上傳</button>' +
@@ -771,6 +1012,7 @@ function switchSyncProvider(id) {
   }
   saveProviderId(id);
   saveSyncState(null, null); // 新後端的版本紀錄跟舊的無關
+  saveRecordConflicts([]);   // 衝突也是跟舊後端比出來的
   setSyncStatus("off");
   renderSyncModal();
   initSync();
@@ -791,7 +1033,7 @@ function submitSyncSignOut() {
 
 /* 手動從雲端取回。會覆蓋本機未上傳的修改，所以先確認。 */
 async function manualPull() {
-  if (isLocalDirty() &&
+  if ((isLocalDirty() || hasRecordConflicts()) &&
       !confirm("這台裝置還有尚未上傳的修改，從雲端取回會覆蓋掉它們。確定要繼續嗎？")) {
     return;
   }
@@ -826,7 +1068,8 @@ function renderSyncIndicator() {
      就會落到這裡）。使用者記得自己登入過，所以不會主動去看設定——不點個
      紅點出來，他只會發現「東西沒上去」而不知道是為什麼。 */
   const needsSignIn = p.isConfigured() && !account;
-  const needsAttention = (syncStatus === "error" || syncStatus === "conflict" || needsSignIn);
+  const undecided = syncIsActive() ? loadRecordConflicts().length : 0;
+  const needsAttention = (syncStatus === "error" || syncStatus === "conflict" || needsSignIn || undecided > 0);
 
   const icon = document.getElementById("syncRowIcon");
   if (icon) icon.textContent = marks[syncStatus] || "☁️";
@@ -835,7 +1078,8 @@ function renderSyncIndicator() {
   if (status) {
     status.textContent = p.label +
       (account ? "（" + account + "）" : needsSignIn ? "（授權已過期，需要重新登入）" : "（未登入）") +
-      (syncStatusDetail ? " — " + syncStatusDetail : "");
+      (syncStatusDetail ? " — " + syncStatusDetail : "") +
+      (undecided ? "（" + undecided + " 項衝突待決定）" : "");
     status.classList.toggle("is-alert", needsAttention);
   }
 
