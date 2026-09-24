@@ -158,8 +158,13 @@ test("輸入彈窗：打開就全選、組字中的 Enter 不送出、不被自�
   const code = modal.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
 
   assert.match(code, /if \(inputs\[0\]\) focusAndSelect\(inputs\[0\]\);/, "打開時第一欄要全選");
-  assert.match(code, /function focusAndSelect[\s\S]*?input\.select\(\);[\s\S]*?setSelectionRange\(0, input\.value\.length\)/,
-    "select() 在 iOS 不一定生效，要用 setSelectionRange 補");
+  /* 兩次都要在：當下一次（緊接著 select()），下一格再一次（iOS 升鍵盤時會
+     重設選取）。只比「後面某處有 setSelectionRange」的話，拿掉當下那一次
+     也還是綠的——下一格那一次會被比到（破壞測試那一輪就是這樣漏掉的）。 */
+  assert.match(code, /input\.select\(\);\s*try \{ input\.setSelectionRange\(0, input\.value\.length\); \} catch \(e\) \{\}\s*requestAnimationFrame/,
+    "select() 在 iOS 不一定生效，緊接著要用 setSelectionRange 補一次");
+  assert.match(code, /requestAnimationFrame\(function\(\) \{[\s\S]*?input\.value !== original\) return;[\s\S]*?setSelectionRange/,
+    "下一格再補一次，而且只在使用者還沒打字時");
 
   /* 用注音選字時按的 Enter 是「確定這個字」。 */
   assert.match(code, /if \(e\.isComposing \|\| e\.keyCode === 229\) return;/,
