@@ -150,6 +150,7 @@
                      符號的字身寬度不一樣，每一列的文字就會各自歪一點點。 -->
                 <div class="docactions-panel" id="docActionsPanel">
                   <button class="docactions-item" onclick="closeDocActionsPanel(); addCurrentDocToCanvas();"><span class="docactions-icon">📌</span><span>投射白板</span></button>
+                  <button class="docactions-item" onclick="closeDocActionsPanel(); openBatchProjectModal();"><span class="docactions-icon">🗂️</span><span>批量投射白板</span></button>
                   <button class="docactions-item" onclick="toggleParagraphIndent();"><span class="docactions-icon">➡️</span><span id="indentLabel">段首空兩格</span></button>
                   <label class="docactions-item" title="插入圖片">
                     <span class="docactions-icon">🖼️</span><span>放圖片</span>
@@ -212,6 +213,9 @@
 
         <!-- 右下角浮動按鈕 -->
         <div class="canvas-floating-actions">
+          <!-- 批量投射：人在白板上時最常想做的就是「把這些文檔也放上來」，
+               所以這裡也放一個入口，不必先切回文檔去找「⋯」選單。 -->
+          <button class="canvas-floating-btn" onclick="openBatchProjectModal()" title="批量投射文檔到白板">📌</button>
           <button class="canvas-floating-btn" onclick="resetCanvasView()" title="重置視圖">🎯</button>
           <button class="canvas-floating-btn" onclick="renderCanvas()" title="重整白板">🔄</button>
         </div>
@@ -294,6 +298,29 @@
       <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">
         <button class="btn btn-secondary" onclick="closeIconPickerModal()">取消</button>
         <button class="btn btn-primary" onclick="applyCustomIcon()">確定套用</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈窗：批量投射白板
+
+       只列目前這個世界觀的文檔（白板一個世界觀一張）。依資料夾排，資料夾
+       那一列的勾勾一次切換底下全部。已經在白板上的勾著但不能動。 -->
+  <div class="modal-overlay" id="batchProjectModal">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title">🗂️ 批量投射白板</div>
+        <button class="icon-sm-btn" title="取消" onclick="closeBatchProjectModal()">✕</button>
+      </div>
+      <p style="font-size:12px; color:var(--text-secondary); margin:0;">勾選要放上白板的文檔（勾資料夾＝底下全部）：</p>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="toggleBatchProjectAll(true)">全選</button>
+        <button class="btn btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="toggleBatchProjectAll(false)">取消全選</button>
+      </div>
+      <div class="batch-project-list" id="batchProjectList"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn btn-secondary" onclick="closeBatchProjectModal()">取消</button>
+        <button class="btn btn-primary" id="batchProjectConfirmBtn" onclick="confirmBatchProject()" disabled>📌 投射</button>
       </div>
     </div>
   </div>

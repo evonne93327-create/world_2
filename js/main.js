@@ -116,6 +116,7 @@ function toggleSidebarMenu() {
  }
  } else {
  sidebar.classList.toggle("collapsed");
+ if (sidebar.classList.contains("collapsed")) afterSidebarClosed();
  }
  scheduleAutoGrowAfterLayoutShift();
  scheduleCanvasViewBoxAfterLayoutShift();
@@ -144,7 +145,14 @@ function openSidebarMenu() {
 function closeSidebarMobile() {
  document.getElementById("appSidebar").classList.remove("drawer-open");
  document.getElementById("sidebarOverlay").classList.remove("active");
+ afterSidebarClosed();
  scheduleCanvasViewBoxAfterLayoutShift();
+}
+
+/* 目錄收起來之後要做的事。收起來的路有三條（手機抽屜、桌機收合、
+   左緣滑動收回），全部都會經過這裡；以後要加「關目錄時順便…」也加在這。 */
+function afterSidebarClosed() {
+ if (typeof exitBatchDeleteMode === "function") exitBatchDeleteMode();
 }
 
 /* 不管哪一種版面，目錄欄現在是開著的嗎。
@@ -167,6 +175,7 @@ function closeSidebarMenu() {
  if (isMobileLayout()) { closeSidebarMobile(); return; }
  const sidebar = document.getElementById("appSidebar");
  if (sidebar) sidebar.classList.add("collapsed");
+ afterSidebarClosed();
  scheduleAutoGrowAfterLayoutShift();
  scheduleCanvasViewBoxAfterLayoutShift();
 }

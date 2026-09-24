@@ -1292,6 +1292,40 @@ main.content-workspace {
 }
 .modal-overlay.active { display: flex; }
 
+/* ---------- 批量投射白板 ---------- */
+
+.batch-project-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--sp-4) 0;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.batch-project-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--sp-6) var(--sp-8);
+  font-size: var(--fs-12);
+  cursor: pointer;
+  /* 手機上點一整列都能勾，不必瞄準那個小方框 */
+  min-height: 32px;
+}
+.batch-project-row:hover { background: var(--bg-sunken); }
+.batch-project-row.is-folder { font-weight: 700; }
+.batch-project-row.is-on-board { color: var(--text-muted); cursor: default; }
+/* min-width: 0 才讓長標題的 ellipsis 生效（flex 子項的預設最小寬度是內容寬） */
+.batch-project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-project-tag {
+  flex-shrink: 0;
+  font-size: var(--fs-10);
+  padding: 1px var(--sp-6);
+  border-radius: var(--radius-4);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+}
+.batch-project-empty { padding: var(--sp-16); text-align: center; color: var(--text-muted); font-size: var(--fs-12); }
+
 /* ---------- 世界觀清單 ---------- */
 
 .world-list-body {

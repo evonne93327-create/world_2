@@ -122,6 +122,239 @@ function addCurrentDocToCanvas() {
   focusCanvasNode(currentDoc.id);
 }
 
+/* ---------- 批量投射 ----------
+
+   一篇一篇投射的話，二十篇角色就要開二十次文檔、按二十次「投射白板」。
+   這裡一次勾選、一次放上去。
+
+   只列「目前這個世界觀」的文檔：白板是一個世界觀一張，列別的世界觀的
+   文檔只會讓人以為可以把它們放到這張白板上。 */
+
+/* 新節點要放在哪裡。純函式，不碰 DOM。
+
+   放在既有節點的**下方**、排成網格：
+   - 不會疊在任何既有節點上（原本單篇投射是照數量斜斜地錯開，一次放十幾篇
+     的話會疊成一坨，而且會壓在使用者已經排好的節點上）
+   - 欄數取接近正方形（上限 4 欄）。3 篇排成一橫排太長、20 篇排成一直排
+     太高，都要捲很久才看得完
+
+   既有節點的高度這裡不知道（要量 DOM），用一個保守的估計值往下讓。
+   估大了只是多空一點，估小了才會疊到。 */
+const BATCH_GAP_X = 40;
+const BATCH_ROW_H = 150;
+const BATCH_MAX_COLS = 4;
+const BATCH_EST_NODE_H = 120;
+
+function batchNodePositions(existingNodes, count) {
+  if (!count || count < 1) return [];
+  const cols = Math.min(BATCH_MAX_COLS, Math.max(1, Math.ceil(Math.sqrt(count))));
+
+  let originX = 40, originY = 60;
+  const nodes = existingNodes || [];
+  if (nodes.length) {
+    let minX = Infinity, maxBottom = -Infinity;
+    nodes.forEach(function(n) {
+      if (typeof n.x === "number" && n.x < minX) minX = n.x;
+      if (typeof n.y === "number" && n.y + BATCH_EST_NODE_H > maxBottom) maxBottom = n.y + BATCH_EST_NODE_H;
+    });
+    if (isFinite(minX)) originX = minX;
+    if (isFinite(maxBottom)) originY = maxBottom + BATCH_GAP_X;
+  }
+
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    out.push({
+      x: originX + (i % cols) * (CANVAS_NODE_W + BATCH_GAP_X),
+      y: originY + Math.floor(i / cols) * BATCH_ROW_H
+    });
+  }
+  return out;
+}
+
+/* 真的放上去。回傳實際新增的文檔 id（已經在白板上的、不屬於這個世界觀
+   的、重複的都會跳過）——呼叫端要拿它來決定畫面要對準哪裡。 */
+function projectDocsToCanvas(docIds) {
+  const canvas = getCurrentWorldCanvas();
+  const onBoard = new Set(canvas.nodes.map(function(n) { return n.docId; }));
+  const ids = (docIds || []).filter(function(id, i, arr) {
+    return !onBoard.has(id) && arr.indexOf(id) === i &&
+      appData.docs.some(function(d) { return d.id === id && d.worldId === activeWorldId; });
+  });
+  if (!ids.length) return [];
+
+  const spots = batchNodePositions(canvas.nodes, ids.length);
+  ids.forEach(function(id, i) {
+    canvas.nodes.push({ id: "node_" + id, docId: id, x: spots[i].x, y: spots[i].y });
+  });
+  saveData();
+  return ids;
+}
+
+function openBatchProjectModal() {
+  renderBatchProjectList();
+  document.getElementById("batchProjectModal").classList.add("active");
+}
+
+function closeBatchProjectModal() {
+  document.getElementById("batchProjectModal").classList.remove("active");
+}
+
+/* 依資料夾的樹狀結構列出來，資料夾那一列的勾勾一次切換底下所有文檔
+   （含更深的子資料夾）。
+
+   已經在白板上的文檔照樣列出來、勾著但不能動，並標「已在白板上」——
+   直接藏起來的話，使用者會以為那篇不見了，或是以為沒列到是漏掉。
+
+   一律 createElement + textContent（硬規則 5；批量匯出那邊以前就是拼 HTML
+   被做出一個可利用的洞，見 openBatchExportModal 的註解）。 */
+function renderBatchProjectList() {
+  const box = document.getElementById("batchProjectList");
+  if (!box) return;
+  box.innerHTML = "";
+
+  const onBoard = new Set(getCurrentWorldCanvas().nodes.map(function(n) { return n.docId; }));
+  const worldDocs = appData.docs.filter(function(d) { return d.worldId === activeWorldId; });
+  const worldFolders = appData.folders.filter(function(f) { return f.worldId === activeWorldId; });
+  const folderIds = new Set(worldFolders.map(function(f) { return f.id; }));
+
+  if (!worldDocs.length) {
+    const empty = document.createElement("div");
+    empty.className = "batch-project-empty";
+    empty.textContent = "這個世界觀還沒有文檔。";
+    box.appendChild(empty);
+    updateBatchProjectCount();
+    return;
+  }
+
+  function docRow(d, depth) {
+    const row = document.createElement("label");
+    row.className = "batch-project-row";
+    row.style.paddingLeft = (8 + depth * 18) + "px";
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "batch-project-doc";
+    cb.dataset.id = d.id;
+    const already = onBoard.has(d.id);
+    cb.checked = already;
+    cb.disabled = already;
+    cb.onchange = updateBatchProjectCount;
+
+    const name = document.createElement("span");
+    name.className = "batch-project-name";
+    name.textContent = (d.icon || "📄") + " " + (d.title || "無標題文檔");
+
+    row.appendChild(cb);
+    row.appendChild(name);
+    if (already) {
+      row.classList.add("is-on-board");
+      const tag = document.createElement("span");
+      tag.className = "batch-project-tag";
+      tag.textContent = "已在白板上";
+      row.appendChild(tag);
+    }
+    return row;
+  }
+
+  /* seen 防資料損毀時 parentId 繞成圈（跟 folderSubtreeHasMatch 同一招）。 */
+  const seen = {};
+  function folderGroup(folder, depth) {
+    if (seen[folder.id]) return null;
+    seen[folder.id] = true;
+
+    const group = document.createElement("div");
+    group.className = "batch-project-group";
+
+    const head = document.createElement("label");
+    head.className = "batch-project-row is-folder";
+    head.style.paddingLeft = (8 + depth * 18) + "px";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "batch-project-folder";
+    const name = document.createElement("span");
+    name.className = "batch-project-name";
+    name.textContent = (folder.icon || "📁") + " " + folder.name;
+    head.appendChild(cb);
+    head.appendChild(name);
+    group.appendChild(head);
+
+    worldFolders.filter(function(f) { return f.parentId === folder.id; })
+      .forEach(function(sub) {
+        const g = folderGroup(sub, depth + 1);
+        if (g) group.appendChild(g);
+      });
+    worldDocs.filter(function(d) { return d.folderId === folder.id; })
+      .forEach(function(d) { group.appendChild(docRow(d, depth + 1)); });
+
+    cb.onchange = function() {
+      group.querySelectorAll(".batch-project-doc:not(:disabled)")
+        .forEach(function(x) { x.checked = cb.checked; });
+      updateBatchProjectCount();
+    };
+    return group;
+  }
+
+  /* 最上層＝沒有上層、或上層不在這個世界觀裡的資料夾。後者是資料不一致
+     （上層被刪掉、或被搬到別的世界觀），不當成最上層的話那一整支就永遠
+     列不出來。 */
+  worldFolders
+    .filter(function(f) { return !f.parentId || !folderIds.has(f.parentId); })
+    .forEach(function(f) {
+      const g = folderGroup(f, 0);
+      if (g) box.appendChild(g);
+    });
+
+  /* 根目錄的文檔，以及「資料夾不見了」的文檔。後者在目錄樹裡是畫不出來的
+     （那邊只從資料夾往下找），這裡至少讓它們被看見、被放上白板。 */
+  worldDocs
+    .filter(function(d) { return !d.folderId || !seen[d.folderId]; })
+    .forEach(function(d) { box.appendChild(docRow(d, 0)); });
+
+  updateBatchProjectCount();
+}
+
+/* 按鈕上的數字，以及每個資料夾勾勾的三種狀態（全勾／部分／沒勾）。
+   「部分」用 indeterminate 畫那條橫線，不然勾了一半的資料夾看起來跟
+   沒勾一樣，使用者會以為點一下是「全勾」，結果是「全取消」。 */
+function updateBatchProjectCount() {
+  const box = document.getElementById("batchProjectList");
+  const btn = document.getElementById("batchProjectConfirmBtn");
+  if (!box) return;
+
+  const n = box.querySelectorAll(".batch-project-doc:checked:not(:disabled)").length;
+  if (btn) {
+    btn.textContent = n ? ("📌 投射 " + n + " 篇") : "📌 投射";
+    btn.disabled = n === 0;
+  }
+
+  box.querySelectorAll(".batch-project-group").forEach(function(group) {
+    const cb = group.querySelector(".batch-project-folder");
+    const docs = group.querySelectorAll(".batch-project-doc:not(:disabled)");
+    const on = group.querySelectorAll(".batch-project-doc:checked:not(:disabled)").length;
+    cb.disabled = docs.length === 0;          // 底下全都已經在白板上了
+    cb.checked = docs.length > 0 && on === docs.length;
+    cb.indeterminate = on > 0 && on < docs.length;
+  });
+}
+
+function toggleBatchProjectAll(status) {
+  document.querySelectorAll("#batchProjectList .batch-project-doc:not(:disabled)")
+    .forEach(function(x) { x.checked = status; });
+  updateBatchProjectCount();
+}
+
+function confirmBatchProject() {
+  const ids = Array.from(document.querySelectorAll("#batchProjectList .batch-project-doc:checked:not(:disabled)"))
+    .map(function(x) { return x.dataset.id; });
+  const added = projectDocsToCanvas(ids);
+  closeBatchProjectModal();
+  if (!added.length) return;
+
+  switchView("canvas");
+  // 新的一批放在既有節點下方，可能完全在畫面外。對準第一個，跟單篇投射一樣
+  focusCanvasNode(added[0]);
+}
+
 /* ---------- 渲染節點 ----------
    節點現在是畫在 <canvasSvg> 裡的 <foreignObject>（內含一般 HTML），
    跟連線共用同一個 viewBox 做縮放，所以放大時是瀏覽器真的重新排版、

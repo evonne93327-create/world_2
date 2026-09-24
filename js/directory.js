@@ -987,6 +987,16 @@ function toggleBatchDeleteMode() {
  renderSidebarTree();
 }
 
+/* 離開批量刪除模式（已經不在就什麼都不做）。
+
+   目錄收起來的時候呼叫。批量刪除是「在目錄裡勾選」的狀態，目錄都關了還
+   掛著的話：勾選清單留在記憶體裡看不到，下次打開目錄時那幾項還是勾著的，
+   隨手按一下「刪除選取項」就把早就忘記的東西刪掉了。 */
+function exitBatchDeleteMode() {
+ if (!isBatchDeleteMode) return;
+ toggleBatchDeleteMode();
+}
+
 function toggleBatchItemSelection(type, id) {
  const set = type === "folder" ? batchSelectedFolders : batchSelectedDocs;
  if (set.has(id)) set.delete(id);

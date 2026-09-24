@@ -496,3 +496,139 @@ test("空白文檔的形狀只寫在 makeNewDoc() 一份", function() {
   assert.match(create, /makeNewDoc\(/, "「新增文檔」也要從 makeNewDoc() 拿");
   assert.ok(!/manualTags:/.test(create), "createNewDoc() 裡不該再有一份欄位清單");
 });
+
+/* ---------- 關掉目錄就取消批量刪除 ---------- */
+
+test("exitBatchDeleteMode()：只會「離開」，絕不會「進入」", function() {
+  /* 它底下呼叫的是 toggleBatchDeleteMode()——那是個切換。少了開頭那個
+     「不在就什麼都不做」，每次關目錄都會變成「進入批量刪除模式」。 */
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js"
+  ]);
+  app.run(`
+    renderSidebarTree = function() {};
+    updateBatchBarCount = function() {};
+    document.getElementById = function() {
+      return { classList: { toggle: function() {}, add: function() {}, remove: function() {} }, textContent: "" };
+    };
+    isBatchDeleteMode = false;
+    exitBatchDeleteMode();
+  `);
+  assert.strictEqual(app.run("isBatchDeleteMode"), false, "本來不在批量模式，關目錄之後也不能在");
+
+  app.run(`
+    isBatchDeleteMode = true;
+    batchSelectedDocs.add("d1");
+    batchSelectedFolders.add("f1");
+    exitBatchDeleteMode();
+  `);
+  assert.strictEqual(app.run("isBatchDeleteMode"), false, "在批量模式就要離開");
+  assert.strictEqual(app.run("batchSelectedDocs.size + batchSelectedFolders.size"), 0,
+    "勾選要一起清掉 —— 留著的話下次打開目錄那幾項還勾著，隨手一按就刪掉早就忘記的東西");
+});
+
+test("每一條收起目錄的路都會取消批量刪除", function() {
+  /* 反向掃描：main.js 裡每一個「把目錄收起來」的動作（加上 collapsed、拿掉
+     drawer-open），所在的函式裡都要呼叫 afterSidebarClosed()。以後多一條
+     收目錄的路卻忘了接，這裡會紅。 */
+  const code = codeOnly(mainJs);
+  const funcs = code.split(/\n(?=function )/);
+  const closers = funcs.filter(function(f) {
+    return /classList\.(add|toggle)\("collapsed"\)|classList\.remove\("drawer-open"\)/.test(f);
+  });
+  assert.ok(closers.length >= 3, "應該抓得到至少三個收目錄的函式（實得 " + closers.length + "）");
+  closers.forEach(function(f) {
+    const name = (f.match(/^function (\w+)/) || [])[1];
+    assert.match(f, /afterSidebarClosed\(\)/,
+      name + "() 會把目錄收起來，但沒有呼叫 afterSidebarClosed() —— 批量刪除的勾選會留著");
+  });
+
+  /* toggle 那條要注意：它是切換，只有「變成收起來」的那一邊才算。 */
+  const toggle = funcs.find(function(f) { return /^function toggleSidebarMenu/.test(f); });
+  assert.match(toggle, /if \(sidebar\.classList\.contains\("collapsed"\)\) afterSidebarClosed\(\);/,
+    "toggleSidebarMenu() 只有在收起來的那一邊才取消 —— 展開的時候不該動");
+
+  assert.match(bodyOf(mainJs, "afterSidebarClosed"), /exitBatchDeleteMode\(\)/,
+    "afterSidebarClosed() 要真的去取消批量刪除");
+});
+
+/* ---------- 批量投射白板 ---------- */
+
+test("batchNodePositions()：空白板從左上角開始", function() {
+  const app = loadApp();
+  const pos = host(app.batchNodePositions([], 1));
+  assert.deepStrictEqual(pos, [{ x: 40, y: 60 }]);
+  assert.deepStrictEqual(host(app.batchNodePositions([], 0)), []);
+  assert.deepStrictEqual(host(app.batchNodePositions(null, 0)), []);
+});
+
+test("batchNodePositions()：放在既有節點下方，不會疊上去", function() {
+  const app = loadApp();
+  const existing = [{ x: 40, y: 70 }, { x: 280, y: 150 }, { x: 500, y: 20 }];
+  const pos = host(app.batchNodePositions(existing, 5));
+  const lowestBottom = 150 + 120;                  // 最低的那個 + 估計高度
+  pos.forEach(function(p) {
+    assert.ok(p.y > lowestBottom, "新節點要在所有既有節點下方（y=" + p.y + "）");
+  });
+  assert.strictEqual(pos[0].x, 40, "左邊跟既有節點最左邊對齊");
+});
+
+test("batchNodePositions()：排成接近正方形的網格，彼此不重疊", function() {
+  const app = loadApp();
+  const W = app.run("CANVAS_NODE_W");
+  const H = app.run("BATCH_EST_NODE_H");
+
+  [[3, 2], [4, 2], [9, 3], [20, 4], [50, 4]].forEach(function(pair) {
+    const n = pair[0], cols = pair[1];
+    const pos = host(app.batchNodePositions([], n));
+    assert.strictEqual(pos.length, n);
+    const xs = new Set(pos.map(function(p) { return p.x; }));
+    assert.strictEqual(xs.size, cols, n + " 篇應該排成 " + cols + " 欄（實得 " + xs.size + "）");
+
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const a = pos[i], b = pos[j];
+      const overlap = a.x < b.x + W && b.x < a.x + W && a.y < b.y + H && b.y < a.y + H;
+      assert.ok(!overlap, n + " 篇時第 " + i + " 與第 " + j + " 個疊在一起了");
+    }
+  });
+});
+
+test("projectDocsToCanvas()：跳過已在白板上的、別的世界觀的、重複的", function() {
+  const app = loadApp();
+  app.run(`
+    saveData = function() {};
+    appData = {
+      worldviews: [{ id: "w1", name: "主", canvas: { nodes: [{ id: "node_a", docId: "a", x: 40, y: 60 }], edges: [], notes: [] } },
+                   { id: "w2", name: "外傳", canvas: { nodes: [], edges: [], notes: [] } }],
+      folders: [],
+      docs: [{ id: "a", worldId: "w1" }, { id: "b", worldId: "w1" }, { id: "c", worldId: "w1" },
+             { id: "x", worldId: "w2" }]
+    };
+    activeWorldId = "w1";
+  `);
+  const added = host(app.run(`projectDocsToCanvas(["a", "b", "b", "x", "nope", "c"])`));
+  assert.deepStrictEqual(added, ["b", "c"],
+    "a 已在白板上、b 重複、x 是別的世界觀、nope 不存在 —— 只有 b 與 c 該放上去");
+  assert.strictEqual(app.run(`getCurrentWorldCanvas().nodes.length`), 3);
+  assert.deepStrictEqual(host(app.run(`projectDocsToCanvas(["a", "b"])`)), [],
+    "全都已經在白板上就什麼都不做");
+});
+
+test("批量投射的清單一律 createElement + textContent", function() {
+  /* 批量匯出那邊以前是拼 HTML，被做出一個可利用的洞（見那裡的註解）。
+     這裡列的是同一批標題，不能重蹈覆轍。 */
+  const canvasJs = fs.readFileSync(path.join(ROOT, "js", "canvas.js"), "utf8");
+  const body = codeOnly(bodyOf(canvasJs, "renderBatchProjectList"));
+  const innerHtmlWrites = body.match(/innerHTML\s*=[^;]*/g) || [];
+  assert.deepStrictEqual(innerHtmlWrites, ['innerHTML = ""'], "除了清空以外不可以碰 innerHTML");
+  assert.match(body, /name\.textContent = \(d\.icon/, "文檔標題走 textContent");
+  assert.match(body, /name\.textContent = \(folder\.icon/, "資料夾名稱走 textContent");
+});
+
+test("批量投射的兩個入口都接上了", function() {
+  assert.match(html, /onclick="closeDocActionsPanel\(\); openBatchProjectModal\(\);"/,
+    "文檔的 ⋯ 選單裡要有，跟「投射白板」放在一起");
+  assert.match(html, /class="canvas-floating-btn" onclick="openBatchProjectModal\(\)"/,
+    "白板上也要有 —— 人在白板上時最常想做的就是把文檔放上來");
+});
