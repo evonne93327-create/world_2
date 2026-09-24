@@ -421,3 +421,78 @@ test("往上滑：方向不對就整個放手，那一列還要能橫向捲", fu
   assert.match(body, /\{ passive: false \}/,
     "要擋掉那一列的橫向捲動，touchmove 必須是非被動的");
 });
+
+/* ---------- 新世界觀附帶一篇空白文檔 ---------- */
+
+function worldApp() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js"
+  ]);
+  app.run(`
+    saveData = function() {};
+    renderSidebarTree = function() {};
+    renderBreadcrumb = function() {};
+    var __selected = null;
+    selectWorld = function(id) { __selected = id; };
+    appData = { worldviews: [{ id: "w1", name: "舊的" }], folders: [],
+                docs: [{ id: "d_old", worldId: "w1", folderId: null }], trash: { docs: [], folders: [] } };
+    activeWorldId = "w1";
+  `);
+  return app;
+}
+
+test("新增世界觀之後，裡面就有一篇空白文檔", function() {
+  const app = worldApp();
+  app.run(`prompt = function() { return "  新大陸  "; }; promptCreateWorldview();`);
+
+  const world = host(app.run(`appData.worldviews[appData.worldviews.length - 1]`));
+  assert.strictEqual(world.name, "新大陸");
+
+  const docs = host(app.run(`appData.docs.filter(function(d) { return d.worldId === "${world.id}"; })`));
+  assert.strictEqual(docs.length, 1, "新的世界觀裡要剛好有一篇");
+  assert.strictEqual(docs[0].folderId, null, "放在根目錄，不是某個資料夾裡");
+  assert.strictEqual(docs[0].content, "", "是空白的");
+
+  /* selectWorld() 會打開那個世界觀的第一篇 —— 文檔要在它被呼叫之前就放進去，
+     不然打開的時候裡面還是空的，停在一片空白的編輯區。 */
+  assert.strictEqual(app.run("__selected"), world.id, "建完要切過去");
+  const body = codeOnly(bodyOf(directoryJs, "promptCreateWorldview"));
+  assert.ok(body.indexOf("makeNewDoc(") < body.indexOf("selectWorld("),
+    "文檔要在 selectWorld() 之前放進去 —— 它會打開第一篇");
+
+  assert.strictEqual(app.run(`appData.docs.length`), 2, "舊的那篇不要被動到");
+});
+
+test("按取消或留白就什麼都不建", function() {
+  /* 不然每按一次取消就多一個沒有名字的世界觀，外加一篇孤兒文檔。 */
+  ["null", '""', '"   "'].forEach(function(ret) {
+    const app = worldApp();
+    app.run(`prompt = function() { return ${ret}; }; promptCreateWorldview();`);
+    assert.strictEqual(app.run("appData.worldviews.length"), 1, "prompt 回 " + ret + " 時不該建世界觀");
+    assert.strictEqual(app.run("appData.docs.length"), 1, "prompt 回 " + ret + " 時也不該多一篇文檔");
+  });
+});
+
+test("空白文檔的形狀只寫在 makeNewDoc() 一份", function() {
+  /* 以前欄位是直接寫在 createNewDoc() 裡。第二個地方要用就只能複製一份，
+     哪天加了欄位（manualTags 當初就是後來加的），複製的那份不會跟著長。 */
+  const app = worldApp();
+  const doc = host(app.run(`makeNewDoc("w9", "f1")`));
+  ["id", "worldId", "folderId", "icon", "title", "content", "tags", "manualTags",
+   "images", "wordCount", "updatedAt"].forEach(function(k) {
+    assert.ok(k in doc, "空白文檔要有 " + k);
+  });
+  assert.strictEqual(doc.worldId, "w9");
+  assert.strictEqual(doc.folderId, "f1");
+
+  /* 同一毫秒建兩篇（連點兩下「新增文檔」）不可以撞 id —— 撞了的話兩篇會
+     共用同一份復原紀錄，刪一篇另一篇也跟著不見。 */
+  const a = app.run(`makeNewDoc("w9", null).id`);
+  const b = app.run(`makeNewDoc("w9", null).id`);
+  assert.notStrictEqual(a, b);
+
+  const create = codeOnly(bodyOf(directoryJs, "createNewDoc"));
+  assert.match(create, /makeNewDoc\(/, "「新增文檔」也要從 makeNewDoc() 拿");
+  assert.ok(!/manualTags:/.test(create), "createNewDoc() 裡不該再有一份欄位清單");
+});

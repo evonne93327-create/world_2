@@ -830,6 +830,13 @@ function closeAllBreadcrumbDropdowns() {
  if (barEl) barEl.classList.remove("dropdown-open");
 }
 
+/* 新的世界觀一建好，裡面就有一篇空白文檔。
+
+   沒有這篇的話，建好之後看到的是一個空的編輯區，要先去找「新增文檔」
+   那顆按鈕才能開始寫——而「建一個世界觀」的下一步幾乎一定是「開始寫」。
+   selectWorld() 會打開這個世界觀的第一篇，所以建完就直接停在這篇上。
+
+   文檔的形狀跟「新增文檔」共用 makeNewDoc()，兩邊不會各長各的。 */
 function promptCreateWorldview() {
  const name = prompt("請輸入新世界觀名稱：", "新世界觀");
  if (name && name.trim()) {
@@ -840,6 +847,7 @@ function promptCreateWorldview() {
  canvas: { nodes: [], edges: [] }
  };
  appData.worldviews.push(newWorld);
+ appData.docs.unshift(makeNewDoc(newWorld.id, null));
  selectWorld(newWorld.id);
  saveData();
  }
@@ -906,12 +914,17 @@ function promptCreateFolder(parentId = null, worldId = null) {
  }
 }
 
-function createNewDoc(targetFolderId = null, worldId = null) {
- const wId = worldId || activeWorldId;
- const newDoc = {
- id: "doc_" + Date.now(),
- worldId: wId,
- folderId: targetFolderId,
+/* 一篇空白文檔長什麼樣子，只寫在這裡一份。
+
+   「新增文檔」與「新世界觀附帶的那一篇」都從這裡拿。以前欄位是直接寫在
+   createNewDoc() 裡的，第二個地方要用就只能複製一份——哪天加了新欄位
+   （像 manualTags 當初就是後來加的），複製的那份不會跟著長，那一篇就會
+   在某個地方被當成舊資料處理。 */
+function makeNewDoc(worldId, folderId) {
+ return {
+ id: "doc_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+ worldId: worldId,
+ folderId: folderId || null,
  icon: "📄",
  title: "",
  content: "",
@@ -921,6 +934,11 @@ function createNewDoc(targetFolderId = null, worldId = null) {
  wordCount: 0,
  updatedAt: formatTime(new Date())
  };
+}
+
+function createNewDoc(targetFolderId = null, worldId = null) {
+ const wId = worldId || activeWorldId;
+ const newDoc = makeNewDoc(wId, targetFolderId);
  appData.docs.unshift(newDoc);
  activeWorldId = wId;
  updateWorldBadge();
