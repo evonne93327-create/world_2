@@ -1175,3 +1175,13 @@ test("trash.worlds：60 天自動清除、匯入備份都有管到", function() 
   assert.deepStrictEqual(w.canvas.notes, [{ id: "n", text: "伏筆" }], "白板要帶過來");
   assert.deepStrictEqual(w.canvas.nodes, [], "缺的欄位補成空陣列（跟現有的世界觀過同一道整理）");
 });
+
+test("垃圾桶：「現有的世界觀」上面有一條線", function() {
+  /* 使用者要的：把它跟上面「刪除的世界觀」那一區隔開。第一個區塊上面是
+     說明文字，不需要線，所以用 :not(:first-child)。 */
+  assert.match(css, /\.trash-section-title:not\(:first-child\)\s*\{[^}]*border-top:\s*1px solid/,
+    "第二個以後的區塊標題要有上邊線");
+  const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
+  assert.match(body, /heading\("現有的世界觀", "trash-section-title"\)/,
+    "「現有的世界觀」要用區塊標題的樣式，那條線才套得上");
+});

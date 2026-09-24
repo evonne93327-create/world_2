@@ -1303,6 +1303,13 @@ main.content-workspace {
   margin-bottom: var(--sp-4);
 }
 .trash-section-title:first-child { padding-top: var(--sp-2); }
+/* 第二個區塊（「現有的世界觀」）上面再加一條線，把它跟上面「刪除的世界觀」
+   隔開（使用者要的）。用 :not(:first-child) 而不是寫死那一個：只有上面還有
+   別的區塊時才需要分隔線，第一個區塊上面就是說明文字，不用。 */
+.trash-section-title:not(:first-child) {
+  border-top: 1px solid var(--border);
+  margin-top: var(--sp-12);
+}
 .trash-group-title {
   font-size: var(--fs-12);
   font-weight: 700;
