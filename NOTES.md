@@ -16,7 +16,7 @@
 |---|---|
 | 線上位置 | https://evonne93327-create.github.io/world_2/ |
 | main | `3854360`（PR #52 合併後） |
-| service worker | **v79** |
+| service worker | **v80** |
 | 開發分支 | `claude/ipad-keyboard-button-placement-613jds` |
 | 開著的 PR | 無 |
 
@@ -511,6 +511,36 @@ Android 上也要先長按到系統自己認定是拖曳才會發。所以目錄
 先過濾掉**來擋的——那等於把規則寄放在 UI 上，換一個入口就沒人擋。繞成圈的
 資料夾不會報錯，它只是從根目錄走不到，那一整支在畫面上憑空消失。
 
+### 3h-1. 會搶手勢的東西，會讓別人的長按「收不到取消」
+
+`setupEdgeSwipe()` 接手一個手勢之後會 `stopPropagation()`（不然白板會跟著平移），
+它掛在 **document 的捕獲階段**，所以之後的 `touchmove` 與 `touchend` 全都到不了
+底下的元素。任何「靠收到移動或放開來取消」的長按，計時器就沒人取消，時間一到
+照樣觸發。實際發生過三種，都重現過：
+
+| 情境 | 結果 |
+|---|---|
+| 白板上從左緣右滑開目錄（使用者回報） | 長出一張便利貼 |
+| 目錄開著，按在某一列上往左滑收起來 | 目錄收掉之後那一列的選單跳出來 |
+| 拿起來之後往左下拖 | 被當成「收目錄」搶走，拖曳被砍掉 |
+
+**規則：長按的「取消」一律從 window 的捕獲階段聽。** 那排在 document 之前，
+誰 `stopPropagation` 都擋不到；而且它只看、只取消，不攔任何東西，排在最前面
+沒有副作用。`attachContextMenu()` 用 `watchTouchFromWindow()` **每一次觸碰掛一組、
+結束就拆**——不要在 attach 的時候掛：目錄每重畫一次就對每一列 attach 一次，
+那樣會越疊越多。「開始」（`touchstart`）留在元素上是對的，起手那一下沒人會攔。
+
+另外兩條：
+
+- **會搶手勢的那一方，要替正在進行的拖曳讓路。** 左緣滑動在接手之前問
+  `touchDragInProgress()`，有東西被拿起來就整個放手。
+- **拖曳要有退路。** 正在拖、而元素自己的 `touchend` 被攔掉的話，拖曳永遠不會
+  結束：幽靈掛在畫面上，`touchDragOwner` 一直不清，**左緣滑動從此再也打不開
+  目錄**。所以放開時排一個下一輪的檢查，還在拖就強制收掉。
+
+白板平移沒事：它每次 `touchstart` 都重設狀態，漏掉的 `touchend` 不會殘留。
+**以後再加任何會 `stopPropagation` 的手勢，先把這張表裡的每一種情境跑一遍。**
+
 ### 3h-2. 新的滑動手勢照 `setupEdgeSwipe()` 的形狀寫
 
 「從底部那一列往上滑打開世界觀清單」是第二個這種手勢。三件事直接照抄
@@ -616,7 +646,7 @@ Android 上也要先長按到系統自己認定是拖曳才會發。所以目錄
 ### 在 repo 裡的
 
 ```bash
-node --test          # 136 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 143 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |
@@ -630,6 +660,7 @@ node --test          # 136 項。注意：不要寫 node --test tests/，Node 22
 | `tests/sync-merge.test.js` | 逐篇三方合併的規則。全專案最危險的一段，測得最細 |
 | `tests/directory.test.js` | 目錄的搬移規則、整列收合、觸控拖曳、世界觀清單 |
 | `tests/editor.test.js` | 復原的捲動位置、圖片檢視的收尾、世界觀簡介 |
+| `tests/gestures.test.js` | 手勢之間搶事件：長按的取消要聽在 window 捕獲階段、左緣滑動要替拖曳讓路 |
 | `tests/helpers/load-app.js` | `node:vm` 沙箱；跨 realm 的 `deepStrictEqual` 會因為 prototype 不同而失敗，所以有個 `host()` 做 JSON round-trip；另有 `run()` 可以在沙箱**裡面**執行程式碼 |
 
 `run()` 是後來加的，原因值得記：state.js 寫的是 `let appData = ...`，而 `let`
