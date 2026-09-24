@@ -86,6 +86,31 @@ function byId(list) {
   return out;
 }
 
+/* 垃圾桶裡的白板項目（trash.canvas）拿來合併用的鍵。
+
+   這些項目本身沒有 id，但它們裝著的節點／連線／便條紙有（entry.node.id 之類），
+   再加上刪除的時間戳：每台裝置上都一樣，而且同一個節點刪兩次也分得開——
+   節點 id 是 "node_" + 文檔 id，投射、刪掉、再投射、再刪掉，兩次的 id 一樣。
+
+   組不出來（缺 kind 或內容沒有 id）回 null，呼叫端要自己決定怎麼處理，
+   不可以直接丟掉。 */
+function canvasTrashKey(entry) {
+  if (!entry || !entry.kind) return null;
+  const payload = entry[entry.kind];
+  if (!payload || !payload.id) return null;
+  return entry.kind + ":" + payload.id + ":" + (entry.deletedTs || 0);
+}
+
+/* 包成 { id, entry }，讓 mergeCollection() 能照 id 對應。組不出鍵的不包。 */
+function keyedCanvasTrash(list) {
+  const out = [];
+  (list || []).forEach(function(e) {
+    const k = canvasTrashKey(e);
+    if (k) out.push({ id: k, entry: e });
+  });
+  return out;
+}
+
 /* 上次同步當下的指紋。存進 localStorage 的就是這個。
 
    只存雜湊，不存內容：一篇文檔幾十位元組，跟文章多長無關。 */
@@ -98,6 +123,7 @@ function fingerprintOf(data) {
     worldviews: hashById(d.worldviews),
     trashDocs: hashById(trash.docs),
     trashFolders: hashById(trash.folders),
+    trashCanvas: hashById(keyedCanvasTrash(trash.canvas)),
     tagSettings: hashItem(d.tagSettings || {})
   };
 }
@@ -228,15 +254,46 @@ function mergeAppData(base, local, remote) {
   const docTitle = function(d) { return d.title || "未命名文檔"; };
   const nameOf = function(x) { return x.name || "未命名"; };
 
+  /* 先合併正文、再合併垃圾桶：conflicts 的順序就是衝突彈窗列出來的順序，
+     使用者要先看到的是文檔本身，不是垃圾桶裡的東西。 */
   const merged = {
     docs: run("doc", base.docs, local.docs, remote.docs, docTitle),
     folders: run("folder", base.folders, local.folders, remote.folders, nameOf),
-    worldviews: run("world", base.worldviews, local.worldviews, remote.worldviews, nameOf),
-    trash: {
-      docs: run("trashDoc", base.trashDocs, localTrash.docs, remoteTrash.docs, docTitle),
-      folders: run("trashFolder", base.trashFolders, localTrash.folders, remoteTrash.folders, nameOf)
-    }
+    worldviews: run("world", base.worldviews, local.worldviews, remote.worldviews, nameOf)
   };
+
+  const trash = {
+    docs: run("trashDoc", base.trashDocs, localTrash.docs, remoteTrash.docs, docTitle),
+    folders: run("trashFolder", base.trashFolders, localTrash.folders, remoteTrash.folders, nameOf)
+  };
+
+  /* 白板的垃圾。以前這裡沒有這一段，trash.canvas 在任何一次自動合併之後都
+     會整個消失（兩台各改一篇就會觸發自動合併，非常常見）。
+
+     兩邊都沒有這一欄就不要平白加一個空陣列——多出來的話 changedFromLocal
+     會變成 true，每次合併都多一次上傳。
+
+     base.trashCanvas 不存在（升級前存的舊指紋）時，mergeCollection 會把每一筆
+     都當成「這一邊新增的」，結果就是兩邊的聯集。分不出「刪了」還是「從來
+     沒有」的時候，寧可多留一筆。 */
+  if (localTrash.canvas || remoteTrash.canvas) {
+    const keyed = run("trashCanvas", base.trashCanvas,
+      keyedCanvasTrash(localTrash.canvas), keyedCanvasTrash(remoteTrash.canvas),
+      function(w) { return (w.entry && w.entry.label) || "白板項目"; });
+    trash.canvas = keyed.map(function(w) { return w.entry; });
+    // 組不出鍵的（資料缺欄位）沒辦法跟另一邊對應，照本機的留著，不要丟
+    (localTrash.canvas || []).forEach(function(e) {
+      if (!canvasTrashKey(e)) trash.canvas.push(e);
+    });
+  }
+
+  /* trash 底下其他沒列到的欄位（以後加的）照本機的留著。跟下面頂層的規則
+     一樣——trash.canvas 當初就是因為「後來才加、合併這裡沒跟著改」才不見的。 */
+  Object.keys(localTrash).forEach(function(k) {
+    if (!Object.prototype.hasOwnProperty.call(trash, k)) trash[k] = localTrash[k];
+  });
+
+  merged.trash = trash;
 
   const tags = mergeTagSettings(base.tagSettings, local.tagSettings, remote.tagSettings);
   merged.tagSettings = tags.value;

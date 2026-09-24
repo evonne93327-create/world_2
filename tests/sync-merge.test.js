@@ -333,3 +333,128 @@ test("mergeCollection：空的輸入不會爆", function() {
   assert.deepStrictEqual(mergeCollection({}, [], []), { list: [], conflicts: [] });
   assert.deepStrictEqual(mergeCollection(null, null, null), { list: [], conflicts: [] });
 });
+
+/* ==========================================================
+   垃圾桶裡的白板項目（trash.canvas）
+
+   以前 mergeAppData() 組 trash 時只放了 docs 與 folders，白板刪掉的節點、
+   連線、便條紙在**任何一次**自動合併之後都會消失——而自動合併在兩台裝置
+   各改一篇時就會發生，非常常見。使用者看到的是「垃圾桶裡的白板項目有時候
+   會自己不見」，沒有任何錯誤訊息。
+
+   這些項目本身沒有 id，但它們裝著的節點／連線／便條紙有，加上刪除的時間戳，
+   組起來就是一個每台裝置都一樣的鍵（canvasTrashKey）。
+   ========================================================== */
+
+function ctrash(kind, payloadId, ts, extra) {
+  const e = { kind: kind, worldId: "w1", label: kind + " " + payloadId, deletedAt: "t", deletedTs: ts };
+  e[kind] = { id: payloadId };
+  if (extra) Object.keys(extra).forEach(function(k) { e[k] = extra[k]; });
+  return e;
+}
+
+function withCanvasTrash(data, entries) {
+  data.trash = Object.assign({}, data.trash, { canvas: entries });
+  return data;
+}
+
+function canvasKeysOf(data) {
+  return ((data.trash && data.trash.canvas) || [])
+    .map(function(e) { return e.kind + ":" + e[e.kind].id; }).sort();
+}
+
+test("trash.canvas：自動合併之後還在", function() {
+  /* 就是這個 bug 的最小重現：兩台各改一篇 → 自動合併 → 白板垃圾全沒了。 */
+  const before = withCanvasTrash(db([doc("d1", "原本")]), [ctrash("note", "n1", 100)]);
+  const base = fingerprintOf(before);
+  const local = withCanvasTrash(db([doc("d1", "原本")]), [ctrash("note", "n1", 100)]);
+  const remote = withCanvasTrash(db([doc("d1", "另一台改的")]), [ctrash("note", "n1", 100)]);
+
+  const r = merge(base, local, remote);
+  assert.strictEqual(r.conflicts.length, 0);
+  assert.deepStrictEqual(canvasKeysOf(r.data), ["note:n1"],
+    "合併之後白板垃圾不見了 —— 使用者刪掉的便條紙再也救不回來");
+});
+
+test("trash.canvas：兩邊各自新增的都要留著", function() {
+  const before = withCanvasTrash(db([]), []);
+  const base = fingerprintOf(before);
+  const local = withCanvasTrash(db([]), [ctrash("node", "nodeA", 100)]);
+  const remote = withCanvasTrash(db([]), [ctrash("edge", "edgeB", 200)]);
+  const r = merge(base, local, remote);
+  assert.strictEqual(r.conflicts.length, 0);
+  assert.deepStrictEqual(canvasKeysOf(r.data), ["edge:edgeB", "node:nodeA"]);
+});
+
+test("trash.canvas：一邊復原（從垃圾桶拿走）、另一邊沒動 → 跟著拿走", function() {
+  /* 跟文檔一樣的三方合併規則：祖先有、這一邊沒有＝這一邊刪了。不然在平板
+     上復原的便條紙，同步一次又會跑回手機的垃圾桶裡。 */
+  const both = [ctrash("note", "n1", 100), ctrash("note", "n2", 200)];
+  const before = withCanvasTrash(db([]), both);
+  const base = fingerprintOf(before);
+  const local = withCanvasTrash(db([]), [ctrash("note", "n2", 200)]);   // 這台復原了 n1
+  const remote = withCanvasTrash(db([]), both);
+  const r = merge(base, local, remote);
+  assert.deepStrictEqual(canvasKeysOf(r.data), ["note:n2"]);
+});
+
+test("trash.canvas：同一個節點刪了兩次是兩筆，不會互相吃掉", function() {
+  /* 節點 id 是 "node_" + 文檔 id：投射、刪掉、再投射、再刪掉，兩次的節點
+     id 一樣。鍵裡一定要有刪除時間，不然合併時只會留一筆。 */
+  const before = withCanvasTrash(db([]), []);
+  const base = fingerprintOf(before);
+  const local = withCanvasTrash(db([]), [ctrash("node", "node_d1", 100)]);
+  const remote = withCanvasTrash(db([]), [ctrash("node", "node_d1", 900)]);
+  const r = merge(base, local, remote);
+  assert.strictEqual((r.data.trash.canvas || []).length, 2);
+  assert.strictEqual(app.canvasTrashKey(ctrash("node", "node_d1", 100)) ===
+                     app.canvasTrashKey(ctrash("node", "node_d1", 900)), false);
+});
+
+test("trash.canvas：舊的指紋沒有這一欄 → 兩邊的都留著（寧可多，不可少）", function() {
+  /* 升級之後的第一次合併，localStorage 裡的指紋是舊版存的，沒有 trashCanvas。
+     那時候分不出「這一邊刪了」還是「這一邊從來沒有」，只能兩邊都留。
+     最壞的結果是一個已經復原過的便條紙又回到垃圾桶——那比丟掉好。 */
+  const base = fingerprintOf(db([]));
+  delete base.trashCanvas;
+  const local = withCanvasTrash(db([]), [ctrash("note", "n1", 100)]);
+  const remote = withCanvasTrash(db([]), [ctrash("note", "n2", 200)]);
+  const r = merge(base, local, remote);
+  assert.strictEqual(r.conflicts.length, 0, "舊指紋不能變成一堆衝突要使用者選");
+  assert.deepStrictEqual(canvasKeysOf(r.data), ["note:n1", "note:n2"]);
+});
+
+test("trash 底下以後多出來的欄位，照本機的留著", function() {
+  /* 跟頂層「沒列到的欄位照本機的留著」同一個規則。trash.canvas 就是這樣
+     不見的：它是後來加的，合併那段沒跟著改。以後再加也不能重蹈覆轍。 */
+  const before = db([doc("d1", "a")]);
+  const base = fingerprintOf(before);
+  const local = db([doc("d1", "a")]);
+  local.trash.someFutureThing = [{ x: 1 }];
+  const remote = db([doc("d1", "b")]);
+  const r = merge(base, local, remote);
+  assert.deepStrictEqual(r.data.trash.someFutureThing, [{ x: 1 }]);
+});
+
+test("兩邊都沒有 trash.canvas 時，合併結果也不要平白多出一個空陣列", function() {
+  /* 多出來的話 changedFromLocal 會是 true，每次合併都會觸發一次多餘的上傳。 */
+  const before = db([doc("d1", "a")]);
+  const base = fingerprintOf(before);
+  const r = merge(base, db([doc("d1", "a")]), db([doc("d1", "a")]));
+  assert.ok(!("canvas" in r.data.trash));
+  assert.strictEqual(r.changedFromLocal, false);
+  assert.strictEqual(r.changedFromRemote, false);
+});
+
+test("衝突清單：文檔排在垃圾桶的東西前面", function() {
+  /* conflicts 的順序就是衝突彈窗列出來的順序。 */
+  const before = withCanvasTrash(db([doc("d1", "原本")]), []);
+  before.trash.docs = [doc("t1", "垃圾原本")];
+  const base = fingerprintOf(before);
+  const local = JSON.parse(JSON.stringify(before));
+  const remote = JSON.parse(JSON.stringify(before));
+  local.docs[0].content = "這台";  remote.docs[0].content = "那台";
+  local.trash.docs[0].content = "這台垃圾"; remote.trash.docs[0].content = "那台垃圾";
+  const r = merge(base, local, remote);
+  assert.deepStrictEqual(r.conflicts.map(function(c) { return c.kind; }), ["doc", "trashDoc"]);
+});
