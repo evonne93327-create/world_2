@@ -2163,7 +2163,9 @@ function restoreCanvasTrashItem(index) {
    用久了會一直累積，佔著本來就只有 5MB 的空間。
 
    跟著文檔一起收進垃圾桶：這樣復原文檔之後，節點也回得來。 */
-function trashOrphanNodesForDocs(docIds) {
+/* label 是垃圾桶裡那一筆顯示的說明。刪文檔與「文檔搬到別的世界觀」都會
+   走這裡，兩種情況給使用者看的原因不一樣。 */
+function trashOrphanNodesForDocs(docIds, label) {
   if (!docIds || !docIds.length) return;
   const ids = {};
   docIds.forEach(function(id) { ids[id] = true; });
@@ -2179,7 +2181,7 @@ function trashOrphanNodesForDocs(docIds) {
       pushCanvasTrash({
         kind: "node",
         worldId: w.id,
-        label: "（隨文檔一起刪除的白板節點）",
+        label: label || "（隨文檔一起刪除的白板節點）",
         node: node,
         edges: edges
       });

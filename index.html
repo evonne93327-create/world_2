@@ -358,10 +358,17 @@
     <div class="modal-card">
       <div class="modal-title" id="moveModalTitle">🔀 移動資料夾或更改所屬世界觀</div>
       <p style="font-size:12px; color:var(--text-secondary);">選擇目的地：</p>
-      <select id="moveTargetSelect" class="form-input"></select>
+      <select id="moveTargetSelect" class="form-input" onchange="updateMoveModeVisibility()"></select>
+      <!-- 目的地在別的世界觀時才出現：搬過去，還是複製一份過去。
+           同一個世界觀裡複製沒有意義（同一個目錄裡多一份一樣的），所以不給。 -->
+      <div class="move-mode-row" id="moveModeRow" hidden>
+        <label class="move-mode-opt"><input type="radio" name="moveMode" value="move" checked onchange="updateMoveModeVisibility()"> 移動過去</label>
+        <label class="move-mode-opt"><input type="radio" name="moveMode" value="copy" onchange="updateMoveModeVisibility()"> 複製一份過去</label>
+        <div class="move-mode-hint" id="moveModeHint"></div>
+      </div>
       <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
         <button class="btn btn-secondary" onclick="closeMoveModal()">取消</button>
-        <button class="btn btn-primary" onclick="confirmMoveFolder()">確認移動</button>
+        <button class="btn btn-primary" id="moveConfirmBtn" onclick="confirmMoveFolder()">確認移動</button>
       </div>
     </div>
   </div>

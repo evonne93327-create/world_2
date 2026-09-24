@@ -54,7 +54,9 @@ function callsTo(src, name) {
 /* 抓某個函式的整個函式體：從它的 function 那一行，到下一個頂層 function 為止。
    不要用非貪婪配到第一個 \n} —— 裡面有巢狀區塊，那樣會在半路切斷。 */
 function bodyOf(src, name) {
-  const m = src.match(new RegExp("function\\s+" + name + "\\s*\\([\\s\\S]*?(?=\\nfunction )"));
+  /* 尾巴補一個假的 "\nfunction "：檔案裡最後一個函式後面沒有下一個函式可以
+     當邊界，不補的話它永遠抓不到（confirmMoveFolder 就是 modal.js 的最後一個）。 */
+  const m = (src + "\nfunction ").match(new RegExp("function\\s+" + name + "\\s*\\([\\s\\S]*?(?=\\nfunction )"));
   assert.ok(m, "找不到 " + name + "()");
   return m[0];
 }
@@ -631,4 +633,180 @@ test("批量投射的兩個入口都接上了", function() {
     "文檔的 ⋯ 選單裡要有，跟「投射白板」放在一起");
   assert.match(html, /class="canvas-floating-btn" onclick="openBatchProjectModal\(\)"/,
     "白板上也要有 —— 人在白板上時最常想做的就是把文檔放上來");
+});
+
+/* ---------- 移動彈窗：排序、跨世界觀的移動與複製 ---------- */
+
+function moveApp() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js"
+  ]);
+  app.run(`
+    saveData = function() {};
+    renderSidebarTree = function() {};
+    renderBreadcrumb = function() {};
+    refreshCanvasIfVisible = function() {};
+    var __trashed = [];
+    trashOrphanNodesForDocs = function(ids, label) { __trashed.push({ ids: ids.slice().sort(), label: label }); };
+    appData = {
+      worldviews: [{ id: "w1", name: "主", icon: "🌍" }, { id: "w2", name: "外傳", icon: "🔮" }],
+      folders: [
+        { id: "A", worldId: "w1", parentId: null, name: "角色" },
+        { id: "B", worldId: "w1", parentId: "A", name: "騎士" },
+        { id: "C", worldId: "w1", parentId: null, name: "年表" },
+        { id: "X", worldId: "w2", parentId: null, name: "角色" },
+        { id: "Y", worldId: "w2", parentId: "X", name: "反派" },
+        { id: "Z", worldId: "w2", parentId: "不存在", name: "孤兒資料夾" }
+      ],
+      docs: [
+        { id: "d1", worldId: "w1", folderId: "B", title: "團長", content: "內文", tags: ["t"], images: [] },
+        { id: "d2", worldId: "w1", folderId: "A", title: "遊俠", content: "", tags: [], images: [] },
+        { id: "d3", worldId: "w1", folderId: null, title: "總設定", content: "", tags: [], images: [] }
+      ],
+      trash: { docs: [], folders: [], canvas: [] }
+    };
+    activeWorldId = "w1";
+  `);
+  return app;
+}
+
+test("moveTargetOptions()：世界觀一 → 它的資料夾 → 世界觀二 → 它的資料夾", function() {
+  const app = moveApp();
+  const opts = host(app.run(`moveTargetOptions({ type: "doc", id: "d3" })`));
+  const seq = opts.map(function(o) { return o.worldId + ":" + (o.parentId || "根") + ":" + o.depth; });
+  assert.deepStrictEqual(seq, [
+    "w1:根:0", "w1:A:1", "w1:B:2", "w1:C:1",
+    "w2:根:0", "w2:X:1", "w2:Y:2", "w2:Z:1"
+  ], "資料夾要緊跟在自己的世界觀後面、照樹狀順序；上層不存在的當成最上層");
+
+  /* 原本是「先列全部世界觀，再列全部資料夾」，兩個世界觀都有「角色」時
+     根本分不出是哪一個。現在它們各自排在自己的世界觀底下。 */
+  const labels = opts.map(function(o) { return o.label; });
+  assert.ok(labels[1].indexOf("　") === 0 && labels[2].indexOf("　　") === 0,
+    "深度要用全形空白縮排（<option> 會吃掉一般的前導空白）");
+});
+
+test("moveTargetOptions()：標出目前位置", function() {
+  const app = moveApp();
+  const cur = host(app.run(`moveTargetOptions({ type: "doc", id: "d1" })`))
+    .filter(function(o) { return o.current; });
+  assert.deepStrictEqual(cur.map(function(o) { return o.parentId; }), ["B"], "只有一個、而且是它現在的資料夾");
+
+  const root = host(app.run(`moveTargetOptions({ type: "doc", id: "d3" })`))
+    .filter(function(o) { return o.current; });
+  assert.deepStrictEqual(root.map(function(o) { return o.worldId + "/" + o.parentId; }), ["w1/null"],
+    "在根目錄的話，標的是它那個世界觀的根目錄，不是別的世界觀的");
+});
+
+test("moveTargetOptions()：搬資料夾時，自己與整支子孫都不列", function() {
+  const app = moveApp();
+  const ids = host(app.run(`moveTargetOptions({ type: "folder", id: "A" })`))
+    .map(function(o) { return o.parentId; });
+  assert.ok(ids.indexOf("A") === -1 && ids.indexOf("B") === -1, "A 與它底下的 B 都不能是目的地");
+  assert.ok(ids.indexOf("C") !== -1 && ids.indexOf("X") !== -1, "其他的照列");
+});
+
+test("跨世界觀搬資料夾：整棵子樹一起搬過去", function() {
+  /* 原本只改了資料夾自己的 worldId。子資料夾與文檔留在原本的世界觀，
+     而它們的上層已經不在那裡——兩邊的目錄樹都畫不出它們。 */
+  const app = moveApp();
+  assert.strictEqual(app.run(`moveItemInto({ type: "folder", id: "A" }, null, "w2")`), true);
+  const where = host(app.run(`({
+    A: appData.folders.find(function(f) { return f.id === "A"; }).worldId,
+    B: appData.folders.find(function(f) { return f.id === "B"; }).worldId,
+    d1: appData.docs.find(function(d) { return d.id === "d1"; }).worldId,
+    d2: appData.docs.find(function(d) { return d.id === "d2"; }).worldId,
+    d3: appData.docs.find(function(d) { return d.id === "d3"; }).worldId,
+    C: appData.folders.find(function(f) { return f.id === "C"; }).worldId
+  })`));
+  assert.deepStrictEqual(where, { A: "w2", B: "w2", d1: "w2", d2: "w2", d3: "w1", C: "w1" },
+    "A 底下的全部跟著過去，不相干的留在原地");
+
+  const trashed = host(app.run("__trashed"));
+  assert.strictEqual(trashed.length, 1);
+  assert.deepStrictEqual(trashed[0].ids, ["d1", "d2"],
+    "搬走的文檔在原本白板上的節點要收掉 —— 白板畫節點時不看世界觀，不收會一直掛著");
+  assert.match(trashed[0].label, /搬到別的世界觀/,
+    "垃圾桶裡要講清楚原因，不是「隨文檔一起刪除」");
+});
+
+test("同一個世界觀裡搬移：不碰白板", function() {
+  const app = moveApp();
+  app.run(`moveItemInto({ type: "doc", id: "d3" }, "C", "w1")`);
+  app.run(`moveItemInto({ type: "folder", id: "B" }, "C", "w1")`);
+  assert.strictEqual(app.run("__trashed.length"), 0, "還在同一張白板上，節點不能被收掉");
+});
+
+test("copyItemInto()：文檔複製一份，原本的不動", function() {
+  const app = moveApp();
+  const newId = app.run(`copyItemInto({ type: "doc", id: "d1" }, "X", "w2")`);
+  assert.ok(newId && newId !== "d1", "要拿到新的 id");
+  const both = host(app.run(`appData.docs.filter(function(d) { return d.title === "團長"; })`));
+  assert.strictEqual(both.length, 2);
+  const orig = both.find(function(d) { return d.id === "d1"; });
+  const copy = both.find(function(d) { return d.id === newId; });
+  assert.deepStrictEqual([orig.worldId, orig.folderId], ["w1", "B"], "原本的留在原地");
+  assert.deepStrictEqual([copy.worldId, copy.folderId], ["w2", "X"]);
+  assert.strictEqual(copy.content, "內文");
+  assert.deepStrictEqual(copy.tags, ["t"]);
+
+  /* 深拷貝：改了複本的標籤，原本的不能跟著變。 */
+  app.run(`appData.docs.find(function(d) { return d.id === "${newId}"; }).tags.push("new")`);
+  assert.deepStrictEqual(host(app.run(`appData.docs.find(function(d) { return d.id === "d1"; }).tags`)), ["t"],
+    "複本跟原本不能共用同一個陣列");
+});
+
+test("copyItemInto()：資料夾整棵子樹複製，上下層對得上、id 全新", function() {
+  const app = moveApp();
+  const newRoot = app.run(`copyItemInto({ type: "folder", id: "A" }, "X", "w2")`);
+  const r = host(app.run(`(function() {
+    var root = appData.folders.find(function(f) { return f.id === "${newRoot}"; });
+    var child = appData.folders.find(function(f) { return f.parentId === "${newRoot}"; });
+    var docs = appData.docs.filter(function(d) { return d.worldId === "w2"; });
+    return {
+      root: [root.name, root.worldId, root.parentId],
+      child: child ? [child.name, child.worldId] : null,
+      docs: docs.map(function(d) {
+        var f = appData.folders.find(function(x) { return x.id === d.folderId; });
+        return d.title + "@" + (f ? f.name : "?") + "(" + (f && f.worldId) + ")";
+      }).sort(),
+      uniqueFolders: new Set(appData.folders.map(function(f) { return f.id; })).size === appData.folders.length,
+      uniqueDocs: new Set(appData.docs.map(function(d) { return d.id; })).size === appData.docs.length,
+      origStill: appData.folders.filter(function(f) { return f.worldId === "w1"; }).length
+    };
+  })()`));
+  assert.deepStrictEqual(r.root, ["角色", "w2", "X"]);
+  assert.deepStrictEqual(r.child, ["騎士", "w2"], "子資料夾要跟著複製、掛在新的那一個底下");
+  assert.deepStrictEqual(r.docs, ["團長@騎士(w2)", "遊俠@角色(w2)"],
+    "文檔要掛在「新的」資料夾底下，不是原本的");
+  assert.ok(r.uniqueFolders && r.uniqueDocs, "同一毫秒產生的 id 也不能撞");
+  assert.strictEqual(r.origStill, 3, "原本那三個資料夾都還在");
+});
+
+test("copyItemInto()：不能複製進自己的子孫", function() {
+  const app = moveApp();
+  assert.strictEqual(app.run(`copyItemInto({ type: "folder", id: "A" }, "B", "w1")`), null,
+    "複製的過程中子孫又多了一份 —— 不擋的話會無止盡地長");
+  assert.strictEqual(app.run(`copyItemInto({ type: "folder", id: "A" }, "A", "w1")`), null);
+  assert.strictEqual(app.run(`copyItemInto({ type: "doc", id: "沒這篇" }, null, "w2")`), null);
+});
+
+test("移動彈窗：只有目的地在別的世界觀時才問「移動還是複製」", function() {
+  const body = codeOnly(modalJs);
+  assert.match(bodyOf(modalJs, "updateMoveModeVisibility"), /row\.hidden = !other;/,
+    "同一個世界觀裡不給複製 —— 同一個目錄多一份一樣的沒有意義");
+  assert.match(codeOnly(bodyOf(modalJs, "selectedMoveMode")),
+    /r\.value === "copy" && moveTargetIsOtherWorld\(\)/,
+    "就算上一次選了複製、這次改選同世界觀，也要當成移動");
+
+  const open = codeOnly(bodyOf(modalJs, "openMoveModal"));
+  assert.match(open, /moveTargetOptions\(ref\)/, "清單要從 moveTargetOptions() 來（順序在那裡定、有測試）");
+  assert.ok(!/appData\.worldviews\.forEach/.test(open), "不要在彈窗裡自己再排一次");
+  assert.match(open, /value="move"\]'\);[\s\S]*?moveRadio\.checked = true/,
+    "每次打開都回到「移動」，不要沿用上一次的「複製」");
+
+  const confirm = codeOnly(bodyOf(modalJs, "confirmMoveFolder"));
+  assert.match(confirm, /copyItemInto\(/, "選複製要走 copyItemInto()");
+  assert.match(confirm, /moveItemInto\(/, "選移動照舊走 moveItemInto()");
 });

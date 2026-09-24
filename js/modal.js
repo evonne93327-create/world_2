@@ -1291,25 +1291,56 @@ function openMoveModal(ref) {
  : "🔀 移動資料夾或更改所屬世界觀";
  }
 
- appData.worldviews.forEach(function(w) {
+ /* 順序與排除規則都在 moveTargetOptions()（純函式，有測試）。
+    option 的文字用 textContent：世界觀與資料夾的名字是使用者寫的。 */
+ moveTargetOptions(ref).forEach(function(o) {
  const opt = document.createElement("option");
- opt.value = JSON.stringify({ worldId: w.id, parentId: null });
- opt.textContent = "🌐 " + w.name + " (根目錄)";
+ opt.value = JSON.stringify({ worldId: o.worldId, parentId: o.parentId });
+ opt.textContent = o.label + (o.current ? "　（目前位置）" : "");
+ if (o.current) opt.selected = true;
  select.appendChild(opt);
  });
 
- /* 資料夾不能搬進自己或自己的子孫（見 moveItemInto 的註解）；
-    文檔沒有這個限制，任何資料夾都收得下。 */
- appData.folders.forEach(function(f) {
- if (ref.type === "folder" &&
- (f.id === ref.id || f.parentId === ref.id || isDescendantOf(ref.id, f.id))) return;
- const opt = document.createElement("option");
- opt.value = JSON.stringify({ worldId: f.worldId, parentId: f.id });
- opt.textContent = "📁 " + f.name;
- select.appendChild(opt);
- });
+ // 每次打開都回到「移動」，不要沿用上一次選的「複製」
+ const moveRadio = document.querySelector('input[name="moveMode"][value="move"]');
+ if (moveRadio) moveRadio.checked = true;
+ updateMoveModeVisibility();
 
  document.getElementById("moveModal").classList.add("active");
+}
+
+/* 目的地是不是在別的世界觀。只有這種時候才問「移動還是複製」。 */
+function moveTargetIsOtherWorld() {
+ const select = document.getElementById("moveTargetSelect");
+ if (!select || !select.value || !moveTargetRef) return false;
+ const target = JSON.parse(select.value);
+ const src = moveTargetRef.type === "doc"
+ ? appData.docs.find(d => d.id === moveTargetRef.id)
+ : appData.folders.find(f => f.id === moveTargetRef.id);
+ return !!src && src.worldId !== target.worldId;
+}
+
+function selectedMoveMode() {
+ const r = document.querySelector('input[name="moveMode"]:checked');
+ return (r && r.value === "copy" && moveTargetIsOtherWorld()) ? "copy" : "move";
+}
+
+function updateMoveModeVisibility() {
+ const row = document.getElementById("moveModeRow");
+ const btn = document.getElementById("moveConfirmBtn");
+ const hint = document.getElementById("moveModeHint");
+ const other = moveTargetIsOtherWorld();
+ if (row) row.hidden = !other;
+
+ const mode = selectedMoveMode();
+ if (btn) btn.textContent = mode === "copy" ? "確認複製" : "確認移動";
+ if (hint) {
+ /* 兩個選項的後果差很多，講清楚：搬過去的話原本那張白板上的節點會
+    收進垃圾桶；複製的話白板不會跟著過去。 */
+ hint.textContent = !other ? "" : (mode === "copy"
+ ? "原本的留在這裡不動。白板上的節點不會跟著複製，要的話到那邊用「批量投射白板」放上去。"
+ : "原本這個世界觀的白板上如果有它，那個節點會收進垃圾桶（連線說明救得回來）。");
+ }
 }
 
 function closeMoveModal() { 
@@ -1320,9 +1351,43 @@ function confirmMoveFolder() {
  const select = document.getElementById("moveTargetSelect");
  if (!select.value || !moveTargetRef) return;
  const target = JSON.parse(select.value);
+ const payload = { type: moveTargetRef.type, id: moveTargetRef.id };
+ const mode = selectedMoveMode();
+ const crossWorld = moveTargetIsOtherWorld();
+ const movedActiveDoc = crossWorld && mode === "move" && (
+ (payload.type === "doc" && payload.id === activeDocId) ||
+ (payload.type === "folder" && folderSubtree(payload.id).docIds.has(activeDocId)));
+ closeMoveModal();
+
+ if (mode === "copy") {
+ if (!copyItemInto(payload, target.parentId, target.worldId)) return;
+ saveData();
+ renderSidebarTree();
+ } else {
  /* 搬移的規則（含「不能搬進自己的子孫」）只寫在 moveItemInto() 裡一份，
     拖曳與這個彈窗都走它。 */
- moveItemInto({ type: moveTargetRef.type, id: moveTargetRef.id },
- target.parentId, target.worldId);
- closeMoveModal();
+ if (!moveItemInto(payload, target.parentId, target.worldId)) return;
+ }
+ if (!crossWorld) return;
+
+ /* 跨世界觀之後，目前這個世界觀裡看不到任何變化（複製）或東西直接不見
+    （移動）——兩種都會讓人懷疑到底有沒有成功。問一句要不要過去看，
+    順便當作「完成了」的回報。 */
+ const world = appData.worldviews.find(w => w.id === target.worldId);
+ const name = world ? world.name : "那個世界觀";
+ if (confirm((mode === "copy" ? "已複製到「" : "已移動到「") + name + "」。\n要切過去看嗎？")) {
+ const keepDoc = movedActiveDoc ? activeDocId : null;
+ selectWorld(target.worldId);
+ if (keepDoc) loadDocToEditor(keepDoc);      // 正在寫的那篇跟著過去，不要換成別篇
+ return;
+ }
+
+ /* 不過去的話：正在編輯的那篇已經不在這個世界觀了，編輯區不能繼續顯示它
+    （麵包屑、白板、字數都會對不上）。跟刪除之後一樣，換成這裡的第一篇。 */
+ if (movedActiveDoc) {
+ const rest = appData.docs.filter(d => d.worldId === activeWorldId);
+ if (rest.length) loadDocToEditor(rest[0].id);
+ else clearEditorWorkspace();
+ renderSidebarTree();
+ }
 }

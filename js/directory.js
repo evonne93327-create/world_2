@@ -424,10 +424,13 @@ function moveItemInto(payload, targetFolderId, targetWorldId) {
   const folderId = targetFolderId || null;
   const worldId = targetWorldId || activeWorldId;
 
+  let leavingDocIds = [];
+
   if (payload.type === "doc") {
     const doc = appData.docs.find(d => d.id === payload.id);
     if (!doc) return false;
     if ((doc.folderId || null) === folderId && doc.worldId === worldId) return false;
+    if (doc.worldId !== worldId) leavingDocIds = [doc.id];
     doc.folderId = folderId;
     doc.worldId = worldId;
   } else if (payload.type === "folder") {
@@ -438,16 +441,190 @@ function moveItemInto(payload, targetFolderId, targetWorldId) {
     if (payload.id === folderId) return false;
     if (folderId && isDescendantOf(payload.id, folderId)) return false;
     if ((f.parentId || null) === folderId && f.worldId === worldId) return false;
+
+    /* 換世界觀的時候，底下整棵子樹都要一起換。
+
+       原本只改了資料夾自己的 worldId：它搬過去了，但裡面的子資料夾與文檔
+       還留在原本的世界觀，而它們的上層已經不在那裡了——兩邊的目錄樹都
+       畫不出它們。資料都還在，使用者看到的是「搬過去之後裡面全空了、
+       原本那邊也不見了」。 */
+    if (f.worldId !== worldId) {
+      const sub = folderSubtree(f.id);
+      appData.folders.forEach(function(x) {
+        if (sub.folderIds.has(x.id)) x.worldId = worldId;
+      });
+      appData.docs.forEach(function(d) {
+        if (sub.docIds.has(d.id)) d.worldId = worldId;
+      });
+      leavingDocIds = Array.from(sub.docIds);
+    }
     f.parentId = folderId;
     f.worldId = worldId;
   } else {
     return false;
   }
 
+  /* 搬去別的世界觀的文檔，在原本那張白板上的節點要收掉。
+
+     白板畫節點時只看「這篇文檔還在不在」，不看它屬於哪個世界觀，所以不收
+     的話原本那張白板會一直掛著別的世界觀的文檔。收進垃圾桶而不是直接丟：
+     連線上寫的關係說明是使用者打的字，搬回來的時候還救得回來。 */
+  if (leavingDocIds.length && typeof trashOrphanNodesForDocs === "function") {
+    trashOrphanNodesForDocs(leavingDocIds, "（文檔搬到別的世界觀時留下的白板節點）");
+    if (typeof refreshCanvasIfVisible === "function") refreshCanvasIfVisible();
+  }
+
   saveData();
   renderSidebarTree();
   renderBreadcrumb();
   return true;
+}
+
+/* 一個資料夾底下的整棵子樹（含它自己）。
+
+   從上往下找，不是對每個資料夾往上問 isDescendantOf()：那個是沿著
+   parentId 一路往上走，資料損毀繞成圈又剛好沒經過起點時會走不完。
+   這裡記著走過的，繞成圈也會停。 */
+function folderSubtree(rootId) {
+  const folderIds = new Set([rootId]);
+  const queue = [rootId];
+  while (queue.length) {
+    const cur = queue.shift();
+    appData.folders.forEach(function(f) {
+      if (f.parentId === cur && !folderIds.has(f.id)) {
+        folderIds.add(f.id);
+        queue.push(f.id);
+      }
+    });
+  }
+  const docIds = new Set();
+  appData.docs.forEach(function(d) {
+    if (d.folderId && folderIds.has(d.folderId)) docIds.add(d.id);
+  });
+  return { folderIds: folderIds, docIds: docIds };
+}
+
+/* 同一毫秒內會產生很多個（複製一整個資料夾），所以一定要有隨機尾碼。 */
+function newItemId(prefix) {
+  return prefix + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
+}
+
+/* 複製一份到別的地方。回傳新的那一份的 id，失敗回 null。
+
+   資料夾是整棵子樹一起複製：每個子資料夾、每篇文檔都拿新的 id，
+   上下層的關係照原本的對應過去。
+
+   刻意不複製的：
+   - 白板上的節點與連線。白板是一個世界觀一張，而連線的另一端在原本的
+     世界觀裡，搬不過去。要的話到那邊用「批量投射白板」放上去。
+   - 復原紀錄。那是「這一篇被怎麼改過」，複製出來的是新的一篇。 */
+function copyItemInto(payload, targetFolderId, targetWorldId) {
+  if (!payload || !payload.id) return null;
+  const folderId = targetFolderId || null;
+  const worldId = targetWorldId || activeWorldId;
+  const now = formatTime(new Date());
+
+  function cloneDoc(d, newFolderId) {
+    const c = JSON.parse(JSON.stringify(d));
+    c.id = newItemId("doc_");
+    c.worldId = worldId;
+    c.folderId = newFolderId;
+    c.updatedAt = now;
+    return c;
+  }
+
+  if (payload.type === "doc") {
+    const doc = appData.docs.find(d => d.id === payload.id);
+    if (!doc) return null;
+    const c = cloneDoc(doc, folderId);
+    appData.docs.unshift(c);
+    return c.id;
+  }
+
+  if (payload.type === "folder") {
+    const root = appData.folders.find(f => f.id === payload.id);
+    if (!root) return null;
+    // 跟搬移同一條規則：複製進自己的子孫會無止盡地長（複製的過程中子孫又多了一份）
+    if (folderId && (folderId === root.id || isDescendantOf(root.id, folderId))) return null;
+
+    const sub = folderSubtree(root.id);
+    const idMap = {};
+    sub.folderIds.forEach(function(id) { idMap[id] = newItemId("f_"); });
+
+    const newFolders = [];
+    appData.folders.forEach(function(f) {
+      if (!sub.folderIds.has(f.id)) return;
+      const c = JSON.parse(JSON.stringify(f));
+      c.id = idMap[f.id];
+      c.worldId = worldId;
+      c.parentId = f.id === root.id ? folderId : idMap[f.parentId];
+      newFolders.push(c);
+    });
+
+    const newDocs = [];
+    appData.docs.forEach(function(d) {
+      if (sub.docIds.has(d.id)) newDocs.push(cloneDoc(d, idMap[d.folderId]));
+    });
+
+    newFolders.forEach(function(f) { appData.folders.push(f); });
+    newDocs.forEach(function(d) { appData.docs.push(d); });
+    return idMap[root.id];
+  }
+  return null;
+}
+
+/* 「移動」彈窗裡的目的地清單，照這個順序：
+
+     🌐 世界觀一（根目錄）
+     　📁 它的資料夾
+     　　📁 更深一層
+     🌐 世界觀二（根目錄）
+     　📁 它的資料夾
+
+   原本是「先列全部的世界觀，再列全部的資料夾」，資料夾看不出是哪個世界觀
+   的，同名的資料夾（每個世界觀都有一個「角色」）根本分不出來。
+
+   資料夾不能搬進自己或自己的子孫，所以搬資料夾時那一整支不列。
+   目前所在的位置會標出來，打開時也預設選它——這樣一眼就知道「現在在哪」。 */
+function moveTargetOptions(ref) {
+  const out = [];
+  let currentWorldId = null, currentParentId = null, excluded = new Set();
+
+  if (ref && ref.type === "doc") {
+    const d = appData.docs.find(x => x.id === ref.id);
+    if (d) { currentWorldId = d.worldId; currentParentId = d.folderId || null; }
+  } else if (ref && ref.type === "folder") {
+    const f = appData.folders.find(x => x.id === ref.id);
+    if (f) { currentWorldId = f.worldId; currentParentId = f.parentId || null; }
+    excluded = folderSubtree(ref.id).folderIds;
+  }
+
+  appData.worldviews.forEach(function(w) {
+    out.push({
+      worldId: w.id, parentId: null, depth: 0,
+      label: (w.icon || "🌐") + " " + w.name + "（根目錄）",
+      current: w.id === currentWorldId && currentParentId === null
+    });
+
+    const worldFolders = appData.folders.filter(f => f.worldId === w.id);
+    const ids = new Set(worldFolders.map(f => f.id));
+    const seen = {};
+    function walk(folder, depth) {
+      if (seen[folder.id] || excluded.has(folder.id)) return;
+      seen[folder.id] = true;
+      out.push({
+        worldId: w.id, parentId: folder.id, depth: depth,
+        label: "\u3000".repeat(depth) + (folder.icon || "📁") + " " + folder.name,
+        current: w.id === currentWorldId && currentParentId === folder.id
+      });
+      worldFolders.filter(f => f.parentId === folder.id)
+        .forEach(function(sub) { walk(sub, depth + 1); });
+    }
+    // 上層不在這個世界觀裡的（資料不一致）也當成最上層，不然那一支永遠選不到
+    worldFolders.filter(f => !f.parentId || !ids.has(f.parentId))
+      .forEach(function(f) { walk(f, 1); });
+  });
+  return out;
 }
 
 /* 手指底下是哪個資料夾。

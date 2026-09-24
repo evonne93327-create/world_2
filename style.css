@@ -1292,6 +1292,21 @@ main.content-workspace {
 }
 .modal-overlay.active { display: flex; }
 
+/* ---------- 移動／複製到別的世界觀 ---------- */
+
+.move-mode-row[hidden] { display: none; }
+.move-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6) var(--sp-16);
+  padding: var(--sp-10) var(--sp-12);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+}
+.move-mode-opt { display: inline-flex; align-items: center; gap: var(--sp-6); font-size: var(--fs-12); cursor: pointer; min-height: 28px; }
+.move-mode-hint { flex-basis: 100%; font-size: var(--fs-10); color: var(--text-muted); line-height: 1.5; }
+
 /* ---------- 批量投射白板 ---------- */
 
 .batch-project-list {
