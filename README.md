@@ -76,7 +76,7 @@ python3 -m http.server 8000
 ## 測試
 
 ```bash
-node --test          # 198 項
+node --test          # 199 項
 ```
 
 （注意：不要寫 `node --test tests/`，Node 22 會去 `require` 那個目錄。）
