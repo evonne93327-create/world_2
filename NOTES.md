@@ -16,7 +16,7 @@
 |---|---|
 | 線上位置 | https://evonne93327-create.github.io/world_2/ |
 | main | `3854360`（PR #52 合併後） |
-| service worker | **v83** |
+| service worker | **v84** |
 | 開發分支 | `claude/ipad-keyboard-button-placement-613jds` |
 | 開著的 PR | 無 |
 
@@ -634,8 +634,15 @@ Android 上也要先長按到系統自己認定是拖曳才會發。所以目錄
 - **「取消」按鈕的字不要改。** Escape／點遮罩走的 `dismissModal()` 是靠按鈕上
   的「取消」兩個字找到關閉按鈕的。
 
-白板的「兩者關係」與加 Hashtag 還是 `prompt()`——它們不是輸入名稱，沒有預設
-文字要取代的問題。
+**整個 app 已經沒有 `prompt()`**（使用者要求「全部統一」，白板的「兩者關係」與
+加 Hashtag 也換掉了）。`tests/wiring.test.js` 掃整個 `js/` 擋著。
+
+非同步帶來的一個坑：`prompt()` 會停在那裡等答案，彈窗不會——只有按確定會回來，
+按取消／Escape／點遮罩都不會。所以**任何「做完才收尾」的狀態都要在打開彈窗時就
+收掉**。白板拉線就是：原本在 `prompt()` 回來之後才 `cancelConnect()`，照搬的話
+從另外三條路關掉時連線模式會一直掛著，下一次點節點會莫名其妙拉出一條線。
+
+`confirm()`／`alert()` 還是瀏覽器內建的（刪除確認之類），那些不是輸入框。
 
 ### 3l. 垃圾桶分世界觀：看得到的分開，資料沒分開
 
@@ -701,7 +708,7 @@ Android 上也要先長按到系統自己認定是拖曳才會發。所以目錄
 ### 在 repo 裡的
 
 ```bash
-node --test          # 168 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 173 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |
