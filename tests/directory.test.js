@@ -1324,3 +1324,34 @@ test("垃圾桶清單：文檔還在垃圾桶時，跟著它的節點不獨立�
   assert.match(body, /trashedDocIds\.has\(/,
     "只有那篇文檔還在垃圾桶時才藏 —— 文檔不在了（例如早就被清掉），節點要能被看見");
 });
+
+test("跟著文檔復原節點：好幾顆時一顆都不漏（從後往前做）", function() {
+  /* 舊資料裡同一篇文檔可能在兩個世界觀的白板上各有一顆節點，刪它時會拆出
+     相鄰的兩筆。restoreCanvasTrashItem 每復原一筆就把它從陣列裡拿掉——從前
+     往後做的話，第二筆會往前遞補到剛剛那個位置，然後被跳過。 */
+  const app = nodeFollowApp();
+  app.run(`
+    appData.worldviews.push({ id: "w2", name: "外傳", canvas: { nodes: [{ id: "node_d1_w2", docId: "d1", x: 0, y: 0 }], edges: [], notes: [] } });
+    __kill("d1");
+  `);
+  assert.strictEqual(app.run(`appData.trash.canvas.length`), 2, "兩個世界觀各拆出一筆");
+  app.run(`restoreDocFromTrash("d1")`);
+  assert.strictEqual(app.run(`appData.trash.canvas.length`), 0, "兩筆都要回去，不能漏掉第二筆");
+  assert.strictEqual(app.run(`appData.worldviews[1].canvas.nodes.length`), 1);
+});
+
+test("跟著文檔復原節點：放不回去的安靜地留著，不跳提示", function() {
+  /* 例如節點所屬的世界觀已經不在了。一般的「復原」會跳提示告訴使用者為什麼
+     不行；跟著文檔一起復原時，使用者按的是「復原文檔」、文檔也確實回來了，
+     跳一個關於節點的警告只會讓人以為文檔沒復原成功。 */
+  const app = nodeFollowApp();
+  app.run(`
+    __kill("d1");
+    appData.trash.canvas[0].worldId = "不存在的世界觀";
+    restoreDocFromTrash("d1");
+  `);
+  assert.deepStrictEqual(host(app.run("__alerts")), [], "不跳提示");
+  assert.strictEqual(app.run(`appData.trash.canvas.length`), 1,
+    "放不回去就留在垃圾桶——文檔已經不在垃圾桶了，所以它會變成獨立一列，看得到");
+  assert.ok(app.run(`appData.docs.some(function(d) { return d.id === "d1"; })`), "文檔本身要回來");
+});
