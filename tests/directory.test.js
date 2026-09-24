@@ -865,7 +865,7 @@ test("移動彈窗：只有目的地在別的世界觀時才有「複製」", fu
     "打開時就要算一次 —— 目前位置是預設選項，「複製」一開始應該是藏著的");
 });
 
-/* ---------- 每個世界觀的垃圾桶獨立 ---------- */
+/* ---------- 垃圾桶：全部放一起、照世界觀分組 ---------- */
 
 function trashApp() {
   const app = loadApp([
@@ -891,37 +891,24 @@ function trashApp() {
   return app;
 }
 
-test("trashBelongsHere()：自己的，加上世界觀已經不在的", function() {
-  const app = trashApp();
-  const here = host(app.run(`appData.trash.docs.filter(function(d) { return trashBelongsHere(d, "w1"); }).map(function(d) { return d.id; })`));
-  assert.deepStrictEqual(here, ["a", "g"],
-    "外傳的 b 不能出現在主世界的垃圾桶；世界觀已刪除的 g 要出現 —— " +
-    "刪世界觀時確認框承諾「可以復原」，只看自己的話它在任何垃圾桶都看不到");
-  assert.strictEqual(app.run(`trashIsOrphan({ worldId: "已刪除的" })`), true);
-  assert.strictEqual(app.run(`trashIsOrphan({ worldId: "w2" })`), false);
-});
-
-test("清空垃圾桶只清目前這個世界觀的", function() {
+test("垃圾桶：清空就是全部清掉（所有世界觀共用一個）", function() {
+  /* 中間有一版是「每個世界觀的垃圾桶各自獨立、只清自己的」，使用者用過之後
+     改回來了：全部放在一起，標示清楚是哪個世界觀的就好。 */
   const app = trashApp();
   app.run(`emptyTrash()`);
-  const left = host(app.run(`({
-    docs: appData.trash.docs.map(function(d) { return d.id; }),
-    folders: appData.trash.folders.map(function(f) { return f.id; }),
-    canvas: appData.trash.canvas.map(function(c) { return c.worldId; })
-  })`));
-  assert.deepStrictEqual(left, { docs: ["b"], folders: ["fb"], canvas: ["w2"] },
-    "外傳的全部要留著 —— 使用者現在根本看不到它們，不能被順手清掉");
+  const left = host(app.run(`[appData.trash.docs.length, appData.trash.folders.length, appData.trash.canvas.length]`));
+  assert.deepStrictEqual(left, [0, 0, 0]);
 });
 
-test("垃圾桶的清單用篩過的、而且白板項目帶著原本的索引", function() {
-  /* 白板項目是用「在原本陣列裡的索引」復原與刪除的。篩選之後如果改用篩選後
-     陣列的索引，按「復原」會復原到別的世界觀的那一筆。 */
+test("垃圾桶的清單：每一筆都列、白板項目帶著原本的索引", function() {
+  /* 白板項目是用「在原本陣列裡的索引」復原與刪除的。分組之後如果改用組裡的
+     索引，按「復原」會復原到別的那一筆。 */
   const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
   assert.match(body, /\.map\(function\(item, index\) \{ return \{ item: item, index: index \}; \}\)/,
-    "篩選之前先把原本的索引記下來");
+    "分組之前先把原本的索引記下來");
   assert.match(body, /restoreCanvasTrashItem\(e\.index\)/, "復原用原本的索引");
   assert.match(body, /permanentlyDeleteCanvasTrashItem\(e\.index\)/, "刪除也是");
-  assert.match(body, /trashBelongsHere\(x, activeWorldId\)/, "三種都要篩");
+  assert.ok(!/activeWorldId/.test(body), "不要再照目前的世界觀篩選 —— 全部放在一起");
   assert.ok(!/innerHTML\s*=\s*'/.test(body), "空的提示也走 textContent");
 });
 
@@ -968,34 +955,41 @@ test("刪世界觀時，把名字蓋在垃圾桶裡屬於它的每一筆上", fu
   assert.ok(!/appData\.trash\.worlds/.test(directoryJs), "不要另外存一份已刪除世界觀的清單");
 });
 
-test("trashOrphanGroups()：照世界觀分組、最近刪的在上面、沒名字的也有一組", function() {
+test("trashGroups()：刪掉的世界觀在最上面（最近刪的在前），接著是現有的、照左側那排的順序", function() {
   const app = loadApp([
     "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
     "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"
   ]);
-  app.run(`appData = { worldviews: [{ id: "w1", name: "主" }], folders: [], docs: [], trash: { docs: [], folders: [], canvas: [] } };`);
-  const groups = host(app.run(`trashOrphanGroups(
+  app.run(`appData = { worldviews: [{ id: "w1", name: "主", icon: "🌍" }, { id: "w2", name: "外傳" }],
+                       folders: [], docs: [], trash: { docs: [], folders: [], canvas: [] } };`);
+  const groups = host(app.run(`trashGroups(
     [{ id: "fA", worldId: "wA", fromWorldName: "龍之谷", deletedTs: 200 }],
-    [{ id: "a1", worldId: "wA", fromWorldName: "龍之谷", deletedTs: 200 },
+    [{ id: "w2doc", worldId: "w2", deletedTs: 999 },
+     { id: "a1", worldId: "wA", fromWorldName: "龍之谷", deletedTs: 200 },
      { id: "b1", worldId: "wB", fromWorldName: "廢墟", deletedTs: 300 },
-     { id: "own", worldId: "w1", deletedTs: 999 },
+     { id: "own", worldId: "w1", deletedTs: 50 },
      { id: "old", worldId: "wOld", deletedTs: 1 }],
     [{ index: 0, item: { kind: "node", worldId: "wA", deletedTs: 200 } }]
   )`));
-  assert.deepStrictEqual(groups.map(function(g) { return g.name || "(無名)"; }), ["廢墟", "龍之谷", "(無名)"],
-    "最近刪的在上面；還在的世界觀（w1）不算");
+  assert.deepStrictEqual(groups.map(function(g) { return (g.deleted ? "刪:" : "") + (g.name || "(無名)"); }),
+    ["刪:廢墟", "刪:龍之谷", "刪:(無名)", "主", "外傳"],
+    "刪掉的在上面、最近刪的在前；現有的照左側那排的順序（不是照刪除時間）");
+
   const dragon = groups[1];
   assert.deepStrictEqual([dragon.folders.length, dragon.docs.length, dragon.canvas.length], [1, 1, 1],
     "資料夾、文檔、白板項目都要進同一組");
   assert.strictEqual(dragon.canvas[0].index, 0, "白板項目要帶著原本的索引（復原用的）");
+  assert.strictEqual(groups[3].icon, "🌍", "現有的世界觀用它現在的圖示");
 });
 
 test("垃圾桶：刪掉的世界觀放最上面", function() {
   const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
-  const orphanAt = body.indexOf('heading("刪除的世界觀"');
-  const ownAt = body.indexOf("rowsFor(ownF, ownD, ownC)");
-  assert.ok(orphanAt !== -1 && ownAt !== -1 && orphanAt < ownAt,
-    "「刪除的世界觀」那一區要畫在目前世界觀自己的東西之前（使用者指定的順序）");
+  const goneAt = body.indexOf('heading("刪除的世界觀"');
+  const aliveAt = body.indexOf("alive.forEach(");
+  assert.ok(goneAt !== -1 && aliveAt !== -1 && goneAt < aliveAt,
+    "「刪除的世界觀」那一區要畫在現有世界觀之前（使用者指定的順序）");
+  assert.match(body, /heading\(\(g\.icon \|\| "🌐"\) \+ " " \+ g\.name, "trash-group-title"\)/,
+    "現有的世界觀也要有標題 —— 全部放在一起之後，就靠這個分辨是哪個世界觀的");
   assert.match(body, /\(名稱沒有留下來的世界觀\)|名稱沒有留下來的世界觀/,
     "更早以前刪的世界觀沒蓋過名字，也要有一組，不能消失");
   assert.ok(!/來自已刪除的世界觀/.test(body), "分組之後不用再在每一列後面標了");
