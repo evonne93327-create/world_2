@@ -286,6 +286,12 @@ const gdriveProvider = {
     return { data: data, version: String(meta.version), at: meta.modifiedTime };
   },
 
+  /* 只看檔案的版本與修改時間，不下載內容 */
+  peek: async function() {
+    const meta = await findGdriveFile();
+    return meta ? { version: String(meta.version), at: meta.modifiedTime } : null;
+  },
+
   /* Drive 沒有「版本相符才寫入」這種條件式更新，只能寫入前先讀一次比對，
      中間存在很小的空窗期。這是相對 Supabase 版本的退步，但對個人
      單人使用而言，足以擋掉「另一台裝置改過卻被無聲蓋掉」這個主要風險。 */

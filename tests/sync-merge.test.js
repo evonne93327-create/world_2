@@ -330,8 +330,8 @@ test("沒有 id 的項目不會讓合併爆掉", function() {
    mergeCollection 自己的邊界
    ========================================================== */
 test("mergeCollection：空的輸入不會爆", function() {
-  assert.deepStrictEqual(mergeCollection({}, [], []), { list: [], conflicts: [] });
-  assert.deepStrictEqual(mergeCollection(null, null, null), { list: [], conflicts: [] });
+  assert.deepStrictEqual(mergeCollection({}, [], []), { list: [], upload: [], conflicts: [] });
+  assert.deepStrictEqual(mergeCollection(null, null, null), { list: [], upload: [], conflicts: [] });
 });
 
 /* ==========================================================
@@ -544,4 +544,244 @@ test("trash.worlds：另一台刪了世界觀 → 這台合併之後也看得到
   const remote = withTrashWorlds(db([doc("d1", "a")]), [tw("wX", "龍之谷")]);
   const r = merge(base, local, remote);
   assert.deepStrictEqual(r.data.trash.worlds.map(function(w) { return w.id; }), ["wX"]);
+});
+
+/* ==========================================================
+   白板逐個物件合併
+
+   以前整個世界觀（連白板）算一筆：兩台在同一塊白板上各動一張便條紙，
+   就是「同一筆兩邊都改」→ 衝突。現在每個節點／連線／便條紙各算一筆。
+   ========================================================== */
+
+function note(id, text, extra) {
+  return Object.assign({ id: id, x: 0, y: 0, w: 160, h: 100, text: text || "" }, extra || {});
+}
+
+function board(worldExtra, canvas) {
+  return db([], { worldviews: [Object.assign({ id: "w1", name: "主", icon: "🌐",
+    canvas: Object.assign({ nodes: [], edges: [], notes: [] }, canvas || {}) }, worldExtra || {})] });
+}
+
+function mergeP(base, local, remote, pending) {
+  return host(app.mergeAppData(base, local, remote, pending));
+}
+
+function notesOf(data) {
+  return data.worldviews[0].canvas.notes;
+}
+
+test("同一塊白板，兩台各動一張便條紙：都留著，不算衝突", function() {
+  const base = fingerprintOf(board({}, { notes: [note("n1", "一"), note("n2", "二")] }));
+  const local = board({}, { notes: [note("n1", "一", { x: 50 }), note("n2", "二")] });
+  const remote = board({}, { notes: [note("n1", "一"), note("n2", "二改")] });
+  const m = merge(base, local, remote);
+  assert.deepStrictEqual(m.conflicts, []);
+  const got = notesOf(m.data);
+  assert.strictEqual(got.find(function(n) { return n.id === "n1"; }).x, 50);
+  assert.strictEqual(got.find(function(n) { return n.id === "n2"; }).text, "二改");
+  assert.deepStrictEqual(m.upload, m.data, "沒有衝突時推上去的就是這台看到的");
+});
+
+test("同一張便條紙兩邊都改：只有這一張是衝突，而且兩邊都不被蓋掉", function() {
+  const base = fingerprintOf(board({}, { notes: [note("n1", "原本"), note("n2", "二")] }));
+  const local = board({}, { notes: [note("n1", "這台寫的"), note("n2", "二")] });
+  const remote = board({}, { notes: [note("n1", "那台寫的"), note("n2", "二改")] });
+  const m = merge(base, local, remote);
+  assert.deepStrictEqual(m.conflicts.map(function(c) { return c.kind + ":" + c.id; }), ["canvasNote:w1|notes|n1"]);
+  assert.match(m.conflicts[0].title, /便條紙：這台寫的/, "要看得出是哪一張");
+  assert.strictEqual(notesOf(m.data).find(function(n) { return n.id === "n1"; }).text, "這台寫的",
+    "這台看到的是自己的版本");
+  assert.strictEqual(notesOf(m.upload).find(function(n) { return n.id === "n1"; }).text, "那台寫的",
+    "推上去的保留雲端原本那一版 —— 還沒決定之前不可以覆蓋");
+  assert.strictEqual(notesOf(m.data).find(function(n) { return n.id === "n2"; }).text, "二改",
+    "沒撞到的照常同步");
+});
+
+test("白板物件：一邊刪、另一邊沒動 → 跟著刪；一邊刪、另一邊改 → 衝突", function() {
+  const base = fingerprintOf(board({}, { notes: [note("n1", "a"), note("n2", "b")] }));
+  const local = board({}, { notes: [note("n2", "b")] });                           // 刪了 n1
+  const remote = board({}, { notes: [note("n1", "a"), note("n2", "b改")] });
+  let m = merge(base, local, remote);
+  assert.deepStrictEqual(m.conflicts, []);
+  assert.deepStrictEqual(notesOf(m.data).map(function(n) { return n.id; }), ["n2"]);
+
+  const remote2 = board({}, { notes: [note("n1", "那台改了"), note("n2", "b")] });
+  m = merge(base, local, remote2);
+  assert.deepStrictEqual(m.conflicts.map(function(c) { return c.id; }), ["w1|notes|n1"]);
+  assert.deepStrictEqual(notesOf(m.data).map(function(n) { return n.id; }), ["n2"], "這台刪掉的就是刪掉");
+  assert.deepStrictEqual(notesOf(m.upload).map(function(n) { return n.id; }).sort(), ["n1", "n2"],
+    "雲端改過的那張還在雲端上");
+});
+
+test("世界觀改名撞在一起：只有名稱是衝突，白板上的東西照常合併", function() {
+  const base = fingerprintOf(board({}, { notes: [note("n1", "a")] }));
+  const local = board({ name: "這台的名字" }, { notes: [note("n1", "a"), note("n9", "新的")] });
+  const remote = board({ name: "那台的名字" }, { notes: [note("n1", "a改")] });
+  const m = merge(base, local, remote);
+  assert.deepStrictEqual(m.conflicts.map(function(c) { return c.kind + ":" + c.id; }), ["world:w1"]);
+  assert.strictEqual(m.data.worldviews[0].name, "這台的名字");
+  assert.strictEqual(m.upload.worldviews[0].name, "那台的名字");
+  [m.data, m.upload].forEach(function(d) {
+    const ns = notesOf(d);
+    assert.strictEqual(ns.find(function(n) { return n.id === "n1"; }).text, "a改");
+    assert.ok(ns.find(function(n) { return n.id === "n9"; }), "新加的便條紙兩份都要有");
+  });
+});
+
+test("一台刪了世界觀、另一台改了它的白板 → 衝突，不可以安靜地刪掉", function() {
+  const base = fingerprintOf(board({}, { notes: [note("n1", "a")] }));
+  const local = db([], { worldviews: [] });
+  const remote = board({}, { notes: [note("n1", "那台改的")] });
+  const m = merge(base, local, remote);
+  assert.deepStrictEqual(m.conflicts.map(function(c) { return c.kind + ":" + c.id; }), ["world:w1"]);
+  assert.deepStrictEqual(m.data.worldviews, []);
+  assert.strictEqual(m.upload.worldviews.length, 1, "雲端那一份還在");
+});
+
+test("舊的指紋（沒有逐物件的雜湊）：只有一邊動過照整個世界觀取；兩邊都動過取聯集", function() {
+  const base = fingerprintOf(board({}, { notes: [note("n1", "a")] }));
+  delete base.worldMeta;
+  delete base.canvas;
+
+  const local = board({}, { notes: [note("n1", "a"), note("n2", "這台")] });
+  let m = merge(base, local, board({}, { notes: [note("n1", "a")] }));
+  assert.deepStrictEqual(m.conflicts, []);
+  assert.deepStrictEqual(notesOf(m.data).map(function(n) { return n.id; }), ["n1", "n2"]);
+
+  m = merge(base, local, board({}, { notes: [note("n1", "a"), note("n3", "那台")] }));
+  assert.deepStrictEqual(m.conflicts, []);
+  assert.deepStrictEqual(notesOf(m.data).map(function(n) { return n.id; }).sort(), ["n1", "n2", "n3"],
+    "沒有祖先分不出誰刪了什麼，寧可多留");
+});
+
+test("兩邊都沒有的陣列不要平白加上去（不然每次合併都多推一次）", function() {
+  const w = { id: "w1", name: "主", canvas: { nodes: [], edges: [] } };
+  const d = db([], { worldviews: [w] });
+  const base = fingerprintOf(d);
+  // 雲端動了白板（這樣才會走逐物件合併那條路，而不是「兩邊一樣」直接取）
+  const w2 = { id: "w1", name: "主", canvas: { nodes: [{ id: "node_x", docId: "d1", x: 1, y: 2 }], edges: [] } };
+  const other = db([doc("d1", "x")], { worldviews: [w2] });
+  const m = merge(base, d, other);
+  assert.strictEqual(m.changedFromRemote, false);
+  assert.ok(!("notes" in m.data.worldviews[0].canvas));
+});
+
+/* ==========================================================
+   還沒決定的衝突要一直是衝突
+   ========================================================== */
+
+test("衝突還沒決定：推上去之後祖先記成雲端那版，下一輪也不可以把本機的推上去", function() {
+  const base0 = fingerprintOf(db([doc("d1", "原本"), doc("d2", "x")]));
+  const local = db([doc("d1", "這台寫的"), doc("d2", "x")]);
+  const remote = db([doc("d1", "那台寫的"), doc("d2", "x")]);
+  const first = merge(base0, local, remote);
+  assert.strictEqual(first.conflicts.length, 1);
+  assert.strictEqual(first.changedFromRemote, false, "只有衝突那一筆不同的話，沒東西要推");
+
+  // 推上去（或沒推）之後，祖先記成雲端現在的樣子
+  const base1 = fingerprintOf(first.upload);
+  const pending = first.conflicts.map(function(c) { return { kind: c.kind, id: c.id }; });
+
+  const without = merge(base1, local, remote);
+  assert.strictEqual(without.conflicts.length, 0,
+    "（這就是為什麼要記號：少了它，下一輪看起來是「只有本機改」）");
+  assert.strictEqual(contentOf(without.upload, "d1"), "這台寫的");
+
+  const withP = mergeP(base1, local, remote, pending);
+  assert.deepStrictEqual(withP.conflicts.map(function(c) { return c.id; }), ["d1"], "要一直是衝突");
+  assert.strictEqual(contentOf(withP.upload, "d1"), "那台寫的", "雲端那一份不能被蓋掉");
+  assert.strictEqual(contentOf(withP.data, "d1"), "這台寫的", "這台的也不能被蓋掉");
+});
+
+test("衝突還沒決定，但兩邊後來改成一樣了 → 自然消失", function() {
+  const same = db([doc("d1", "一樣了")]);
+  const m = mergeP(fingerprintOf(db([doc("d1", "舊")])), same, JSON.parse(JSON.stringify(same)),
+    [{ kind: "doc", id: "d1" }]);
+  assert.deepStrictEqual(m.conflicts, []);
+});
+
+test("衝突記號只影響那一筆：其他的照常三方合併", function() {
+  const base = fingerprintOf(board({}, { notes: [note("n1", "a"), note("n2", "b")] }));
+  const local = board({}, { notes: [note("n1", "a"), note("n2", "b")] });
+  const remote = board({}, { notes: [note("n1", "a"), note("n2", "b改")] });
+  const m = mergeP(base, local, remote, [{ kind: "canvasNote", id: "w1|notes|n1" }]);
+  assert.deepStrictEqual(m.conflicts, [], "n1 兩邊一樣，不算衝突");
+  assert.strictEqual(notesOf(m.data).find(function(n) { return n.id === "n2"; }).text, "b改");
+});
+
+/* ==========================================================
+   使用者選了之後
+   ========================================================== */
+
+function choose(local, fp, remote, conflict, choice, newId) {
+  return host(app.applyRecordChoice(local, fp, remote, conflict, choice, newId));
+}
+
+test("用這台的：本機不動，下一輪合併就把這台的推上去", function() {
+  const base = fingerprintOf(db([doc("d1", "原本")]));
+  const local = db([doc("d1", "這台寫的")]);
+  const remote = db([doc("d1", "那台寫的")]);
+  const c = { kind: "doc", id: "d1" };
+  const r = choose(local, base, remote, c, "local");
+  assert.strictEqual(contentOf(r.data, "d1"), "這台寫的");
+  const m = merge(r.fp, r.data, remote);
+  assert.deepStrictEqual(m.conflicts, []);
+  assert.strictEqual(contentOf(m.upload, "d1"), "這台寫的");
+  assert.strictEqual(m.changedFromRemote, true, "要推上去");
+});
+
+test("用雲端的：本機換成雲端的，不再是衝突；而且不會留在垃圾桶裡重複一份", function() {
+  const base = fingerprintOf(db([doc("d1", "原本")]));
+  const local = db([], { trash: { docs: [doc("d1", "原本")], folders: [] } }); // 這台刪了
+  const remote = db([doc("d1", "那台寫的")]);
+  const c = { kind: "doc", id: "d1" };
+  assert.strictEqual(merge(base, local, remote).conflicts.length, 1);
+  const r = choose(local, base, remote, c, "remote");
+  assert.strictEqual(contentOf(r.data, "d1"), "那台寫的");
+  assert.deepStrictEqual(r.data.trash.docs, [], "同一篇不可以同時在文檔與垃圾桶");
+  const m = merge(r.fp, r.data, remote);
+  assert.deepStrictEqual(m.conflicts, []);
+});
+
+test("兩份都留：這台的另存成（衝突副本），原本那篇換成雲端的", function() {
+  const base = fingerprintOf(db([doc("d1", "原本")]));
+  const local = db([doc("d1", "這台寫的")]);
+  const remote = db([doc("d1", "那台寫的")]);
+  const r = choose(local, base, remote, { kind: "doc", id: "d1" }, "both", "doc_copy");
+  assert.strictEqual(contentOf(r.data, "d1"), "那台寫的");
+  assert.strictEqual(contentOf(r.data, "doc_copy"), "這台寫的");
+  assert.strictEqual(r.data.docs.find(function(d) { return d.id === "doc_copy"; }).title, "d1（衝突副本）");
+  assert.deepStrictEqual(r.data.docs.map(function(d) { return d.id; }), ["d1", "doc_copy"], "副本緊接在原本那篇後面");
+  const m = merge(r.fp, r.data, remote);
+  assert.deepStrictEqual(m.conflicts, []);
+  assert.strictEqual(contentOf(m.upload, "doc_copy"), "這台寫的", "副本要推上去");
+});
+
+test("白板物件用雲端的：只換那一張，其他的不動", function() {
+  const base = fingerprintOf(board({}, { notes: [note("n1", "原本"), note("n2", "b")] }));
+  const local = board({}, { notes: [note("n1", "這台"), note("n2", "b這台")] });
+  const remote = board({}, { notes: [note("n1", "那台"), note("n2", "b")] });
+  const r = choose(local, base, remote, { kind: "canvasNote", id: "w1|notes|n1" }, "remote");
+  const ns = notesOf(r.data);
+  assert.strictEqual(ns.find(function(n) { return n.id === "n1"; }).text, "那台");
+  assert.strictEqual(ns.find(function(n) { return n.id === "n2"; }).text, "b這台");
+});
+
+test("世界觀本身用雲端的：名稱換掉，白板上的東西保留這台的", function() {
+  const base = fingerprintOf(board({}, { notes: [note("n1", "a")] }));
+  const local = board({ name: "這台" }, { notes: [note("n1", "a"), note("n2", "這台新增")] });
+  const remote = board({ name: "那台" }, { notes: [note("n1", "a")] });
+  const r = choose(local, base, remote, { kind: "world", id: "w1" }, "remote");
+  assert.strictEqual(r.data.worldviews[0].name, "那台");
+  assert.deepStrictEqual(notesOf(r.data).map(function(n) { return n.id; }), ["n1", "n2"]);
+});
+
+test("選了之後不動傳進來的那兩份", function() {
+  const base = fingerprintOf(db([doc("d1", "原本")]));
+  const local = db([doc("d1", "這台")]);
+  const before = JSON.stringify(local);
+  const baseBefore = JSON.stringify(base);
+  choose(local, base, db([doc("d1", "那台")]), { kind: "doc", id: "d1" }, "remote");
+  assert.strictEqual(JSON.stringify(local), before);
+  assert.strictEqual(JSON.stringify(base), baseBefore);
 });
