@@ -1292,6 +1292,24 @@ main.content-workspace {
 }
 .modal-overlay.active { display: flex; }
 
+/* ---------- 垃圾桶的分組標題 ---------- */
+
+.trash-section-title {
+  font-size: var(--fs-12);
+  font-weight: 700;
+  color: var(--text-secondary);
+  padding: var(--sp-10) var(--sp-4) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--sp-4);
+}
+.trash-section-title:first-child { padding-top: var(--sp-2); }
+.trash-group-title {
+  font-size: var(--fs-12);
+  font-weight: 700;
+  color: var(--text-primary);
+  padding: var(--sp-8) var(--sp-4) var(--sp-2);
+}
+
 /* ---------- 輸入名稱的彈窗 ---------- */
 
 .text-input-fields { display: flex; flex-direction: column; gap: var(--sp-12); }

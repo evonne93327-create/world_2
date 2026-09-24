@@ -1342,6 +1342,28 @@ function deleteDocById(docId) {
  }
 }
 
+/* 世界觀刪掉之後，它的名字就不在任何地方了（appData.worldviews 裡那一筆被
+   拿掉），垃圾桶裡的東西只剩一個 worldId。垃圾桶要照「是哪個世界觀刪掉的」
+   分組顯示，所以在刪的當下把名字蓋在垃圾桶的**每一筆**上。
+
+   為什麼蓋在每一筆上，而不是另外存一份「已刪除的世界觀」清單：逐篇合併
+   （sync-merge.js）只合併 trash.docs 與 trash.folders，trash 底下多出來的
+   任何欄位在自動合併時都會被丟掉——另外存一份的話，同步一次名字就沒了。
+   蓋在每一筆上，它就跟著那一筆一起被合併。
+
+   不只蓋這次刪掉的：之前就從這個世界觀刪進垃圾桶的東西，現在也一起變成
+   「世界觀已經不在」，一樣要知道自己是哪裡來的。 */
+function stampDeletedWorldOnTrash(worldId, name, icon) {
+ const t = appData.trash || {};
+ ["docs", "folders", "canvas"].forEach(function(k) {
+ (t[k] || []).forEach(function(item) {
+ if (item.worldId !== worldId) return;
+ item.fromWorldName = name;
+ item.fromWorldIcon = icon || "🌐";
+ });
+ });
+}
+
 function deleteWorldById(worldId) {
  if (appData.worldviews.length <= 1) {
  alert("這是最後一個世界觀，無法刪除！");
@@ -1360,6 +1382,9 @@ function deleteWorldById(worldId) {
 
  if (typeof moveDocsToTrash === 'function') moveDocsToTrash(docsToTrash);
  if (typeof moveFoldersToTrash === 'function') moveFoldersToTrash(foldersToTrash);
+
+ const world = appData.worldviews.find(w => w.id === worldId);
+ if (world) stampDeletedWorldOnTrash(worldId, world.name, world.icon);
 
  appData.worldviews = appData.worldviews.filter(w => w.id !== worldId);
 

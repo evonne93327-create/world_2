@@ -934,3 +934,77 @@ test("一句話簡介在搜尋欄上面", function() {
   assert.ok(desc !== -1 && search !== -1 && tree !== -1);
   assert.ok(desc < search && search < tree, "順序要是：簡介 → 搜尋欄 → 目錄樹（使用者指定的位置）");
 });
+
+/* ---------- 垃圾桶：刪掉的世界觀照名字分組、放最上面 ---------- */
+
+test("刪世界觀時，把名字蓋在垃圾桶裡屬於它的每一筆上", function() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"
+  ]);
+  app.run(`
+    appData = { worldviews: [{ id: "w1", name: "主" }, { id: "wX", name: "龍之谷", icon: "🐉" }],
+      folders: [], docs: [],
+      trash: { docs: [{ id: "early", worldId: "wX" }, { id: "other", worldId: "w1" }],
+               folders: [{ id: "f", worldId: "wX" }],
+               canvas: [{ kind: "node", worldId: "wX" }] } };
+    stampDeletedWorldOnTrash("wX", "龍之谷", "🐉");
+  `);
+  const t = host(app.run("appData.trash"));
+  assert.strictEqual(t.docs[0].fromWorldName, "龍之谷",
+    "之前就從這個世界觀刪進來的也要蓋 —— 它現在一樣是「世界觀已經不在」");
+  assert.strictEqual(t.folders[0].fromWorldName, "龍之谷");
+  assert.strictEqual(t.canvas[0].fromWorldName, "龍之谷");
+  assert.strictEqual(t.docs[0].fromWorldIcon, "🐉");
+  assert.ok(!("fromWorldName" in t.docs[1]), "別的世界觀的不能被蓋");
+
+  /* 名字一定要蓋在每一筆上，不能另外存一份清單：sync-merge 只合併
+     trash.docs 與 trash.folders，trash 底下多出來的欄位同步一次就沒了。 */
+  const del = codeOnly(bodyOf(directoryJs, "deleteWorldById"));
+  const stampAt = del.indexOf("stampDeletedWorldOnTrash(");
+  const removeAt = del.indexOf("appData.worldviews = appData.worldviews.filter");
+  assert.ok(stampAt !== -1 && stampAt < removeAt,
+    "要在把世界觀拿掉之前蓋 —— 拿掉之後就查不到名字了");
+  assert.ok(!/appData\.trash\.worlds/.test(directoryJs), "不要另外存一份已刪除世界觀的清單");
+});
+
+test("trashOrphanGroups()：照世界觀分組、最近刪的在上面、沒名字的也有一組", function() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"
+  ]);
+  app.run(`appData = { worldviews: [{ id: "w1", name: "主" }], folders: [], docs: [], trash: { docs: [], folders: [], canvas: [] } };`);
+  const groups = host(app.run(`trashOrphanGroups(
+    [{ id: "fA", worldId: "wA", fromWorldName: "龍之谷", deletedTs: 200 }],
+    [{ id: "a1", worldId: "wA", fromWorldName: "龍之谷", deletedTs: 200 },
+     { id: "b1", worldId: "wB", fromWorldName: "廢墟", deletedTs: 300 },
+     { id: "own", worldId: "w1", deletedTs: 999 },
+     { id: "old", worldId: "wOld", deletedTs: 1 }],
+    [{ index: 0, item: { kind: "node", worldId: "wA", deletedTs: 200 } }]
+  )`));
+  assert.deepStrictEqual(groups.map(function(g) { return g.name || "(無名)"; }), ["廢墟", "龍之谷", "(無名)"],
+    "最近刪的在上面；還在的世界觀（w1）不算");
+  const dragon = groups[1];
+  assert.deepStrictEqual([dragon.folders.length, dragon.docs.length, dragon.canvas.length], [1, 1, 1],
+    "資料夾、文檔、白板項目都要進同一組");
+  assert.strictEqual(dragon.canvas[0].index, 0, "白板項目要帶著原本的索引（復原用的）");
+});
+
+test("垃圾桶：刪掉的世界觀放最上面", function() {
+  const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
+  const orphanAt = body.indexOf('heading("刪除的世界觀"');
+  const ownAt = body.indexOf("rowsFor(ownF, ownD, ownC)");
+  assert.ok(orphanAt !== -1 && ownAt !== -1 && orphanAt < ownAt,
+    "「刪除的世界觀」那一區要畫在目前世界觀自己的東西之前（使用者指定的順序）");
+  assert.match(body, /\(名稱沒有留下來的世界觀\)|名稱沒有留下來的世界觀/,
+    "更早以前刪的世界觀沒蓋過名字，也要有一組，不能消失");
+  assert.ok(!/來自已刪除的世界觀/.test(body), "分組之後不用再在每一列後面標了");
+});
+
+test("從垃圾桶復原時，把蓋上去的世界觀名字拿掉", function() {
+  ["restoreDocFromTrash", "restoreFolderFromTrash"].forEach(function(fn) {
+    const body = codeOnly(bodyOf(modalJs, fn));
+    assert.match(body, /delete \w+\.fromWorldName;/, fn + "() 要拿掉 fromWorldName —— 回到目錄之後那是沒意義的雜訊");
+    assert.match(body, /delete \w+\.fromWorldIcon;/, fn + "() 也要拿掉 fromWorldIcon");
+  });
+});

@@ -1024,35 +1024,91 @@ function renderTrashList() {
  return;
  }
 
- // 世界觀已經不在的，標出來——不然使用者會納悶「這篇怎麼跑到這裡來」
- const from = function(x) { return trashIsOrphan(x) ? "　·　來自已刪除的世界觀" : ""; };
-
- folders.forEach(function(f) {
- list.appendChild(createTrashRow(f.icon || '📁', (f.name || '未命名資料夾') + from(f), f.deletedAt, function() {
+ const canvasIcons = { node: '🔗', edge: '↔️', note: '🗒️' };
+ function rowsFor(fs, ds, cs) {
+ fs.forEach(function(f) {
+ list.appendChild(createTrashRow(f.icon || '📁', f.name || '未命名資料夾', f.deletedAt, function() {
  restoreFolderFromTrash(f.id);
  }, function() {
  permanentlyDeleteTrashFolder(f.id);
  }));
  });
-
- docs.forEach(function(d) {
- list.appendChild(createTrashRow(d.icon || '📄', (d.title || '無標題文檔') + from(d), d.deletedAt, function() {
+ ds.forEach(function(d) {
+ list.appendChild(createTrashRow(d.icon || '📄', d.title || '無標題文檔', d.deletedAt, function() {
  restoreDocFromTrash(d.id);
  }, function() {
  permanentlyDeleteTrashDoc(d.id);
  }));
  });
-
- const canvasIcons = { node: '🔗', edge: '↔️', note: '🗒️' };
- canvasItems.forEach(function(e) {
+ cs.forEach(function(e) {
  list.appendChild(createTrashRow(
  canvasIcons[e.item.kind] || '🧩',
- (e.item.label || '白板項目') + from(e.item),
+ e.item.label || '白板項目',
  e.item.deletedAt,
  function() { if (restoreCanvasTrashItem(e.index)) renderTrashList(); },
  function() { permanentlyDeleteCanvasTrashItem(e.index); }
  ));
  });
+ }
+ function heading(text, cls) {
+ const h = document.createElement("div");
+ h.className = cls;
+ h.textContent = text;
+ list.appendChild(h);
+ }
+
+ /* 刪掉的世界觀放最上面，每個世界觀一組、標上它的名字（使用者指定的排法）：
+
+      刪除的世界觀
+        🗑 世界觀一
+          檔案…
+        🗑 世界觀二
+          檔案…
+      （目前這個世界觀）
+        檔案…
+
+    分組照 worldId，名字從蓋在每一筆上的 fromWorldName 拿。更早以前刪的
+    世界觀沒有蓋過名字，就寫「名稱沒有留下來」，至少還分得出是同一批。 */
+ const groups = trashOrphanGroups(folders, docs, canvasItems);
+ if (groups.length) {
+ heading("刪除的世界觀", "trash-section-title");
+ groups.forEach(function(g) {
+ heading((g.icon || "🌐") + " " + (g.name || "（名稱沒有留下來的世界觀）"), "trash-group-title");
+ rowsFor(g.folders, g.docs, g.canvas);
+ });
+ }
+
+ const own = function(x) { return !trashIsOrphan(x); };
+ const ownF = folders.filter(own), ownD = docs.filter(own);
+ const ownC = canvasItems.filter(function(e) { return own(e.item); });
+ if (ownF.length || ownD.length || ownC.length) {
+ // 上面有刪掉的世界觀時才需要這個標題，把兩區分開
+ if (groups.length) heading(world ? ((world.icon || "🌐") + " " + world.name) : "這個世界觀", "trash-section-title");
+ rowsFor(ownF, ownD, ownC);
+ }
+}
+
+/* 把「世界觀已經不在」的那些照原本的世界觀分組。純函式，好測。
+   最近刪的世界觀排最上面（跟垃圾桶「新的在上」的直覺一致）。 */
+function trashOrphanGroups(folders, docs, canvasItems) {
+ const byWorld = {};
+ const order = [];
+ function slot(item) {
+ const key = item.worldId || "?";
+ if (!byWorld[key]) {
+ byWorld[key] = { worldId: key, name: "", icon: "", folders: [], docs: [], canvas: [], latest: 0 };
+ order.push(key);
+ }
+ const g = byWorld[key];
+ if (!g.name && item.fromWorldName) { g.name = item.fromWorldName; g.icon = item.fromWorldIcon || ""; }
+ if ((item.deletedTs || 0) > g.latest) g.latest = item.deletedTs || 0;
+ return g;
+ }
+ (folders || []).forEach(function(f) { if (trashIsOrphan(f)) slot(f).folders.push(f); });
+ (docs || []).forEach(function(d) { if (trashIsOrphan(d)) slot(d).docs.push(d); });
+ (canvasItems || []).forEach(function(e) { if (trashIsOrphan(e.item)) slot(e.item).canvas.push(e); });
+ return order.map(function(k) { return byWorld[k]; })
+ .sort(function(a, b) { return b.latest - a.latest; });
 }
 
 function permanentlyDeleteCanvasTrashItem(index) {
@@ -1109,6 +1165,9 @@ function restoreFolderFromTrash(folderId) {
  const [folder] = appData.trash.folders.splice(idx, 1);
  delete folder.deletedAt;
  delete folder.deletedTs;
+ // 垃圾桶分組用的（見 stampDeletedWorldOnTrash），回到目錄之後就沒有意義了
+ delete folder.fromWorldName;
+ delete folder.fromWorldIcon;
 
  if (folder.parentId && !appData.folders.some(f => f.id === folder.parentId)) {
  folder.parentId = null;
@@ -1129,6 +1188,8 @@ function restoreDocFromTrash(docId) {
  const [doc] = appData.trash.docs.splice(idx, 1);
  delete doc.deletedAt;
  delete doc.deletedTs;
+ delete doc.fromWorldName;
+ delete doc.fromWorldIcon;
 
  if (doc.folderId && !appData.folders.some(f => f.id === doc.folderId)) {
  doc.folderId = null;
