@@ -15,20 +15,20 @@
 | | |
 |---|---|
 | 線上位置 | https://evonne93327-create.github.io/world_2/ |
-| main | `c672df8`（PR #38 合併後） |
-| service worker | **v56** |
-| 開發分支 | `claude/beautiful-feynman-ts3pe6` |
+| main | `3854360`（PR #52 合併後） |
+| service worker | **v76** |
+| 開發分支 | `claude/ipad-keyboard-button-placement-613jds` |
 | 開著的 PR | 無 |
 
 ### 分支流程
 
-一律在 `claude/beautiful-feynman-ts3pe6` 上開發，開 PR 合併到 main。
+一律在 `claude/ipad-keyboard-button-placement-613jds` 上開發，開 PR 合併到 main。
 **PR 合併之後那個 PR 就結束了，不要再往上疊 commit**——把分支重設在
 合併後的 main 上重新開始：
 
 ```bash
 git fetch origin main
-git checkout -B claude/beautiful-feynman-ts3pe6 origin/main
+git checkout -B claude/ipad-keyboard-button-placement-613jds origin/main
 ```
 
 分支上如果還有沒合併進去的 commit，改用 `git rebase origin/main` 保留它們。
@@ -266,15 +266,6 @@ bug，而且要好幾輪之後才會被發現。
 重排那條路留著當退路（程式聚焦、鍵盤操作走得到），診斷面板的 `caretMeasure`
 會寫 `pointer` 或 `mirror 106ms`，一眼看得出這次走了哪一條。
 
-### 3d-3. 「卡」不是捲動突兀，是主執行緒被鎖住
-
-使用者說「捲上去的時候很卡」，而且是**點文章中間**的時候。那兩件事合起來就是
-答案：`measureCaretBottom()` 要把游標前面的整篇文章用同樣的字體與寬度重排一次
-（實測一萬行 **106ms**），而它**只在「游標不在最後一行」時才跑**——也就是點
-文章中間。那一下停頓正好落在鍵盤升起的動畫中間。
-
-一開始以為「卡」是指捲動太突兀，於是去做動畫，結果把 3c 弄壞了兩輪。
-**「卡」在中文裡多半是指頓、掉格，不是指突兀。**
 
 而那個位置本來就不必算：**使用者剛剛才用手指指給我們看**。`pointerdown` 的
 `clientY` 就在游標那一行上，一個減法就換到答案，零重排。`scrollTop` 要一起記
@@ -439,6 +430,89 @@ PWA）與 `stale`（這一頁是不是在跑舊程式碼）。有「複製」鈕
 **還沒做到的**：粒度到「一篇文檔」為止，同一篇的兩份內容不會逐行合併；同一個
 世界觀的白板也是整塊。那些仍然是停下來問。
 
+### 3h. HTML5 的拖放在觸控裝置上根本不會觸發
+
+`draggable` / `dragstart` / `dragover` / `drop` **在 iOS Safari 上完全不支援**，
+Android 上也要先長按到系統自己認定是拖曳才會發。所以目錄樹在手機上一直是
+「看起來可以拖、實際上動不了」——使用者回報的「手機端不能直接拖拽移動文件
+位置」就是這個，程式沒有壞，是那一整套 API 不存在。
+
+觸控要自己寫一套。難的不是拖，是**手勢沒位子了**：
+
+| 手勢 | 已經被誰佔走 |
+|---|---|
+| 點 | 打開文檔／收合資料夾 |
+| 長按 480ms | 右鍵選單 |
+| 直向拖 | 捲動側欄 |
+| 從螢幕左緣橫向拖 | 開啟目錄欄（`setupEdgeSwipe`） |
+
+**接在長按後面**：選單跳出來之後手指沒放開又開始移動，那就是「拿起來拖」。
+iOS 自己的相簿與檔案 app 就是這個順序，不必教。實作上是
+`attachContextMenu()` 收一個選填的 `dragHooks`，有給的元素才會多掛一個
+**非被動**的 `touchmove`。
+
+幾個一定要記得的點（每一條都對應一種安靜的壞法）：
+
+- **那個 `touchmove` 必須 `{ passive: false }`。** passive 的監聽器裡
+  `preventDefault()` 會被忽略（只在 console 留一行警告），側欄會一邊被拖
+  一邊跟著手指捲。刻意另外掛一個、不要去動原本那個 passive 的——白板也在
+  用同一個函式，改成非被動等於讓整片白板的捲動都付出代價。
+- **幽靈一定要 `pointer-events: none`。** 放置目標是 `elementFromPoint()`
+  找的，而幽靈就跟在手指正下方；忘了關的話每次問到的都是幽靈自己，
+  每一次拖曳都「放不下去」，而且沒有任何跡象。
+- **收尾只能有一個出口。** 放開、`touchcancel`（來電、多指、下拉通知）、
+  重新開始一次拖曳，全部走 `cancelTouchDrag()`。漏掉哪一條，幽靈就永遠
+  掛在畫面上，自動捲動的計時器也一直在跑。
+- **拖曳期間原生捲動是停的**（被 preventDefault 了），所以要自己做邊緣
+  自動捲動，否則收在畫面外的資料夾永遠放不進去。手指停在邊緣不動也要繼續
+  捲，所以用計時器，不要靠移動事件。
+- **進入拖曳的位移門檻要比 `LONG_PRESS_SLOP_PX` 小。** 選單都跳出來了，
+  這時候的移動是刻意的，不需要再容忍「拿著一公斤的機器手會晃」那種抖動。
+
+搬移的規則（尤其是「資料夾不可以搬進自己的子孫」）只寫在 `moveItemInto()`
+裡一份，拖放、觸控、「移動」彈窗三條路都走它。以前彈窗那條路是靠**在畫選項時
+先過濾掉**來擋的——那等於把規則寄放在 UI 上，換一個入口就沒人擋。繞成圈的
+資料夾不會報錯，它只是從根目錄走不到，那一整支在畫面上憑空消失。
+
+### 3i. 復原會跳動，是因為瀏覽器自己去「把游標捲進視野」
+
+使用者回報「多次復原會跳動，就算是同一行」。兩個原因疊在一起：
+
+1. `applyHistorySnapshot()` 把 `textarea.value` 整個換掉，再 `focus()` +
+   `setSelectionRange()`。瀏覽器看到這一串就會自己把游標捲進視野，而它挑的
+   落點跟原本不一樣——**就算游標根本還在同一行**。
+2. 最底下那一格快照沒有記游標（`ensureDocHistory()` 建它的時候還沒有），
+   原本的退路是「放到文章結尾」。所以一路復原到底的最後一下會把畫面甩到
+   文章最末端。
+
+修法兩條：
+
+- **把捲動位置記下來，全部做完之後放回去。** 要放在所有重畫（`renderTOC`、
+  `renderSidebarTree`、快速跳轉那一段）**之後**——它們都可能動到版面高度，
+  早一步還原會被它們蓋掉。
+- **不知道游標在哪就不要動它**，留在原處、只夾進新的長度裡。讀「原處」必須
+  在寫入 `.value` **之前**：規格規定寫入會把游標推到結尾，之後再讀就只讀得到
+  結尾，那個退路會變成「一律跳到結尾」。
+
+真的需要移動的情況（復原到很遠的一次編輯）交給一個**等手停下來**的檢查
+（`UNDO_CARET_SETTLE_MS = 200`）。每一步都檢查的話，一來每次算出來的落點不同
+（那就是跳動），二來量測本身要把游標前面的文章整篇重排（3d-3，一萬行 106ms），
+連按五次就付五次。判斷「看得見就不要動」抽成純函式
+`caretScrollCorrection()`，因為那是這次修正的全部重點，而它在瀏覽器裡很難驗。
+
+**那一下補捲一樣不可以有動畫**，理由同 3d-2，`tests/editor.test.js` 有反向檢查。
+
+### 3j. 共用的 `dismissModal()` 不會經過你的關閉函式
+
+`.modal-overlay` 免費送了一整套：點遮罩關掉、Escape 關掉、Tab 不跑出去、
+鍵盤升起時的讓位。但 Escape 與點遮罩走的是共用的 `dismissModal()`，它只會
+把 `.active` 拿掉——**你自己那個 `closeXxx()` 根本不會被呼叫**。
+
+圖片檢視就踩了這一腳：關閉時要把 `<img>` 的 `src` 放掉（一張壓過的照片是
+幾百 KB 的 base64），寫在 `closeImageViewer()` 裡，結果按 Escape 關掉的那一次
+收不到。改成用 `MutationObserver` 盯 `.active` 這個 class，無論從哪一條路
+關掉都收得到。
+
 ### 4. 彈窗卡片不要畫預設焦點框
 
 `.modal-card` 的 `tabindex="-1"` 只是給程式聚焦用的錨點，使用者按 Tab
@@ -473,6 +547,10 @@ PWA）與 `stale`（這一頁是不是在跑舊程式碼）。有「複製」鈕
 - **每個改動都用 Playwright 實測**，不要只看程式碼覺得對。
 - **故意把修好的地方改壞，確認對應的測試真的變紅。** 這串裡好幾次
   測試是空的（斷言寫錯、選擇器選不到東西），不驗證的話等於沒測。
+- **改壞之前先 commit。** 那一輪驗證是「改壞 → 跑測試 → 還原」，而「還原」
+  如果寫成 `git checkout -- <檔案>`，在還沒 commit 的情況下**會把那個檔案
+  整天的工作一起丟掉**。實際發生過一次，六個檔案退回 HEAD，只能照著對話
+  紀錄一條一條重做。先 commit，`git checkout` 才是安全的還原。
 - **註解寫「為什麼」不寫「做什麼」**，尤其是踩過的坑與刻意的取捨。
   程式碼本身說得出「做什麼」，說不出「為什麼不能用另一個寫法」。
 - **推完馬上確認有沒有對應的 open PR，沒有就當場開。**
@@ -487,7 +565,7 @@ PWA）與 `stale`（這一頁是不是在跑舊程式碼）。有「複製」鈕
 ### 在 repo 裡的
 
 ```bash
-node --test          # 94 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 124 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |
@@ -499,7 +577,14 @@ node --test          # 94 項。注意：不要寫 node --test tests/，Node 22 
 | `tests/wiring.test.js` | `onclick="foo()"` 有沒有對應的函式、鍵盤診斷的入口有沒有接上 |
 | `tests/sync.test.js` | 對帳的時機與接線；每一條都是「不做會弄丟資料」 |
 | `tests/sync-merge.test.js` | 逐篇三方合併的規則。全專案最危險的一段，測得最細 |
-| `tests/helpers/load-app.js` | `node:vm` 沙箱；跨 realm 的 `deepStrictEqual` 會因為 prototype 不同而失敗，所以有個 `host()` 做 JSON round-trip |
+| `tests/directory.test.js` | 目錄的搬移規則、整列收合、觸控拖曳有沒有接上 |
+| `tests/editor.test.js` | 復原的捲動位置、圖片檢視的收尾、世界觀簡介 |
+| `tests/helpers/load-app.js` | `node:vm` 沙箱；跨 realm 的 `deepStrictEqual` 會因為 prototype 不同而失敗，所以有個 `host()` 做 JSON round-trip；另有 `run()` 可以在沙箱**裡面**執行程式碼 |
+
+`run()` 是後來加的，原因值得記：state.js 寫的是 `let appData = ...`，而 `let`
+在腳本頂層建立的是 **script scope** 的 binding，**不會**變成 `globalThis` 的
+屬性。從外面 `sandbox.appData = {...}` 只是多掛一個同名屬性，檔案裡的函式
+看不到它——測試會安安靜靜地跑在預設資料上，然後因為錯的理由通過或失敗。
 
 ### 不在 repo 裡的
 

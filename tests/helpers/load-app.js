@@ -92,6 +92,18 @@ function loadApp(files) {
     const src = fs.readFileSync(path.join(ROOT, rel), "utf8");
     vm.runInContext(src, sandbox, { filename: rel });
   });
+
+  /* 在沙箱「裡面」執行一段程式碼。
+
+     為什麼需要它：state.js 寫的是 `let appData = ...`，而 let 在腳本頂層建立的
+     是 script scope 的 binding，**不會**變成 globalThis 的屬性。從外面寫
+     sandbox.appData = {...} 只是多掛一個同名的屬性，檔案裡的函式看不到它——
+     測試會安安靜靜地跑在原本那份預設資料上，然後因為錯的理由通過或失敗。
+     要餵資料給那些函式，程式碼就得跟它們在同一個 realm 裡跑。 */
+  sandbox.run = function(code) {
+    return vm.runInContext(code, sandbox, { filename: "test-inline" });
+  };
+
   return sandbox;
 }
 

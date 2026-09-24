@@ -20,6 +20,7 @@ window.addEventListener("DOMContentLoaded", function() {
   setupCaretRoomOnFocus();
   setupKbDiag();
   setupEdgeSwipe();
+  setupImageViewer();
   initSync();
   initSyncRecovery();
   setupModalKeyboard();

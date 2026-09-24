@@ -273,7 +273,7 @@ function normalizeImportedFolder(f) {
 
 function normalizeImportedWorld(w) {
   const c = (w.canvas && typeof w.canvas === "object") ? w.canvas : {};
-  return Object.assign({}, w, {
+  const out = Object.assign({}, w, {
     name: typeof w.name === "string" ? w.name : "未命名世界觀",
     icon: typeof w.icon === "string" ? w.icon : "🌐",
     canvas: {
@@ -284,6 +284,14 @@ function normalizeImportedWorld(w) {
       notes: Array.isArray(c.notes) ? c.notes : []
     }
   });
+
+  /* 一句話簡介是選填的，所以只在「有、而且是字串」時留著。匯入的 JSON 可以
+     在這裡塞物件或陣列，那些東西畫出來會是 [object Object]。
+     （長度也截一下，理由同 WORLD_DESC_MAX_LEN。） */
+  if (typeof out.desc === "string") out.desc = out.desc.trim().slice(0, WORLD_DESC_MAX_LEN);
+  else delete out.desc;
+
+  return out;
 }
 
 function normalizeImportedDatabase(data) {
