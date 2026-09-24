@@ -75,6 +75,11 @@
       <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="executeBatchDelete()">刪除選取項</button>
     </div>
 
+    <!-- 目前世界觀的一句話簡介，放在搜尋欄上面（使用者指定的位置）。
+         點下去就能改；沒寫過時顯示成淡淡的提示，不然這個功能會整個藏在
+         長按選單裡沒人找得到。 -->
+    <button type="button" class="world-desc-line" id="worldDescLine" onclick="promptEditWorldDesc()"></button>
+
     <!-- Google 風格搜尋框 (無底色叉叉) + Hashtag 篩選 -->
     <div class="search-wrap">
       <div class="search-row">
@@ -86,10 +91,6 @@
         <button type="button" id="hashtagFilterBtn" class="icon-sm-btn hashtag-filter-btn" title="Hashtag 篩選" onclick="openHashtagFilterModal()">🏷️</button>
       </div>
     </div>
-
-    <!-- 目前世界觀的一句話簡介。點下去就能改；沒寫過時顯示成淡淡的提示，
-         不然這個功能會整個藏在長按選單裡沒人找得到。 -->
-    <button type="button" class="world-desc-line" id="worldDescLine" onclick="promptEditWorldDesc()"></button>
 
     <!-- 類 Windows 檔案樹狀目錄 -->
     <div class="directory-tree-area" id="worldTreeContainer"></div>
@@ -150,6 +151,7 @@
                      符號的字身寬度不一樣，每一列的文字就會各自歪一點點。 -->
                 <div class="docactions-panel" id="docActionsPanel">
                   <button class="docactions-item" onclick="closeDocActionsPanel(); addCurrentDocToCanvas();"><span class="docactions-icon">📌</span><span>投射白板</span></button>
+                  <button class="docactions-item" onclick="closeDocActionsPanel(); openBatchProjectModal();"><span class="docactions-icon">🗂️</span><span>批量投射白板</span></button>
                   <button class="docactions-item" onclick="toggleParagraphIndent();"><span class="docactions-icon">➡️</span><span id="indentLabel">段首空兩格</span></button>
                   <label class="docactions-item" title="插入圖片">
                     <span class="docactions-icon">🖼️</span><span>放圖片</span>
@@ -212,6 +214,9 @@
 
         <!-- 右下角浮動按鈕 -->
         <div class="canvas-floating-actions">
+          <!-- 批量投射：人在白板上時最常想做的就是「把這些文檔也放上來」，
+               所以這裡也放一個入口，不必先切回文檔去找「⋯」選單。 -->
+          <button class="canvas-floating-btn" onclick="openBatchProjectModal()" title="批量投射文檔到白板">📌</button>
           <button class="canvas-floating-btn" onclick="resetCanvasView()" title="重置視圖">🎯</button>
           <button class="canvas-floating-btn" onclick="renderCanvas()" title="重整白板">🔄</button>
         </div>
@@ -298,6 +303,46 @@
     </div>
   </div>
 
+  <!-- 彈窗：輸入名稱（新增資料夾、重新命名、新增世界觀、一句話簡介）
+
+       取代瀏覽器內建的 prompt()：那個的預設文字在 iOS 上不會反藍，得先手動
+       刪掉才能打；而且它只有一個欄位。欄位由 openTextInputModal() 動態產生。
+       「取消」按鈕的字不要改——Escape／點遮罩走的 dismissModal() 是靠
+       按鈕上的「取消」兩個字找到它的。 -->
+  <div class="modal-overlay" id="textInputModal">
+    <div class="modal-card">
+      <div class="modal-title" id="textInputTitle"></div>
+      <div class="text-input-fields" id="textInputFields"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn btn-secondary" onclick="closeTextInputModal()">取消</button>
+        <button class="btn btn-primary" id="textInputOkBtn" onclick="submitTextInputModal()">確定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈窗：批量投射白板
+
+       只列目前這個世界觀的文檔（白板一個世界觀一張）。依資料夾排，資料夾
+       那一列的勾勾一次切換底下全部。已經在白板上的勾著但不能動。 -->
+  <div class="modal-overlay" id="batchProjectModal">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title">🗂️ 批量投射白板</div>
+        <button class="icon-sm-btn" title="取消" onclick="closeBatchProjectModal()">✕</button>
+      </div>
+      <p style="font-size:12px; color:var(--text-secondary); margin:0;">勾選要放上白板的文檔（勾資料夾＝底下全部）：</p>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="toggleBatchProjectAll(true)">全選</button>
+        <button class="btn btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="toggleBatchProjectAll(false)">取消全選</button>
+      </div>
+      <div class="batch-project-list" id="batchProjectList"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn btn-secondary" onclick="closeBatchProjectModal()">取消</button>
+        <button class="btn btn-primary" id="batchProjectConfirmBtn" onclick="confirmBatchProject()" disabled>📌 投射</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 彈窗：世界觀清單
 
        手機從底部那一列往上滑、電腦點上方的世界觀徽章，兩個入口同一個面板。
@@ -331,10 +376,15 @@
     <div class="modal-card">
       <div class="modal-title" id="moveModalTitle">🔀 移動資料夾或更改所屬世界觀</div>
       <p style="font-size:12px; color:var(--text-secondary);">選擇目的地：</p>
-      <select id="moveTargetSelect" class="form-input"></select>
+      <select id="moveTargetSelect" class="form-input" onchange="updateMoveModeVisibility()"></select>
+      <div class="move-mode-hint" id="moveModeHint" hidden></div>
+      <!-- 取消・複製・移動，照這個順序（使用者指定的）。
+           「複製」只在目的地是別的世界觀時出現：同一個世界觀裡複製沒有意義
+           （同一個目錄多一份一樣的）。 -->
       <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
         <button class="btn btn-secondary" onclick="closeMoveModal()">取消</button>
-        <button class="btn btn-primary" onclick="confirmMoveFolder()">確認移動</button>
+        <button class="btn btn-primary" id="moveCopyBtn" onclick="confirmMoveOrCopy('copy')" hidden>複製</button>
+        <button class="btn btn-primary" id="moveConfirmBtn" onclick="confirmMoveOrCopy('move')">移動</button>
       </div>
     </div>
   </div>
@@ -544,7 +594,7 @@
   <div class="modal-overlay" id="trashModal">
     <div class="modal-card" style="width:480px;">
       <div class="modal-title">🗑️ 垃圾桶</div>
-      <p style="font-size:12px; color:var(--text-secondary);">已刪除的資料夾與文檔會暫存在這裡，可以復原或永久刪除。<strong>超過 60 天會自動清除</strong>，以免一直佔著儲存空間：</p>
+      <p style="font-size:12px; color:var(--text-secondary);">所有世界觀共用一個垃圾桶，照世界觀分開列出。已刪除的資料夾與文檔會暫存在這裡，可以復原或永久刪除。<strong>超過 60 天會自動清除</strong>，以免一直佔著儲存空間：</p>
       <div class="trash-list" id="trashList"></div>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px;">
         <button class="btn btn-danger" onclick="emptyTrash()">清空垃圾桶</button>

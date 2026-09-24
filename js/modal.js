@@ -406,27 +406,39 @@ function renderLiveHashtags(tags) {
  addBtn.className = "btn-add-tag";
  addBtn.textContent = "＋ 標籤";
  addBtn.onclick = function() {
- const inputStr = prompt("請輸入欲加入的 Hashtag（可用逗號「,」同時新增多個）：");
- if (inputStr && inputStr.trim()) {
- const rawTags = inputStr.split(/[,，]/);
+ openTextInputModal({
+ title: "🏷️ 加入標籤",
+ fields: [{ label: "標籤（可以用逗號同時加好幾個）", value: "", placeholder: "例如：帝國軍方, 主角群" }],
+ okText: "加入",
+ onSubmit: function(values) {
+ if (!addManualTagsToActiveDoc(values[0])) { markTextInputInvalid(0); return false; }
+ }
+ });
+ };
+ bar.appendChild(addBtn);
+}
+
+/* 把輸入的一串標籤加到目前這篇。逗號（半形、全形）分隔，開頭的 # 會拿掉。
+   回傳有沒有真的加到東西——全是空白或逗號的話回 false，讓彈窗留著。 */
+function addManualTagsToActiveDoc(inputStr) {
  const doc = appData.docs.find(d => d.id === activeDocId);
- if (doc) {
+ if (!doc) return false;
+ const clean = String(inputStr || "").split(/[,，]/)
+ .map(function(item) { return item.trim().replace(/^#/, ''); })
+ .filter(Boolean);
+ if (!clean.length) return false;
+
  if (!doc.tags) doc.tags = [];
  if (!Array.isArray(doc.manualTags)) doc.manualTags = [];
- rawTags.forEach(function(item) {
- const clean = item.trim().replace(/^#/, '');
- if (!clean) return;
- if (!doc.tags.includes(clean)) doc.tags.push(clean);
- if (!doc.manualTags.includes(clean)) doc.manualTags.push(clean);
- if (!appData.tagSettings[clean]) appData.tagSettings[clean] = "c_gray";
+ clean.forEach(function(tag) {
+ if (!doc.tags.includes(tag)) doc.tags.push(tag);
+ if (!doc.manualTags.includes(tag)) doc.manualTags.push(tag);
+ if (!appData.tagSettings[tag]) appData.tagSettings[tag] = "c_gray";
  });
  saveData();
  renderLiveHashtags(doc.tags);
  renderSidebarTree();
- }
- }
- };
- bar.appendChild(addBtn);
+ return true;
 }
 
 function removeHashtagFromDoc(tag) {
@@ -933,27 +945,33 @@ function buildDocMenuItems(doc) {
  ];
 }
 
-function moveDocsToTrash(docsArray) {
+/* opts（選填）：
+     extra      蓋在每一筆上的欄位（刪世界觀時用來標 trashedWithWorld）
+     keepCanvas 不要把白板節點拆進垃圾桶——刪整個世界觀時，節點已經在那個
+                世界觀的整筆紀錄裡了，再拆一份的話復原時會變成兩份 */
+function moveDocsToTrash(docsArray, opts) {
  if (!docsArray || !docsArray.length) return;
+ opts = opts || {};
  const now = formatTime(new Date());
  docsArray.forEach(function(d) {
  // deletedAt 是給人看的字串，deletedTs 才是拿來算保留期限的
- appData.trash.docs.push(Object.assign({}, d, { deletedAt: now, deletedTs: Date.now() }));
+ appData.trash.docs.push(Object.assign({}, d, opts.extra || {}, { deletedAt: now, deletedTs: Date.now() }));
  delete docHistory[d.id];
  });
 
  /* 白板上指向這些文檔的節點與連線原本會留在資料裡（畫的時候跳過不畫），
     一直累積佔空間。一起收進垃圾桶，復原文檔之後節點也回得來。 */
- if (typeof trashOrphanNodesForDocs === "function") {
+ if (!opts.keepCanvas && typeof trashOrphanNodesForDocs === "function") {
  trashOrphanNodesForDocs(docsArray.map(function(d) { return d.id; }));
  }
 }
 
-function moveFoldersToTrash(foldersArray) {
+function moveFoldersToTrash(foldersArray, opts) {
  if (!foldersArray || !foldersArray.length) return;
+ opts = opts || {};
  const now = formatTime(new Date());
  foldersArray.forEach(function(f) {
- appData.trash.folders.push(Object.assign({}, f, { deletedAt: now, deletedTs: Date.now() }));
+ appData.trash.folders.push(Object.assign({}, f, opts.extra || {}, { deletedAt: now, deletedTs: Date.now() }));
  });
 }
 
@@ -966,6 +984,17 @@ function closeTrashModal() {
  document.getElementById("trashModal").classList.remove("active");
 }
 
+/* 垃圾桶：所有世界觀共用一個，照世界觀分組、標出每一組是哪個世界觀的。
+
+   （中間有一版是「每個世界觀的垃圾桶各自獨立」，使用者用過之後改回來了：
+   全部放在一起，標示清楚是哪個世界觀的就好。）
+
+   世界觀已經被刪掉的放最上面，名字從刪除時蓋在每一筆上的 fromWorldName
+   拿（見 stampDeletedWorldOnTrash）。 */
+function trashIsOrphan(item) {
+ return !!item && !appData.worldviews.some(function(w) { return w.id === item.worldId; });
+}
+
 function renderTrashList() {
  const list = document.getElementById("trashList");
  if (!list) return;
@@ -973,43 +1002,142 @@ function renderTrashList() {
 
  const folders = appData.trash.folders || [];
  const docs = appData.trash.docs || [];
- const canvasItems = appData.trash.canvas || [];
+ const worlds = appData.trash.worlds || [];
+ /* 白板上刪掉的節點／連線／便條紙是用「在原本陣列裡的索引」復原與刪除的
+    （這三種東西的 id 各自獨立、不保證不重複），分組之前先把索引帶著。 */
+ /* 跟著某篇文檔的節點（因為刪那篇才進來的），只要那篇還在垃圾桶就不獨立
+    列出——它們會跟著文檔一起復原或刪除。那篇不在垃圾桶了（早就被清掉、
+    或復原時節點沒放回去）就照常列出來，不然會變成看不到的垃圾。 */
+ const trashedDocIds = new Set(docs.map(function(d) { return d.id; }));
+ const canvasItems = (appData.trash.canvas || [])
+ .map(function(item, index) { return { item: item, index: index }; })
+ .filter(function(e) {
+ const docId = canvasTrashFollowsDoc(e.item);
+ return !(docId && trashedDocIds.has(docId));
+ });
 
- if (folders.length === 0 && docs.length === 0 && canvasItems.length === 0) {
- list.innerHTML = '<div class="hashtag-filter-empty">垃圾桶目前是空的</div>';
+ if (folders.length === 0 && docs.length === 0 && canvasItems.length === 0 && worlds.length === 0) {
+ const empty = document.createElement("div");
+ empty.className = "hashtag-filter-empty";
+ empty.textContent = "垃圾桶目前是空的";
+ list.appendChild(empty);
  return;
  }
 
- folders.forEach(function(f) {
+ const canvasIcons = { node: '🔗', edge: '↔️', note: '🗒️' };
+ function rowsFor(fs, ds, cs) {
+ fs.forEach(function(f) {
  list.appendChild(createTrashRow(f.icon || '📁', f.name || '未命名資料夾', f.deletedAt, function() {
  restoreFolderFromTrash(f.id);
  }, function() {
  permanentlyDeleteTrashFolder(f.id);
  }));
  });
-
- docs.forEach(function(d) {
+ ds.forEach(function(d) {
  list.appendChild(createTrashRow(d.icon || '📄', d.title || '無標題文檔', d.deletedAt, function() {
  restoreDocFromTrash(d.id);
  }, function() {
  permanentlyDeleteTrashDoc(d.id);
  }));
  });
-
- /* 白板上刪掉的節點／連線／便條紙。用索引而不是 id 來指，因為這三種
-    東西的 id 各自獨立、不保證不重複。 */
- const canvasIcons = { node: '🔗', edge: '↔️', note: '🗒️' };
- canvasItems.forEach(function(item, index) {
- const world = appData.worldviews.find(w => w.id === item.worldId);
- const where = world ? ('　·　' + (world.icon || '🌐') + ' ' + world.name) : '';
+ cs.forEach(function(e) {
  list.appendChild(createTrashRow(
- canvasIcons[item.kind] || '🧩',
- (item.label || '白板項目') + where,
- item.deletedAt,
- function() { if (restoreCanvasTrashItem(index)) renderTrashList(); },
- function() { permanentlyDeleteCanvasTrashItem(index); }
+ canvasIcons[e.item.kind] || '🧩',
+ e.item.label || '白板項目',
+ e.item.deletedAt,
+ function() { if (restoreCanvasTrashItem(e.index)) renderTrashList(); },
+ function() { permanentlyDeleteCanvasTrashItem(e.index); }
  ));
  });
+ }
+ function heading(text, cls) {
+ const h = document.createElement("div");
+ h.className = cls;
+ h.textContent = text;
+ list.appendChild(h);
+ }
+
+ const groups = trashGroups(folders, docs, canvasItems, worlds);
+ const gone = groups.filter(function(g) { return g.deleted; });
+ const alive = groups.filter(function(g) { return !g.deleted; });
+
+ /* 刪掉的世界觀：一個世界觀一列，「復原」就是整個世界觀回來。裡面有什麼
+    不列出來（使用者：「不需要把刪除的世界觀裡面有什麼列出來」），只寫會
+    一起回來幾項，讓人知道不是空的。 */
+ if (gone.length) {
+ heading("刪除的世界觀", "trash-section-title");
+ gone.forEach(function(g) {
+ list.appendChild(createTrashRow(g.icon || "🌐", g.name || "（名稱沒有留下來的世界觀）", g.deletedAt,
+ function() { restoreWorldFromTrash(g.worldId); },
+ function() { permanentlyDeleteTrashWorld(g.worldId); },
+ g.restoreCount ? g.restoreCount + " 項" : ""));
+ });
+ // 上面有「刪除的世界觀」時才需要這個標題，把兩區分開
+ if (alive.length) heading("現有的世界觀", "trash-section-title");
+ }
+ alive.forEach(function(g) {
+ heading((g.icon || "🌐") + " " + g.name, "trash-group-title");
+ rowsFor(g.folders, g.docs, g.canvas);
+ });
+}
+
+/* 照世界觀分組。純函式，好測。
+
+   順序：已經刪掉的世界觀在最上面（最近刪的在前），接著是現有的世界觀，照
+   左側那一排的順序——跟使用者平常看到的順序一樣，比較好找。沒有東西的
+   世界觀不列。 */
+function trashGroups(folders, docs, canvasItems, worlds) {
+ const byWorld = {};
+ const order = [];
+ const records = {};
+ (worlds || []).forEach(function(w) { if (w && w.id) records[w.id] = w; });
+
+ function slot(item) {
+ const key = item.worldId || "?";
+ if (!byWorld[key]) {
+ const live = appData.worldviews.find(function(w) { return w.id === key; });
+ const rec = records[key];
+ byWorld[key] = {
+ worldId: key, deleted: !live,
+ name: live ? live.name : (rec ? rec.name : ""),
+ icon: live ? (live.icon || "") : (rec ? (rec.icon || "") : ""),
+ deletedAt: rec ? rec.deletedAt : "",
+ hasRecord: !!rec,
+ folders: [], docs: [], canvas: [], latest: rec ? (rec.deletedTs || 0) : 0,
+ restoreCount: 0
+ };
+ order.push(key);
+ }
+ const g = byWorld[key];
+ if (g.deleted && !g.name && item.fromWorldName) { g.name = item.fromWorldName; g.icon = item.fromWorldIcon || ""; }
+ if (g.deleted && !g.deletedAt && item.deletedAt) g.deletedAt = item.deletedAt;
+ if ((item.deletedTs || 0) > g.latest) g.latest = item.deletedTs || 0;
+ return g;
+ }
+
+ // 整筆紀錄先登記：沒有任何文檔的世界觀刪掉之後也要看得到
+ (worlds || []).forEach(function(w) { if (w && w.id) slot({ worldId: w.id }); });
+ (folders || []).forEach(function(f) { slot(f).folders.push(f); });
+ (docs || []).forEach(function(d) { slot(d).docs.push(d); });
+ (canvasItems || []).forEach(function(e) { slot(e.item).canvas.push(e); });
+
+ /* 復原時會一起回來幾項——跟 restoreWorldFromTrash() 同一條規則：有整筆
+    紀錄的只算 trashedWithWorld 標記的；舊資料全部都算。 */
+ order.forEach(function(k) {
+ const g = byWorld[k];
+ if (!g.deleted) return;
+ const counts = function(x) { return !g.hasRecord || x.trashedWithWorld === k; };
+ g.restoreCount = g.folders.filter(counts).length + g.docs.filter(counts).length;
+ });
+
+ const worldOrder = {};
+ appData.worldviews.forEach(function(w, i) { worldOrder[w.id] = i; });
+ const all = order.map(function(k) { return byWorld[k]; });
+ const gone = all.filter(function(g) { return g.deleted; })
+ .sort(function(a, b) { return b.latest - a.latest; });
+ const alive = all.filter(function(g) { return !g.deleted; })
+ .sort(function(a, b) { return worldOrder[a.worldId] - worldOrder[b.worldId]; });
+ return gone.concat(alive);
 }
 
 function permanentlyDeleteCanvasTrashItem(index) {
@@ -1019,7 +1147,14 @@ function permanentlyDeleteCanvasTrashItem(index) {
  renderTrashList();
 }
 
-function createTrashRow(icon, name, deletedAt, onRestore, onPermanentDelete) {
+/* 每一列兩行：第一行是名稱，第二行用補充說明的小字寫刪除時間。
+
+   sub（選填）放在時間前面，刪掉的世界觀用它寫「N 項」：「4 項 · 2026-09-24 16:42」。
+
+   以前時間是擠在名稱右邊的一欄，加上兩顆按鈕，手機上名稱只剩幾個字的寬度，
+   世界觀的「· N 項」更是直接被截成「· 1…」（使用者要求：時間與項數都放
+   第二行，所有刪掉的東西都一樣）。 */
+function createTrashRow(icon, name, deletedAt, onRestore, onPermanentDelete, sub) {
  const row = document.createElement("div");
  row.className = "trash-item";
 
@@ -1031,9 +1166,19 @@ function createTrashRow(icon, name, deletedAt, onRestore, onPermanentDelete) {
  nameSpan.className = "trash-item-name";
  nameSpan.textContent = name;
 
- const metaSpan = document.createElement("span");
- metaSpan.className = "trash-item-meta";
- metaSpan.textContent = deletedAt || "";
+ /* 名稱與第二行包成一欄，佔住整個中間（flex: 1），名稱自己的省略號照舊。
+    兩樣都沒有（很舊的資料沒記刪除時間）就不留一行空白。 */
+ const second = [sub, deletedAt].filter(Boolean).join("　·　");
+ let textBox = nameSpan;
+ if (second) {
+ textBox = document.createElement("span");
+ textBox.className = "trash-item-text";
+ const subSpan = document.createElement("span");
+ subSpan.className = "trash-item-sub";
+ subSpan.textContent = second;
+ textBox.appendChild(nameSpan);
+ textBox.appendChild(subSpan);
+ }
 
  const actions = document.createElement("div");
  actions.className = "trash-item-actions";
@@ -1054,8 +1199,7 @@ function createTrashRow(icon, name, deletedAt, onRestore, onPermanentDelete) {
  actions.appendChild(delBtn);
 
  row.appendChild(iconSpan);
- row.appendChild(nameSpan);
- row.appendChild(metaSpan);
+ row.appendChild(textBox);
  row.appendChild(actions);
  return row;
 }
@@ -1066,6 +1210,9 @@ function restoreFolderFromTrash(folderId) {
  const [folder] = appData.trash.folders.splice(idx, 1);
  delete folder.deletedAt;
  delete folder.deletedTs;
+ // 垃圾桶分組用的（見 stampDeletedWorldOnTrash），回到目錄之後就沒有意義了
+ delete folder.fromWorldName;
+ delete folder.fromWorldIcon;
 
  if (folder.parentId && !appData.folders.some(f => f.id === folder.parentId)) {
  folder.parentId = null;
@@ -1086,6 +1233,8 @@ function restoreDocFromTrash(docId) {
  const [doc] = appData.trash.docs.splice(idx, 1);
  delete doc.deletedAt;
  delete doc.deletedTs;
+ delete doc.fromWorldName;
+ delete doc.fromWorldIcon;
 
  if (doc.folderId && !appData.folders.some(f => f.id === doc.folderId)) {
  doc.folderId = null;
@@ -1096,6 +1245,8 @@ function restoreDocFromTrash(docId) {
  if (!Array.isArray(doc.manualTags)) doc.manualTags = computeManualTagsFor(doc.content, doc.tags);
 
  appData.docs.push(doc);
+ // 因為刪它才進垃圾桶的節點跟著回白板（它們在垃圾桶裡本來就沒有獨立列出來）
+ if (typeof restoreNodesFollowingDoc === "function") restoreNodesFollowingDoc(doc.id);
  saveData();
  renderSidebarTree();
  renderTrashList();
@@ -1111,18 +1262,21 @@ function permanentlyDeleteTrashFolder(folderId) {
 function permanentlyDeleteTrashDoc(docId) {
  if (!confirm("確定要永久刪除此文檔嗎？此動作無法復原！")) return;
  appData.trash.docs = appData.trash.docs.filter(d => d.id !== docId);
+ if (typeof dropNodesFollowingDoc === "function") dropNodesFollowingDoc(docId);
  saveData();
  renderTrashList();
 }
 
 function emptyTrash() {
- const total = (appData.trash.docs || []).length + (appData.trash.folders || []).length +
- (appData.trash.canvas || []).length;
+ const t = appData.trash;
+ const total = (t.docs || []).length + (t.folders || []).length + (t.canvas || []).length +
+ (t.worlds || []).length;
  if (total === 0) { alert("垃圾桶目前是空的。"); return; }
- if (!confirm("確定要清空垃圾桶嗎？裡面的 " + total + " 個項目將會永久刪除，此動作無法復原！")) return;
- appData.trash.docs = [];
- appData.trash.folders = [];
- appData.trash.canvas = [];
+ if (!confirm("確定要清空垃圾桶嗎？裡面的 " + total + " 個項目（所有世界觀的）將會永久刪除，此動作無法復原！")) return;
+ t.docs = [];
+ t.folders = [];
+ t.canvas = [];
+ t.worlds = [];
  saveData();
  renderTrashList();
 }
@@ -1291,38 +1445,211 @@ function openMoveModal(ref) {
  : "🔀 移動資料夾或更改所屬世界觀";
  }
 
- appData.worldviews.forEach(function(w) {
+ /* 順序與排除規則都在 moveTargetOptions()（純函式，有測試）。
+    option 的文字用 textContent：世界觀與資料夾的名字是使用者寫的。 */
+ moveTargetOptions(ref).forEach(function(o) {
  const opt = document.createElement("option");
- opt.value = JSON.stringify({ worldId: w.id, parentId: null });
- opt.textContent = "🌐 " + w.name + " (根目錄)";
+ opt.value = JSON.stringify({ worldId: o.worldId, parentId: o.parentId });
+ opt.textContent = o.label + (o.current ? "　（目前位置）" : "");
+ if (o.current) opt.selected = true;
  select.appendChild(opt);
  });
 
- /* 資料夾不能搬進自己或自己的子孫（見 moveItemInto 的註解）；
-    文檔沒有這個限制，任何資料夾都收得下。 */
- appData.folders.forEach(function(f) {
- if (ref.type === "folder" &&
- (f.id === ref.id || f.parentId === ref.id || isDescendantOf(ref.id, f.id))) return;
- const opt = document.createElement("option");
- opt.value = JSON.stringify({ worldId: f.worldId, parentId: f.id });
- opt.textContent = "📁 " + f.name;
- select.appendChild(opt);
- });
+ updateMoveModeVisibility();
 
  document.getElementById("moveModal").classList.add("active");
+}
+
+/* 目的地是不是在別的世界觀。只有這種時候才問「移動還是複製」。 */
+function moveTargetIsOtherWorld() {
+ const select = document.getElementById("moveTargetSelect");
+ if (!select || !select.value || !moveTargetRef) return false;
+ const target = JSON.parse(select.value);
+ const src = moveTargetRef.type === "doc"
+ ? appData.docs.find(d => d.id === moveTargetRef.id)
+ : appData.folders.find(f => f.id === moveTargetRef.id);
+ return !!src && src.worldId !== target.worldId;
+}
+
+/* 目的地換了就重算：「複製」那顆只在別的世界觀時出現，底下那行說明也是。 */
+function updateMoveModeVisibility() {
+ const copyBtn = document.getElementById("moveCopyBtn");
+ const hint = document.getElementById("moveModeHint");
+ const other = moveTargetIsOtherWorld();
+ if (copyBtn) copyBtn.hidden = !other;
+ if (hint) {
+ /* 兩顆按鈕的後果差很多，講清楚：移動的話原本那張白板上的節點會收進
+    垃圾桶；複製的話白板不會跟著過去。 */
+ hint.hidden = !other;
+ hint.textContent = other
+ ? "複製：原本的留在這裡，白板節點不跟過去。移動：這邊白板上的節點會收進垃圾桶（救得回來）。"
+ : "";
+ }
 }
 
 function closeMoveModal() { 
 document.getElementById("moveModal").classList.remove("active"); 
 }
 
-function confirmMoveFolder() {
+/* mode：按了哪一顆，"copy" 或 "move"。
+
+   「複製」那顆在同一個世界觀時是藏起來的，但還是再擋一次：按鈕狀態跟目的地
+   不同步的那一瞬間（例如改了選項、change 事件還沒到），同世界觀的複製會在
+   同一個目錄多出一份一樣的。 */
+function confirmMoveOrCopy(mode) {
  const select = document.getElementById("moveTargetSelect");
  if (!select.value || !moveTargetRef) return;
  const target = JSON.parse(select.value);
+ const payload = { type: moveTargetRef.type, id: moveTargetRef.id };
+ const crossWorld = moveTargetIsOtherWorld();
+ if (mode === "copy" && !crossWorld) return;
+ if (mode !== "copy") mode = "move";
+ const movedActiveDoc = crossWorld && mode === "move" && (
+ (payload.type === "doc" && payload.id === activeDocId) ||
+ (payload.type === "folder" && folderSubtree(payload.id).docIds.has(activeDocId)));
+ closeMoveModal();
+
+ if (mode === "copy") {
+ if (!copyItemInto(payload, target.parentId, target.worldId)) return;
+ saveData();
+ renderSidebarTree();
+ } else {
  /* 搬移的規則（含「不能搬進自己的子孫」）只寫在 moveItemInto() 裡一份，
     拖曳與這個彈窗都走它。 */
- moveItemInto({ type: moveTargetRef.type, id: moveTargetRef.id },
- target.parentId, target.worldId);
- closeMoveModal();
+ if (!moveItemInto(payload, target.parentId, target.worldId)) return;
+ }
+ if (!crossWorld) return;
+
+ /* 跨世界觀之後，目前這個世界觀裡看不到任何變化（複製）或東西直接不見
+    （移動）——兩種都會讓人懷疑到底有沒有成功。問一句要不要過去看，
+    順便當作「完成了」的回報。 */
+ const world = appData.worldviews.find(w => w.id === target.worldId);
+ const name = world ? world.name : "那個世界觀";
+ if (confirm((mode === "copy" ? "已複製到「" : "已移動到「") + name + "」。\n要切過去看嗎？")) {
+ const keepDoc = movedActiveDoc ? activeDocId : null;
+ selectWorld(target.worldId);
+ if (keepDoc) loadDocToEditor(keepDoc);      // 正在寫的那篇跟著過去，不要換成別篇
+ return;
+ }
+
+ /* 不過去的話：正在編輯的那篇已經不在這個世界觀了，編輯區不能繼續顯示它
+    （麵包屑、白板、字數都會對不上）。跟刪除之後一樣，換成這裡的第一篇。 */
+ if (movedActiveDoc) {
+ const rest = appData.docs.filter(d => d.worldId === activeWorldId);
+ if (rest.length) loadDocToEditor(rest[0].id);
+ else clearEditorWorkspace();
+ renderSidebarTree();
+ }
+}
+
+/* ==========================================================
+   輸入名稱的彈窗（取代瀏覽器內建的 prompt()）
+
+   為什麼不用 prompt()：
+   - 使用者要的是「預設文字反藍，直接打字就取代」。prompt() 的預設文字
+     選不選取是瀏覽器自己決定的，iOS 是游標停在最後、不選取，得先手動
+     刪掉「新分類」才能打。那個行為程式碼碰不到。
+   - 新增世界觀要同時填名稱與一句話簡介，prompt() 只有一個欄位。
+
+   觸控裝置上這個彈窗**會**主動聚焦並叫出鍵盤，跟 setupModalKeyboard()
+   的規則相反。那條規則的理由是「很多彈窗一打開先想看內容、未必要打字」；
+   這個彈窗唯一的用途就是打字，不聚焦反而要多點一下。聚焦一定要在點擊
+   的同一個呼叫堆疊裡同步做，iOS 才肯叫出鍵盤。
+
+   用法：
+     openTextInputModal({
+       title: "📁 新增資料夾",
+       fields: [{ label: "名稱", value: "新分類" }, ...],   // 一或兩欄
+       okText: "建立",
+       onSubmit: function(values) { ...; return true; }     // 回 false＝不關
+     });
+   ========================================================== */
+let textInputSubmit = null;
+
+function openTextInputModal(opts) {
+  const modal = document.getElementById("textInputModal");
+  const box = document.getElementById("textInputFields");
+  if (!modal || !box) return;
+
+  document.getElementById("textInputTitle").textContent = opts.title || "";
+  document.getElementById("textInputOkBtn").textContent = opts.okText || "確定";
+  textInputSubmit = opts.onSubmit || null;
+
+  box.innerHTML = "";
+  const inputs = (opts.fields || []).map(function(f, i) {
+    const wrap = document.createElement("label");
+    wrap.className = "text-input-field";
+    const cap = document.createElement("span");
+    cap.className = "text-input-label";
+    cap.textContent = f.label || "";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "form-input";
+    input.value = f.value || "";
+    input.placeholder = f.placeholder || "";
+    if (f.maxLength) input.maxLength = f.maxLength;
+    input.dataset.index = String(i);
+    wrap.appendChild(cap);
+    wrap.appendChild(input);
+    box.appendChild(wrap);
+    return input;
+  });
+
+  inputs.forEach(function(input, i) {
+    input.addEventListener("input", function() { input.classList.remove("is-invalid"); });
+    input.addEventListener("keydown", function(e) {
+      if (e.key !== "Enter") return;
+      /* 用注音、倉頡選字時按的 Enter 是「確定這個字」，不是「送出」。
+         不擋的話打「騎士」選完字就直接建立了一個叫「qi shi」或半截的資料夾。
+         keyCode 229 是部分瀏覽器（含 iOS）在組字中給的值。 */
+      if (e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      if (i < inputs.length - 1) focusAndSelect(inputs[i + 1]);   // 還有下一欄就跳過去
+      else submitTextInputModal();
+    });
+  });
+
+  // 關掉之後焦點要還回去（setupModalKeyboard 的規矩），先記下來再聚焦
+  if (typeof focusBeforeModal !== "undefined" && !focusBeforeModal) focusBeforeModal = document.activeElement;
+  modal.classList.add("active");
+  if (inputs[0]) focusAndSelect(inputs[0]);
+}
+
+/* 聚焦並全選。select() 在 iOS 上不一定生效，setSelectionRange 補一次；
+   下一格再補一次是因為 iOS 升鍵盤的過程中會把選取範圍重設掉。那一次只在
+   使用者還沒動過內容時才做，免得把他剛打的字又選起來。 */
+function focusAndSelect(input) {
+  const original = input.value;
+  input.focus();
+  input.select();
+  try { input.setSelectionRange(0, input.value.length); } catch (e) {}
+  requestAnimationFrame(function() {
+    if (document.activeElement !== input || input.value !== original) return;
+    try { input.setSelectionRange(0, input.value.length); } catch (e) {}
+  });
+}
+
+function textInputValues() {
+  return Array.from(document.querySelectorAll("#textInputFields input"))
+    .map(function(x) { return x.value; });
+}
+
+function submitTextInputModal() {
+  const fn = textInputSubmit;
+  if (fn && fn(textInputValues()) === false) return;     // 呼叫端說還不能關（例如名稱留白）
+  closeTextInputModal();
+}
+
+function closeTextInputModal() {
+  textInputSubmit = null;
+  const modal = document.getElementById("textInputModal");
+  if (modal) modal.classList.remove("active");
+}
+
+/* 呼叫端拒絕送出時用：把那一欄標紅並重新選起來。 */
+function markTextInputInvalid(index) {
+  const input = document.querySelectorAll("#textInputFields input")[index || 0];
+  if (!input) return;
+  input.classList.add("is-invalid");
+  focusAndSelect(input);
 }

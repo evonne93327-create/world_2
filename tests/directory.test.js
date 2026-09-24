@@ -54,7 +54,9 @@ function callsTo(src, name) {
 /* 抓某個函式的整個函式體：從它的 function 那一行，到下一個頂層 function 為止。
    不要用非貪婪配到第一個 \n} —— 裡面有巢狀區塊，那樣會在半路切斷。 */
 function bodyOf(src, name) {
-  const m = src.match(new RegExp("function\\s+" + name + "\\s*\\([\\s\\S]*?(?=\\nfunction )"));
+  /* 尾巴補一個假的 "\nfunction "：檔案裡最後一個函式後面沒有下一個函式可以
+     當邊界，不補的話它永遠抓不到（檔案結尾的那個函式就是這樣）。 */
+  const m = (src + "\nfunction ").match(new RegExp("function\\s+" + name + "\\s*\\([\\s\\S]*?(?=\\nfunction )"));
   assert.ok(m, "找不到 " + name + "()");
   return m[0];
 }
@@ -135,12 +137,11 @@ test("搬移的規則只寫在 moveItemInto() 裡一份", function() {
   assert.match(drop[0], /moveItemInto\(/,
     "拖放收尾要走 moveItemInto()，不要自己指派 folderId/parentId");
 
-  const confirm = codeOnly(modalJs).match(/function confirmMoveFolder\(\)[\s\S]*?\n\}/);
-  assert.ok(confirm, "找不到 confirmMoveFolder()");
-  assert.match(confirm[0], /moveItemInto\(/,
-    "「移動」彈窗按確認也要走 moveItemInto()");
-  assert.ok(!/\.parentId\s*=/.test(confirm[0]),
-    "confirmMoveFolder() 不該自己改 parentId —— 那份規則會跟拖放那一份走鐘");
+  const confirm = codeOnly(bodyOf(modalJs, "confirmMoveOrCopy"));
+  assert.match(confirm, /moveItemInto\(/,
+    "「移動」彈窗按「移動」也要走 moveItemInto()");
+  assert.ok(!/\.parentId\s*=/.test(confirm),
+    "confirmMoveOrCopy() 不該自己改 parentId —— 那份規則會跟拖放那一份走鐘");
 
   assert.match(bodyOf(directoryJs, "moveItemInto"), /isDescendantOf\(/,
     "擋「搬進自己的子孫」的判斷要在 moveItemInto() 裡面，不是靠 UI 先過濾選項");
@@ -435,6 +436,12 @@ function worldApp() {
     renderBreadcrumb = function() {};
     var __selected = null;
     selectWorld = function(id) { __selected = id; };
+    /* 彈窗在沙箱裡畫不出來。記下它收到的參數，測試自己扮演「按下按鈕」：
+       __submit(["名稱", "簡介"]) 就是填好之後按「建立」。 */
+    var __modal = null, __invalid = [];
+    openTextInputModal = function(opts) { __modal = opts; };
+    markTextInputInvalid = function(i) { __invalid.push(i || 0); };
+    function __submit(values) { return __modal.onSubmit(values); }
     appData = { worldviews: [{ id: "w1", name: "舊的" }], folders: [],
                 docs: [{ id: "d_old", worldId: "w1", folderId: null }], trash: { docs: [], folders: [] } };
     activeWorldId = "w1";
@@ -444,10 +451,11 @@ function worldApp() {
 
 test("新增世界觀之後，裡面就有一篇空白文檔", function() {
   const app = worldApp();
-  app.run(`prompt = function() { return "  新大陸  "; }; promptCreateWorldview();`);
+  app.run(`promptCreateWorldview(); __submit(["  新大陸  ", "  龍的故鄉  "]);`);
 
   const world = host(app.run(`appData.worldviews[appData.worldviews.length - 1]`));
   assert.strictEqual(world.name, "新大陸");
+  assert.strictEqual(world.desc, "龍的故鄉", "同一個彈窗裡填的簡介也要存進去");
 
   const docs = host(app.run(`appData.docs.filter(function(d) { return d.worldId === "${world.id}"; })`));
   assert.strictEqual(docs.length, 1, "新的世界觀裡要剛好有一篇");
@@ -457,21 +465,52 @@ test("新增世界觀之後，裡面就有一篇空白文檔", function() {
   /* selectWorld() 會打開那個世界觀的第一篇 —— 文檔要在它被呼叫之前就放進去，
      不然打開的時候裡面還是空的，停在一片空白的編輯區。 */
   assert.strictEqual(app.run("__selected"), world.id, "建完要切過去");
-  const body = codeOnly(bodyOf(directoryJs, "promptCreateWorldview"));
+  const body = codeOnly(bodyOf(directoryJs, "createWorldview"));
   assert.ok(body.indexOf("makeNewDoc(") < body.indexOf("selectWorld("),
     "文檔要在 selectWorld() 之前放進去 —— 它會打開第一篇");
 
   assert.strictEqual(app.run(`appData.docs.length`), 2, "舊的那篇不要被動到");
 });
 
-test("按取消或留白就什麼都不建", function() {
+test("按取消或名稱留白就什麼都不建", function() {
   /* 不然每按一次取消就多一個沒有名字的世界觀，外加一篇孤兒文檔。 */
-  ["null", '""', '"   "'].forEach(function(ret) {
+
+  // 按取消：onSubmit 根本不會被呼叫
+  const cancel = worldApp();
+  cancel.run(`promptCreateWorldview();`);
+  assert.strictEqual(cancel.run("appData.worldviews.length"), 1);
+
+  ['""', '"   "'].forEach(function(name) {
     const app = worldApp();
-    app.run(`prompt = function() { return ${ret}; }; promptCreateWorldview();`);
-    assert.strictEqual(app.run("appData.worldviews.length"), 1, "prompt 回 " + ret + " 時不該建世界觀");
-    assert.strictEqual(app.run("appData.docs.length"), 1, "prompt 回 " + ret + " 時也不該多一篇文檔");
+    const kept = app.run(`promptCreateWorldview(); __submit([${name}, "簡介"]);`);
+    assert.strictEqual(kept, false,
+      "名稱留白時 onSubmit 要回 false —— 彈窗留著讓他補，不是關掉然後什麼都沒發生");
+    assert.deepStrictEqual(host(app.run("__invalid")), [0], "名稱那一欄要標出來");
+    assert.strictEqual(app.run("appData.worldviews.length"), 1, "名稱是 " + name + " 時不該建世界觀");
+    assert.strictEqual(app.run("appData.docs.length"), 1, "也不該多一篇文檔");
   });
+});
+
+test("新增世界觀的彈窗：名稱預設「新世界觀」、第二欄是簡介", function() {
+  const app = worldApp();
+  const fields = host(app.run(`promptCreateWorldview(); __modal.fields`));
+  assert.strictEqual(fields.length, 2, "名稱與簡介在同一個彈窗裡");
+  assert.strictEqual(fields[0].value, "新世界觀", "預設名稱（打開時會反藍，直接打字就取代）");
+  assert.strictEqual(fields[1].value, "", "簡介預設空白");
+  assert.ok(fields[1].maxLength > 0, "簡介要有長度上限 —— 它顯示在側欄一行裡");
+});
+
+test("新增資料夾：預設「新分類」、留白不建", function() {
+  const app = worldApp();
+  const fields = host(app.run(`promptCreateFolder(null, "w1"); __modal.fields`));
+  assert.deepStrictEqual(fields.map(function(f) { return f.value; }), ["新分類"]);
+
+  assert.strictEqual(app.run(`__submit(["   "])`), false, "留白要留著彈窗");
+  assert.strictEqual(app.run("appData.folders.length"), 0);
+
+  app.run(`__submit(["  騎士團  "])`);
+  const f = host(app.run("appData.folders[0]"));
+  assert.deepStrictEqual([f.name, f.worldId, f.parentId], ["騎士團", "w1", null]);
 });
 
 test("空白文檔的形狀只寫在 makeNewDoc() 一份", function() {
@@ -495,4 +534,824 @@ test("空白文檔的形狀只寫在 makeNewDoc() 一份", function() {
   const create = codeOnly(bodyOf(directoryJs, "createNewDoc"));
   assert.match(create, /makeNewDoc\(/, "「新增文檔」也要從 makeNewDoc() 拿");
   assert.ok(!/manualTags:/.test(create), "createNewDoc() 裡不該再有一份欄位清單");
+});
+
+/* ---------- 關掉目錄就取消批量刪除 ---------- */
+
+test("exitBatchDeleteMode()：只會「離開」，絕不會「進入」", function() {
+  /* 它底下呼叫的是 toggleBatchDeleteMode()——那是個切換。少了開頭那個
+     「不在就什麼都不做」，每次關目錄都會變成「進入批量刪除模式」。 */
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js"
+  ]);
+  app.run(`
+    renderSidebarTree = function() {};
+    updateBatchBarCount = function() {};
+    document.getElementById = function() {
+      return { classList: { toggle: function() {}, add: function() {}, remove: function() {} }, textContent: "" };
+    };
+    isBatchDeleteMode = false;
+    exitBatchDeleteMode();
+  `);
+  assert.strictEqual(app.run("isBatchDeleteMode"), false, "本來不在批量模式，關目錄之後也不能在");
+
+  app.run(`
+    isBatchDeleteMode = true;
+    batchSelectedDocs.add("d1");
+    batchSelectedFolders.add("f1");
+    exitBatchDeleteMode();
+  `);
+  assert.strictEqual(app.run("isBatchDeleteMode"), false, "在批量模式就要離開");
+  assert.strictEqual(app.run("batchSelectedDocs.size + batchSelectedFolders.size"), 0,
+    "勾選要一起清掉 —— 留著的話下次打開目錄那幾項還勾著，隨手一按就刪掉早就忘記的東西");
+});
+
+test("每一條收起目錄的路都會取消批量刪除", function() {
+  /* 反向掃描：main.js 裡每一個「把目錄收起來」的動作（加上 collapsed、拿掉
+     drawer-open），所在的函式裡都要呼叫 afterSidebarClosed()。以後多一條
+     收目錄的路卻忘了接，這裡會紅。 */
+  const code = codeOnly(mainJs);
+  const funcs = code.split(/\n(?=function )/);
+  const closers = funcs.filter(function(f) {
+    return /classList\.(add|toggle)\("collapsed"\)|classList\.remove\("drawer-open"\)/.test(f);
+  });
+  assert.ok(closers.length >= 3, "應該抓得到至少三個收目錄的函式（實得 " + closers.length + "）");
+  closers.forEach(function(f) {
+    const name = (f.match(/^function (\w+)/) || [])[1];
+    assert.match(f, /afterSidebarClosed\(\)/,
+      name + "() 會把目錄收起來，但沒有呼叫 afterSidebarClosed() —— 批量刪除的勾選會留著");
+  });
+
+  /* toggle 那條要注意：它是切換，只有「變成收起來」的那一邊才算。 */
+  const toggle = funcs.find(function(f) { return /^function toggleSidebarMenu/.test(f); });
+  assert.match(toggle, /if \(sidebar\.classList\.contains\("collapsed"\)\) afterSidebarClosed\(\);/,
+    "toggleSidebarMenu() 只有在收起來的那一邊才取消 —— 展開的時候不該動");
+
+  assert.match(bodyOf(mainJs, "afterSidebarClosed"), /exitBatchDeleteMode\(\)/,
+    "afterSidebarClosed() 要真的去取消批量刪除");
+});
+
+/* ---------- 批量投射白板 ---------- */
+
+test("batchNodePositions()：空白板從左上角開始", function() {
+  const app = loadApp();
+  const pos = host(app.batchNodePositions([], 1));
+  assert.deepStrictEqual(pos, [{ x: 40, y: 60 }]);
+  assert.deepStrictEqual(host(app.batchNodePositions([], 0)), []);
+  assert.deepStrictEqual(host(app.batchNodePositions(null, 0)), []);
+});
+
+test("batchNodePositions()：放在既有節點下方，不會疊上去", function() {
+  const app = loadApp();
+  const existing = [{ x: 40, y: 70 }, { x: 280, y: 150 }, { x: 500, y: 20 }];
+  const pos = host(app.batchNodePositions(existing, 5));
+  const lowestBottom = 150 + 120;                  // 最低的那個 + 估計高度
+  pos.forEach(function(p) {
+    assert.ok(p.y > lowestBottom, "新節點要在所有既有節點下方（y=" + p.y + "）");
+  });
+  assert.strictEqual(pos[0].x, 40, "左邊跟既有節點最左邊對齊");
+});
+
+test("batchNodePositions()：排成接近正方形的網格，彼此不重疊", function() {
+  const app = loadApp();
+  const W = app.run("CANVAS_NODE_W");
+  const H = app.run("BATCH_EST_NODE_H");
+
+  [[3, 2], [4, 2], [9, 3], [20, 4], [50, 4]].forEach(function(pair) {
+    const n = pair[0], cols = pair[1];
+    const pos = host(app.batchNodePositions([], n));
+    assert.strictEqual(pos.length, n);
+    const xs = new Set(pos.map(function(p) { return p.x; }));
+    assert.strictEqual(xs.size, cols, n + " 篇應該排成 " + cols + " 欄（實得 " + xs.size + "）");
+
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const a = pos[i], b = pos[j];
+      const overlap = a.x < b.x + W && b.x < a.x + W && a.y < b.y + H && b.y < a.y + H;
+      assert.ok(!overlap, n + " 篇時第 " + i + " 與第 " + j + " 個疊在一起了");
+    }
+  });
+});
+
+test("projectDocsToCanvas()：跳過已在白板上的、別的世界觀的、重複的", function() {
+  const app = loadApp();
+  app.run(`
+    saveData = function() {};
+    appData = {
+      worldviews: [{ id: "w1", name: "主", canvas: { nodes: [{ id: "node_a", docId: "a", x: 40, y: 60 }], edges: [], notes: [] } },
+                   { id: "w2", name: "外傳", canvas: { nodes: [], edges: [], notes: [] } }],
+      folders: [],
+      docs: [{ id: "a", worldId: "w1" }, { id: "b", worldId: "w1" }, { id: "c", worldId: "w1" },
+             { id: "x", worldId: "w2" }]
+    };
+    activeWorldId = "w1";
+  `);
+  const added = host(app.run(`projectDocsToCanvas(["a", "b", "b", "x", "nope", "c"])`));
+  assert.deepStrictEqual(added, ["b", "c"],
+    "a 已在白板上、b 重複、x 是別的世界觀、nope 不存在 —— 只有 b 與 c 該放上去");
+  assert.strictEqual(app.run(`getCurrentWorldCanvas().nodes.length`), 3);
+  assert.deepStrictEqual(host(app.run(`projectDocsToCanvas(["a", "b"])`)), [],
+    "全都已經在白板上就什麼都不做");
+});
+
+test("批量投射的清單一律 createElement + textContent", function() {
+  /* 批量匯出那邊以前是拼 HTML，被做出一個可利用的洞（見那裡的註解）。
+     這裡列的是同一批標題，不能重蹈覆轍。 */
+  const canvasJs = fs.readFileSync(path.join(ROOT, "js", "canvas.js"), "utf8");
+  const body = codeOnly(bodyOf(canvasJs, "renderBatchProjectList"));
+  const innerHtmlWrites = body.match(/innerHTML\s*=[^;]*/g) || [];
+  assert.deepStrictEqual(innerHtmlWrites, ['innerHTML = ""'], "除了清空以外不可以碰 innerHTML");
+  assert.match(body, /name\.textContent = \(d\.icon/, "文檔標題走 textContent");
+  assert.match(body, /name\.textContent = \(folder\.icon/, "資料夾名稱走 textContent");
+});
+
+test("批量投射的兩個入口都接上了", function() {
+  assert.match(html, /onclick="closeDocActionsPanel\(\); openBatchProjectModal\(\);"/,
+    "文檔的 ⋯ 選單裡要有，跟「投射白板」放在一起");
+  assert.match(html, /class="canvas-floating-btn" onclick="openBatchProjectModal\(\)"/,
+    "白板上也要有 —— 人在白板上時最常想做的就是把文檔放上來");
+});
+
+/* ---------- 移動彈窗：排序、跨世界觀的移動與複製 ---------- */
+
+function moveApp() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js"
+  ]);
+  app.run(`
+    saveData = function() {};
+    renderSidebarTree = function() {};
+    renderBreadcrumb = function() {};
+    refreshCanvasIfVisible = function() {};
+    var __trashed = [];
+    trashOrphanNodesForDocs = function(ids, label) { __trashed.push({ ids: ids.slice().sort(), label: label }); };
+    appData = {
+      worldviews: [{ id: "w1", name: "主", icon: "🌍" }, { id: "w2", name: "外傳", icon: "🔮" }],
+      folders: [
+        { id: "A", worldId: "w1", parentId: null, name: "角色" },
+        { id: "B", worldId: "w1", parentId: "A", name: "騎士" },
+        { id: "C", worldId: "w1", parentId: null, name: "年表" },
+        { id: "X", worldId: "w2", parentId: null, name: "角色" },
+        { id: "Y", worldId: "w2", parentId: "X", name: "反派" },
+        { id: "Z", worldId: "w2", parentId: "不存在", name: "孤兒資料夾" }
+      ],
+      docs: [
+        { id: "d1", worldId: "w1", folderId: "B", title: "團長", content: "內文", tags: ["t"], images: [] },
+        { id: "d2", worldId: "w1", folderId: "A", title: "遊俠", content: "", tags: [], images: [] },
+        { id: "d3", worldId: "w1", folderId: null, title: "總設定", content: "", tags: [], images: [] }
+      ],
+      trash: { docs: [], folders: [], canvas: [] }
+    };
+    activeWorldId = "w1";
+  `);
+  return app;
+}
+
+test("moveTargetOptions()：世界觀一 → 它的資料夾 → 世界觀二 → 它的資料夾", function() {
+  const app = moveApp();
+  const opts = host(app.run(`moveTargetOptions({ type: "doc", id: "d3" })`));
+  const seq = opts.map(function(o) { return o.worldId + ":" + (o.parentId || "根") + ":" + o.depth; });
+  assert.deepStrictEqual(seq, [
+    "w1:根:0", "w1:A:1", "w1:B:2", "w1:C:1",
+    "w2:根:0", "w2:X:1", "w2:Y:2", "w2:Z:1"
+  ], "資料夾要緊跟在自己的世界觀後面、照樹狀順序；上層不存在的當成最上層");
+
+  /* 原本是「先列全部世界觀，再列全部資料夾」，兩個世界觀都有「角色」時
+     根本分不出是哪一個。現在它們各自排在自己的世界觀底下。 */
+  const labels = opts.map(function(o) { return o.label; });
+  assert.ok(labels[1].indexOf("　") === 0 && labels[2].indexOf("　　") === 0,
+    "深度要用全形空白縮排（<option> 會吃掉一般的前導空白）");
+});
+
+test("moveTargetOptions()：標出目前位置", function() {
+  const app = moveApp();
+  const cur = host(app.run(`moveTargetOptions({ type: "doc", id: "d1" })`))
+    .filter(function(o) { return o.current; });
+  assert.deepStrictEqual(cur.map(function(o) { return o.parentId; }), ["B"], "只有一個、而且是它現在的資料夾");
+
+  const root = host(app.run(`moveTargetOptions({ type: "doc", id: "d3" })`))
+    .filter(function(o) { return o.current; });
+  assert.deepStrictEqual(root.map(function(o) { return o.worldId + "/" + o.parentId; }), ["w1/null"],
+    "在根目錄的話，標的是它那個世界觀的根目錄，不是別的世界觀的");
+});
+
+test("moveTargetOptions()：搬資料夾時，自己與整支子孫都不列", function() {
+  const app = moveApp();
+  const ids = host(app.run(`moveTargetOptions({ type: "folder", id: "A" })`))
+    .map(function(o) { return o.parentId; });
+  assert.ok(ids.indexOf("A") === -1 && ids.indexOf("B") === -1, "A 與它底下的 B 都不能是目的地");
+  assert.ok(ids.indexOf("C") !== -1 && ids.indexOf("X") !== -1, "其他的照列");
+});
+
+test("跨世界觀搬資料夾：整棵子樹一起搬過去", function() {
+  /* 原本只改了資料夾自己的 worldId。子資料夾與文檔留在原本的世界觀，
+     而它們的上層已經不在那裡——兩邊的目錄樹都畫不出它們。 */
+  const app = moveApp();
+  assert.strictEqual(app.run(`moveItemInto({ type: "folder", id: "A" }, null, "w2")`), true);
+  const where = host(app.run(`({
+    A: appData.folders.find(function(f) { return f.id === "A"; }).worldId,
+    B: appData.folders.find(function(f) { return f.id === "B"; }).worldId,
+    d1: appData.docs.find(function(d) { return d.id === "d1"; }).worldId,
+    d2: appData.docs.find(function(d) { return d.id === "d2"; }).worldId,
+    d3: appData.docs.find(function(d) { return d.id === "d3"; }).worldId,
+    C: appData.folders.find(function(f) { return f.id === "C"; }).worldId
+  })`));
+  assert.deepStrictEqual(where, { A: "w2", B: "w2", d1: "w2", d2: "w2", d3: "w1", C: "w1" },
+    "A 底下的全部跟著過去，不相干的留在原地");
+
+  const trashed = host(app.run("__trashed"));
+  assert.strictEqual(trashed.length, 1);
+  assert.deepStrictEqual(trashed[0].ids, ["d1", "d2"],
+    "搬走的文檔在原本白板上的節點要收掉 —— 白板畫節點時不看世界觀，不收會一直掛著");
+  assert.match(trashed[0].label, /搬到別的世界觀/,
+    "垃圾桶裡要講清楚原因，不是「隨文檔一起刪除」");
+});
+
+test("同一個世界觀裡搬移：不碰白板", function() {
+  const app = moveApp();
+  app.run(`moveItemInto({ type: "doc", id: "d3" }, "C", "w1")`);
+  app.run(`moveItemInto({ type: "folder", id: "B" }, "C", "w1")`);
+  assert.strictEqual(app.run("__trashed.length"), 0, "還在同一張白板上，節點不能被收掉");
+});
+
+test("copyItemInto()：文檔複製一份，原本的不動", function() {
+  const app = moveApp();
+  const newId = app.run(`copyItemInto({ type: "doc", id: "d1" }, "X", "w2")`);
+  assert.ok(newId && newId !== "d1", "要拿到新的 id");
+  const both = host(app.run(`appData.docs.filter(function(d) { return d.title === "團長"; })`));
+  assert.strictEqual(both.length, 2);
+  const orig = both.find(function(d) { return d.id === "d1"; });
+  const copy = both.find(function(d) { return d.id === newId; });
+  assert.deepStrictEqual([orig.worldId, orig.folderId], ["w1", "B"], "原本的留在原地");
+  assert.deepStrictEqual([copy.worldId, copy.folderId], ["w2", "X"]);
+  assert.strictEqual(copy.content, "內文");
+  assert.deepStrictEqual(copy.tags, ["t"]);
+
+  /* 深拷貝：改了複本的標籤，原本的不能跟著變。 */
+  app.run(`appData.docs.find(function(d) { return d.id === "${newId}"; }).tags.push("new")`);
+  assert.deepStrictEqual(host(app.run(`appData.docs.find(function(d) { return d.id === "d1"; }).tags`)), ["t"],
+    "複本跟原本不能共用同一個陣列");
+});
+
+test("copyItemInto()：資料夾整棵子樹複製，上下層對得上、id 全新", function() {
+  const app = moveApp();
+  const newRoot = app.run(`copyItemInto({ type: "folder", id: "A" }, "X", "w2")`);
+  const r = host(app.run(`(function() {
+    var root = appData.folders.find(function(f) { return f.id === "${newRoot}"; });
+    var child = appData.folders.find(function(f) { return f.parentId === "${newRoot}"; });
+    var docs = appData.docs.filter(function(d) { return d.worldId === "w2"; });
+    return {
+      root: [root.name, root.worldId, root.parentId],
+      child: child ? [child.name, child.worldId] : null,
+      docs: docs.map(function(d) {
+        var f = appData.folders.find(function(x) { return x.id === d.folderId; });
+        return d.title + "@" + (f ? f.name : "?") + "(" + (f && f.worldId) + ")";
+      }).sort(),
+      uniqueFolders: new Set(appData.folders.map(function(f) { return f.id; })).size === appData.folders.length,
+      uniqueDocs: new Set(appData.docs.map(function(d) { return d.id; })).size === appData.docs.length,
+      origStill: appData.folders.filter(function(f) { return f.worldId === "w1"; }).length
+    };
+  })()`));
+  assert.deepStrictEqual(r.root, ["角色", "w2", "X"]);
+  assert.deepStrictEqual(r.child, ["騎士", "w2"], "子資料夾要跟著複製、掛在新的那一個底下");
+  assert.deepStrictEqual(r.docs, ["團長@騎士(w2)", "遊俠@角色(w2)"],
+    "文檔要掛在「新的」資料夾底下，不是原本的");
+  assert.ok(r.uniqueFolders && r.uniqueDocs, "同一毫秒產生的 id 也不能撞");
+  assert.strictEqual(r.origStill, 3, "原本那三個資料夾都還在");
+});
+
+test("copyItemInto()：不能複製進自己的子孫", function() {
+  const app = moveApp();
+  assert.strictEqual(app.run(`copyItemInto({ type: "folder", id: "A" }, "B", "w1")`), null,
+    "複製的過程中子孫又多了一份 —— 不擋的話會無止盡地長");
+  assert.strictEqual(app.run(`copyItemInto({ type: "folder", id: "A" }, "A", "w1")`), null);
+  assert.strictEqual(app.run(`copyItemInto({ type: "doc", id: "沒這篇" }, null, "w2")`), null);
+});
+
+test("移動彈窗：按鈕順序是 取消 → 複製 → 移動", function() {
+  /* 使用者指定的順序。「移動」在最右邊＝主要動作的位置。 */
+  const block = html.match(/id="moveTargetSelect"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/);
+  assert.ok(block, "找不到移動彈窗的按鈕列");
+  const labels = (block[0].match(/<button[^>]*>([^<]+)<\/button>/g) || [])
+    .map(function(b) { return b.replace(/<[^>]+>/g, "").trim(); });
+  assert.deepStrictEqual(labels, ["取消", "複製", "移動"]);
+
+  assert.match(block[0], /id="moveCopyBtn" onclick="confirmMoveOrCopy\('copy'\)" hidden/,
+    "「複製」預設藏起來，目的地是別的世界觀才出現");
+  assert.match(block[0], /onclick="confirmMoveOrCopy\('move'\)"/);
+  assert.ok(!/type="radio"/.test(block[0]), "不要再用單選框");
+
+  /* .btn 設了 display: inline-flex，會蓋掉瀏覽器預設的 [hidden]{display:none}。
+     少了這一條，「複製」在同一個世界觀時也會冒出來。 */
+  assert.match(css, /#moveCopyBtn\[hidden\]\s*\{\s*display:\s*none;/,
+    "hidden 屬性要真的藏得起來");
+});
+
+test("移動彈窗：只有目的地在別的世界觀時才有「複製」", function() {
+  assert.match(codeOnly(bodyOf(modalJs, "updateMoveModeVisibility")), /copyBtn\.hidden = !other;/,
+    "同一個世界觀裡不給複製 —— 同一個目錄多一份一樣的沒有意義");
+
+  const confirm = codeOnly(bodyOf(modalJs, "confirmMoveOrCopy"));
+  assert.match(confirm, /if \(mode === "copy" && !crossWorld\) return;/,
+    "按鈕狀態跟目的地不同步的那一瞬間，同世界觀的複製也要擋掉");
+  assert.match(confirm, /copyItemInto\(/, "按複製走 copyItemInto()");
+  assert.match(confirm, /moveItemInto\(/, "按移動照舊走 moveItemInto()");
+
+  const open = codeOnly(bodyOf(modalJs, "openMoveModal"));
+  assert.match(open, /moveTargetOptions\(ref\)/, "清單要從 moveTargetOptions() 來（順序在那裡定、有測試）");
+  assert.ok(!/appData\.worldviews\.forEach/.test(open), "不要在彈窗裡自己再排一次");
+  assert.match(open, /updateMoveModeVisibility\(\)/,
+    "打開時就要算一次 —— 目前位置是預設選項，「複製」一開始應該是藏著的");
+});
+
+/* ---------- 垃圾桶：全部放一起、照世界觀分組 ---------- */
+
+function trashApp() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"
+  ]);
+  app.run(`
+    saveData = function() {};
+    renderTrashList = function() {};
+    confirm = function() { return true; };
+    alert = function() {};
+    appData = {
+      worldviews: [{ id: "w1", name: "主" }, { id: "w2", name: "外傳" }],
+      folders: [], docs: [],
+      trash: {
+        docs: [{ id: "a", worldId: "w1" }, { id: "b", worldId: "w2" }, { id: "g", worldId: "已刪除的" }],
+        folders: [{ id: "fa", worldId: "w1" }, { id: "fb", worldId: "w2" }],
+        canvas: [{ kind: "node", worldId: "w1" }, { kind: "note", worldId: "w2" }]
+      }
+    };
+    activeWorldId = "w1";
+  `);
+  return app;
+}
+
+test("垃圾桶：清空就是全部清掉（所有世界觀共用一個）", function() {
+  /* 中間有一版是「每個世界觀的垃圾桶各自獨立、只清自己的」，使用者用過之後
+     改回來了：全部放在一起，標示清楚是哪個世界觀的就好。 */
+  const app = trashApp();
+  app.run(`emptyTrash()`);
+  const left = host(app.run(`[appData.trash.docs.length, appData.trash.folders.length, appData.trash.canvas.length]`));
+  assert.deepStrictEqual(left, [0, 0, 0]);
+});
+
+test("垃圾桶的清單：每一筆都列、白板項目帶著原本的索引", function() {
+  /* 白板項目是用「在原本陣列裡的索引」復原與刪除的。分組之後如果改用組裡的
+     索引，按「復原」會復原到別的那一筆。 */
+  const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
+  assert.match(body, /\.map\(function\(item, index\) \{ return \{ item: item, index: index \}; \}\)/,
+    "分組之前先把原本的索引記下來");
+  assert.match(body, /restoreCanvasTrashItem\(e\.index\)/, "復原用原本的索引");
+  assert.match(body, /permanentlyDeleteCanvasTrashItem\(e\.index\)/, "刪除也是");
+  assert.ok(!/activeWorldId/.test(body), "不要再照目前的世界觀篩選 —— 全部放在一起");
+  assert.ok(!/innerHTML\s*=\s*'/.test(body), "空的提示也走 textContent");
+});
+
+/* ---------- 一句話簡介在搜尋欄上面 ---------- */
+
+test("一句話簡介在搜尋欄上面", function() {
+  const desc = html.indexOf('id="worldDescLine"');
+  const search = html.indexOf('class="search-wrap"');
+  const tree = html.indexOf('id="worldTreeContainer"');
+  assert.ok(desc !== -1 && search !== -1 && tree !== -1);
+  assert.ok(desc < search && search < tree, "順序要是：簡介 → 搜尋欄 → 目錄樹（使用者指定的位置）");
+});
+
+/* ---------- 垃圾桶：刪掉的世界觀照名字分組、放最上面 ---------- */
+
+test("刪世界觀時，把名字蓋在垃圾桶裡屬於它的每一筆上", function() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"
+  ]);
+  app.run(`
+    appData = { worldviews: [{ id: "w1", name: "主" }, { id: "wX", name: "龍之谷", icon: "🐉" }],
+      folders: [], docs: [],
+      trash: { docs: [{ id: "early", worldId: "wX" }, { id: "other", worldId: "w1" }],
+               folders: [{ id: "f", worldId: "wX" }],
+               canvas: [{ kind: "node", worldId: "wX" }] } };
+    stampDeletedWorldOnTrash("wX", "龍之谷", "🐉");
+  `);
+  const t = host(app.run("appData.trash"));
+  assert.strictEqual(t.docs[0].fromWorldName, "龍之谷",
+    "之前就從這個世界觀刪進來的也要蓋 —— 它現在一樣是「世界觀已經不在」");
+  assert.strictEqual(t.folders[0].fromWorldName, "龍之谷");
+  assert.strictEqual(t.canvas[0].fromWorldName, "龍之谷");
+  assert.strictEqual(t.docs[0].fromWorldIcon, "🐉");
+  assert.ok(!("fromWorldName" in t.docs[1]), "別的世界觀的不能被蓋");
+
+  /* 現在世界觀整筆也會存進 trash.worlds（那一份有 id，合併有管到，見
+     sync-merge 的測試）。蓋在每一筆上的名字還是留著：它是「更早就刪掉、
+     後來世界觀也沒了」的那些項目認得出主人的唯一線索。 */
+  const del = codeOnly(bodyOf(directoryJs, "deleteWorldById"));
+  const stampAt = del.indexOf("stampDeletedWorldOnTrash(");
+  const removeAt = del.indexOf("appData.worldviews = appData.worldviews.filter");
+  assert.ok(stampAt !== -1 && stampAt < removeAt,
+    "要在把世界觀拿掉之前蓋 —— 拿掉之後就查不到名字了");
+});
+
+test("trashGroups()：刪掉的世界觀在最上面（最近刪的在前），接著是現有的、照左側那排的順序", function() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"
+  ]);
+  app.run(`appData = { worldviews: [{ id: "w1", name: "主", icon: "🌍" }, { id: "w2", name: "外傳" }],
+                       folders: [], docs: [], trash: { docs: [], folders: [], canvas: [] } };`);
+  const groups = host(app.run(`trashGroups(
+    [{ id: "fA", worldId: "wA", fromWorldName: "龍之谷", deletedTs: 200 }],
+    [{ id: "w2doc", worldId: "w2", deletedTs: 999 },
+     { id: "a1", worldId: "wA", fromWorldName: "龍之谷", deletedTs: 200 },
+     { id: "b1", worldId: "wB", fromWorldName: "廢墟", deletedTs: 300 },
+     { id: "own", worldId: "w1", deletedTs: 50 },
+     { id: "old", worldId: "wOld", deletedTs: 1 }],
+    [{ index: 0, item: { kind: "node", worldId: "wA", deletedTs: 200 } }]
+  )`));
+  assert.deepStrictEqual(groups.map(function(g) { return (g.deleted ? "刪:" : "") + (g.name || "(無名)"); }),
+    ["刪:廢墟", "刪:龍之谷", "刪:(無名)", "主", "外傳"],
+    "刪掉的在上面、最近刪的在前；現有的照左側那排的順序（不是照刪除時間）");
+
+  const dragon = groups[1];
+  assert.deepStrictEqual([dragon.folders.length, dragon.docs.length, dragon.canvas.length], [1, 1, 1],
+    "資料夾、文檔、白板項目都要進同一組");
+  assert.strictEqual(dragon.canvas[0].index, 0, "白板項目要帶著原本的索引（復原用的）");
+  assert.strictEqual(groups[3].icon, "🌍", "現有的世界觀用它現在的圖示");
+});
+
+test("垃圾桶：刪掉的世界觀放最上面", function() {
+  const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
+  const goneAt = body.indexOf('heading("刪除的世界觀"');
+  const aliveAt = body.indexOf("alive.forEach(");
+  assert.ok(goneAt !== -1 && aliveAt !== -1 && goneAt < aliveAt,
+    "「刪除的世界觀」那一區要畫在現有世界觀之前（使用者指定的順序）");
+  assert.match(body, /heading\(\(g\.icon \|\| "🌐"\) \+ " " \+ g\.name, "trash-group-title"\)/,
+    "現有的世界觀也要有標題 —— 全部放在一起之後，就靠這個分辨是哪個世界觀的");
+  assert.match(body, /\(名稱沒有留下來的世界觀\)|名稱沒有留下來的世界觀/,
+    "更早以前刪的世界觀沒蓋過名字，也要有一組，不能消失");
+  assert.ok(!/來自已刪除的世界觀/.test(body), "分組之後不用再在每一列後面標了");
+});
+
+test("從垃圾桶復原時，把蓋上去的世界觀名字拿掉", function() {
+  ["restoreDocFromTrash", "restoreFolderFromTrash"].forEach(function(fn) {
+    const body = codeOnly(bodyOf(modalJs, fn));
+    assert.match(body, /delete \w+\.fromWorldName;/, fn + "() 要拿掉 fromWorldName —— 回到目錄之後那是沒意義的雜訊");
+    assert.match(body, /delete \w+\.fromWorldIcon;/, fn + "() 也要拿掉 fromWorldIcon");
+  });
+});
+
+/* ---------- 刪掉的世界觀：整個復原 ---------- */
+
+/* 使用者：「復原直接復原整個世界觀，不需要把刪除的世界觀裡面有什麼列出來」。
+
+   整個復原需要世界觀本身的完整紀錄——名稱、圖示、簡介，還有**整張白板**
+   （節點、連線、便條紙）。以前刪世界觀時那一筆直接丟掉，只有文檔與資料夾
+   進垃圾桶，白板上的便條紙與連線說明永遠回不來。現在整筆存進 trash.worlds。 */
+function worldTrashApp() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"
+  ]);
+  app.run(`
+    saveData = function() {}; renderSidebarTree = function() {}; renderBreadcrumb = function() {};
+    updateWorldBadge = function() {}; renderTrashList = function() {}; refreshCanvasIfVisible = function() {};
+    loadDocToEditor = function() {}; clearEditorWorkspace = function() {}; renderCanvas = function() {};
+    confirm = function() { return true; }; alert = function() {};
+    appData = {
+      worldviews: [
+        { id: "w1", name: "主", icon: "🌍", canvas: { nodes: [], edges: [], notes: [] } },
+        { id: "wX", name: "龍之谷", icon: "🐉", desc: "巨龍的故鄉", canvas: {
+          nodes: [{ id: "node_d1", docId: "d1", x: 1, y: 2 }, { id: "node_d2", docId: "d2", x: 3, y: 4 }],
+          edges: [{ id: "e1", source: "node_d1", target: "node_d2", label: "宿敵" }],
+          notes: [{ id: "note1", text: "伏筆" }] } }
+      ],
+      folders: [{ id: "fX", worldId: "wX", parentId: null, name: "巨龍" }],
+      docs: [
+        { id: "d1", worldId: "wX", folderId: "fX", title: "赤龍", tags: [] },
+        { id: "d2", worldId: "wX", folderId: null, title: "龍族語言", tags: [] },
+        { id: "keep", worldId: "w1", folderId: null, title: "主世界的", tags: [] }
+      ],
+      trash: { docs: [{ id: "earlier", worldId: "wX", title: "早就刪掉的", deletedTs: 1 }], folders: [], canvas: [] }
+    };
+    activeWorldId = "w1";
+  `);
+  return app;
+}
+
+test("刪世界觀：整筆（含白板）存進 trash.worlds，白板節點不另外拆進垃圾桶", function() {
+  const app = worldTrashApp();
+  app.run(`deleteWorldById("wX")`);
+  const t = host(app.run("appData.trash"));
+  assert.strictEqual(t.worlds.length, 1);
+  const rec = t.worlds[0];
+  assert.deepStrictEqual([rec.id, rec.name, rec.icon, rec.desc], ["wX", "龍之谷", "🐉", "巨龍的故鄉"]);
+  assert.deepStrictEqual(rec.canvas.nodes.map(function(n) { return n.id; }), ["node_d1", "node_d2"],
+    "白板要整張存下來 —— 以前便條紙與連線說明刪了就回不來");
+  assert.strictEqual(rec.canvas.edges[0].label, "宿敵");
+  assert.strictEqual(rec.canvas.notes[0].text, "伏筆");
+  assert.ok(typeof rec.deletedTs === "number");
+
+  assert.strictEqual((t.canvas || []).length, 0,
+    "節點已經在整筆紀錄裡了，不要再拆一份進垃圾桶（復原時會變成兩份）");
+
+  const withWorld = t.docs.filter(function(d) { return d.trashedWithWorld === "wX"; }).map(function(d) { return d.id; }).sort();
+  assert.deepStrictEqual(withWorld, ["d1", "d2"], "隨世界觀一起進來的要標記");
+  assert.ok(!t.docs.find(function(d) { return d.id === "earlier"; }).trashedWithWorld,
+    "之前就刪掉的不是「隨世界觀一起」的，不能標");
+  assert.strictEqual(t.folders[0].trashedWithWorld, "wX");
+});
+
+test("復原世界觀：世界觀、白板、當時裡面的東西全部回來；之前就刪掉的留在垃圾桶", function() {
+  const app = worldTrashApp();
+  app.run(`deleteWorldById("wX"); restoreWorldFromTrash("wX");`);
+  const r = host(app.run(`({
+    world: appData.worldviews.find(function(w) { return w.id === "wX"; }),
+    docs: appData.docs.filter(function(d) { return d.worldId === "wX"; }).map(function(d) { return d; }),
+    folders: appData.folders.filter(function(f) { return f.worldId === "wX"; }),
+    trash: appData.trash
+  })`));
+  assert.ok(r.world, "世界觀要回來");
+  assert.deepStrictEqual([r.world.name, r.world.icon, r.world.desc], ["龍之谷", "🐉", "巨龍的故鄉"]);
+  assert.strictEqual(r.world.canvas.nodes.length, 2, "白板節點回來");
+  assert.strictEqual(r.world.canvas.edges[0].label, "宿敵", "連線說明回來");
+  assert.strictEqual(r.world.canvas.notes[0].text, "伏筆", "便條紙回來");
+  assert.ok(!("deletedAt" in r.world) && !("deletedTs" in r.world), "刪除時間要拿掉");
+
+  assert.deepStrictEqual(r.docs.map(function(d) { return d.id; }).sort(), ["d1", "d2"]);
+  assert.strictEqual(r.docs.find(function(d) { return d.id === "d1"; }).folderId, "fX", "資料夾關係不變");
+  r.docs.concat(r.folders).forEach(function(x) {
+    ["deletedAt", "deletedTs", "trashedWithWorld", "fromWorldName", "fromWorldIcon"].forEach(function(k) {
+      assert.ok(!(k in x), x.id + " 身上不該還留著 " + k);
+    });
+  });
+
+  assert.strictEqual(r.trash.worlds.length, 0, "紀錄要從垃圾桶拿掉");
+  assert.deepStrictEqual(r.trash.docs.map(function(d) { return d.id; }), ["earlier"],
+    "刪世界觀之前就刪掉的，復原世界觀時不該跟著復活 —— 那是使用者本來就丟掉的");
+});
+
+test("復原舊資料（刪的時候還沒有 trash.worlds）：用蓋上去的名字重建，裡面的全部回來", function() {
+  const app = worldTrashApp();
+  app.run(`
+    appData.trash.docs = [
+      { id: "o1", worldId: "gone", title: "舊的一篇", fromWorldName: "廢墟", fromWorldIcon: "🏚️", deletedTs: 5 },
+      { id: "o2", worldId: "gone", title: "舊的兩篇", deletedTs: 5 }
+    ];
+    restoreWorldFromTrash("gone");
+  `);
+  const w = host(app.run(`appData.worldviews.find(function(w) { return w.id === "gone"; })`));
+  assert.deepStrictEqual([w.name, w.icon], ["廢墟", "🏚️"]);
+  assert.deepStrictEqual(w.canvas, { nodes: [], edges: [], notes: [] }, "白板沒有存下來，就給一張空的");
+  assert.strictEqual(app.run(`appData.docs.filter(function(d) { return d.worldId === "gone"; }).length`), 2);
+  assert.strictEqual(app.run(`appData.trash.docs.length`), 0);
+});
+
+test("永久刪除世界觀：紀錄與屬於它的全部一起清掉，別的不動", function() {
+  const app = worldTrashApp();
+  app.run(`deleteWorldById("wX"); permanentlyDeleteTrashWorld("wX");`);
+  const t = host(app.run("appData.trash"));
+  assert.strictEqual(t.worlds.length, 0);
+  assert.strictEqual(t.docs.filter(function(d) { return d.worldId === "wX"; }).length, 0,
+    "包含之前就刪掉的 —— 世界觀都永久刪了，它們再也沒有地方可以回去");
+  assert.strictEqual(t.folders.length, 0);
+});
+
+test("垃圾桶：刪掉的世界觀只列一列，不列裡面的東西", function() {
+  const app = worldTrashApp();
+  app.run(`deleteWorldById("wX")`);
+  const groups = host(app.run(`trashGroups(appData.trash.folders, appData.trash.docs,
+    (appData.trash.canvas || []).map(function(item, index) { return { item: item, index: index }; }),
+    appData.trash.worlds)`));
+  const gone = groups.filter(function(g) { return g.deleted; });
+  assert.strictEqual(gone.length, 1);
+  assert.strictEqual(gone[0].name, "龍之谷", "名字從整筆紀錄拿");
+  assert.strictEqual(gone[0].restoreCount, 3, "會一起回來的：d1、d2、資料夾 fX（不含之前就刪掉的 earlier）");
+
+  const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
+  assert.match(body, /restoreWorldFromTrash\(g\.worldId\)/, "那一列的「復原」是整個世界觀");
+  assert.match(body, /permanentlyDeleteTrashWorld\(g\.worldId\)/, "「永久刪除」也是整個世界觀");
+  assert.ok(!/rowsFor\(g\.folders, g\.docs, g\.canvas\);\s*\}\);\s*\/\/ 上面有/.test(body),
+    "刪掉的世界觀不要再把裡面的東西一筆一筆列出來");
+});
+
+test("沒有任何文檔的世界觀刪掉之後，垃圾桶裡也看得到、也復原得回來", function() {
+  /* 以前世界觀本身不進垃圾桶，空的世界觀刪掉就什麼都沒留下。 */
+  const app = worldTrashApp();
+  app.run(`
+    appData.worldviews.push({ id: "empty", name: "空的", icon: "🫙", canvas: { nodes: [], edges: [], notes: [{ id: "n", text: "只有一張便條紙" }] } });
+    deleteWorldById("empty");
+  `);
+  const groups = host(app.run(`trashGroups([], [], [], appData.trash.worlds)`));
+  assert.ok(groups.some(function(g) { return g.deleted && g.name === "空的"; }));
+  app.run(`restoreWorldFromTrash("empty")`);
+  assert.strictEqual(app.run(`appData.worldviews.find(function(w) { return w.id === "empty"; }).canvas.notes[0].text`),
+    "只有一張便條紙");
+});
+
+test("trash.worlds：60 天自動清除、匯入備份都有管到", function() {
+  /* trash 底下每加一種東西，這兩個地方都要跟著加——跟合併是同一個教訓
+     （trash.canvas 就是「後來加的、有地方沒跟著改」才出事）。 */
+  const storage = fs.readFileSync(path.join(ROOT, "js", "storage.js"), "utf8");
+  assert.match(storage, /\["docs", "folders", "canvas", "worlds"\]\.forEach/,
+    "過期清除要掃 trash.worlds，不然刪掉的世界觀永遠佔著空間");
+
+  const app = loadApp();
+  const data = {
+    worldviews: [{ id: "w1", name: "主" }],
+    folders: [], docs: [],
+    trash: { docs: [], folders: [], canvas: [], worlds: [
+      { id: "wX", name: "龍之谷", icon: "🐉", canvas: { notes: [{ id: "n", text: "伏筆" }] }, deletedAt: "2026-09-01 10:00", deletedTs: 123 },
+      { name: "沒有 id 的壞資料" },
+      "不是物件"
+    ] }
+  };
+  const clean = host(app.normalizeImportedDatabase(data));
+  assert.strictEqual(clean.trash.worlds.length, 1, "壞掉的要丟掉，好的要留著");
+  const w = clean.trash.worlds[0];
+  assert.deepStrictEqual([w.id, w.name, w.deletedTs], ["wX", "龍之谷", 123], "刪除時間要補回去（過期清除靠它）");
+  assert.deepStrictEqual(w.canvas.notes, [{ id: "n", text: "伏筆" }], "白板要帶過來");
+  assert.deepStrictEqual(w.canvas.nodes, [], "缺的欄位補成空陣列（跟現有的世界觀過同一道整理）");
+});
+
+test("垃圾桶：「現有的世界觀」上面有一條線", function() {
+  /* 使用者要的：把它跟上面「刪除的世界觀」那一區隔開。第一個區塊上面是
+     說明文字，不需要線，所以用 :not(:first-child)。 */
+  assert.match(css, /\.trash-section-title:not\(:first-child\)\s*\{[^}]*border-top:\s*1px solid/,
+    "第二個以後的區塊標題要有上邊線");
+  const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
+  assert.match(body, /heading\("現有的世界觀", "trash-section-title"\)/,
+    "「現有的世界觀」要用區塊標題的樣式，那條線才套得上");
+});
+
+test("垃圾桶：刪掉的世界觀，項數放在第二行、用補充說明的小字", function() {
+  /* 原本接在名稱後面（「龍之谷 · 4 項」），手機上一行放不下，被截成「· 1…」。 */
+  const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
+  assert.match(body, /g\.restoreCount \? g\.restoreCount \+ " 項" : ""\)/,
+    "項數要當成第二行（createTrashRow 的 sub）傳進去，不是接在名稱後面");
+  assert.ok(!/"　·　" \+ g\.restoreCount/.test(body), "不要再接在名稱後面");
+
+  const row = codeOnly(bodyOf(modalJs, "createTrashRow"));
+  assert.match(row, /subSpan\.className = "trash-item-sub"/);
+  assert.match(row, /subSpan\.textContent = second/, "用 textContent");
+
+  const rule = css.match(/\.trash-item-sub\s*\{[^}]*\}/);
+  assert.ok(rule, "要有 .trash-item-sub");
+  assert.match(rule[0], /font-size:\s*var\(--fs-10\)/, "補充說明的字級，跟刪除時間同一級");
+  assert.match(css, /\.trash-item-text\s*\{[^}]*min-width:\s*0/,
+    "包起來那一欄要 min-width: 0，不然名稱的省略號不會生效");
+});
+
+test("垃圾桶：每一列的刪除時間都在第二行，不再擠在名稱右邊", function() {
+  /* 使用者：「時間也放在第二行，其他刪掉的檔案也一樣」。以前時間是名稱右邊
+     的一欄，加上兩顆按鈕，手機上名稱只剩幾個字的寬度。 */
+  const row = codeOnly(bodyOf(modalJs, "createTrashRow"));
+  assert.match(row, /const second = \[sub, deletedAt\]\.filter\(Boolean\)\.join\("　·　"\);/,
+    "第二行＝（項數）· 刪除時間；項數在前");
+  assert.ok(!/trash-item-meta/.test(row), "不要再有名稱右邊那一欄時間");
+  assert.ok(!/row\.appendChild\(metaSpan\)/.test(row));
+  assert.ok(!/\.trash-item-meta\s*\{/.test(css), "用不到的樣式一起拿掉");
+});
+
+test("垃圾桶：第二行的內容（實際畫出來）", function() {
+  const app = loadApp(["js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+                       "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"]);
+  /* 沙箱的 createElement 是空殼，自己做一個會記住子節點的版本來看結構。 */
+  const out = host(app.run(`(function() {
+    document.createElement = function(tag) {
+      return { tag: tag, className: "", textContent: "", style: {}, children: [],
+               appendChild: function(c) { this.children.push(c); } };
+    };
+    function texts(row) {
+      var box = row.children[1];
+      return box.children.length ? box.children.map(function(c) { return c.className + "=" + c.textContent; })
+                                 : [box.className + "=" + box.textContent];
+    }
+    return {
+      doc: texts(createTrashRow("📄", "赤龍", "2026-09-24 16:42", null, null)),
+      world: texts(createTrashRow("🐉", "龍之谷", "2026-09-24 16:42", null, null, "4 項")),
+      bare: texts(createTrashRow("📄", "沒記時間的舊資料", "", null, null)),
+      children: createTrashRow("📄", "x", "t", null, null).children.map(function(c) { return c.className; })
+    };
+  })()`));
+  assert.deepStrictEqual(out.doc, ["trash-item-name=赤龍", "trash-item-sub=2026-09-24 16:42"]);
+  assert.deepStrictEqual(out.world, ["trash-item-name=龍之谷", "trash-item-sub=4 項　·　2026-09-24 16:42"]);
+  assert.deepStrictEqual(out.bare, ["trash-item-name=沒記時間的舊資料"], "沒有時間就不留一行空白");
+  assert.deepStrictEqual(out.children, ["trash-item-icon", "trash-item-text", "trash-item-actions"],
+    "一列就是：圖示、兩行文字、按鈕");
+});
+
+/* ---------- 因為刪文檔而進垃圾桶的節點，跟著文檔走 ---------- */
+
+/* 使用者：「如果是因為刪除掉文檔所以刪除的節點，直接跟著文檔本身，不用獨立
+   出來」。以前這種節點在垃圾桶裡是獨立的一列「（隨文檔一起刪除的白板節點）」，
+   復原文檔之後還要另外去復原它，不然白板上那篇就不見了。 */
+function nodeFollowApp() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"
+  ]);
+  app.run(`
+    saveData = function() {}; renderSidebarTree = function() {}; renderBreadcrumb = function() {};
+    renderTrashList = function() {}; refreshCanvasIfVisible = function() {};
+    confirm = function() { return true; }; var __alerts = []; alert = function(m) { __alerts.push(m); };
+    appData = {
+      worldviews: [{ id: "w1", name: "主", canvas: {
+        nodes: [{ id: "node_d1", docId: "d1", x: 0, y: 0 }, { id: "node_d2", docId: "d2", x: 300, y: 0 }],
+        edges: [{ id: "e1", source: "node_d1", target: "node_d2", label: "宿敵" }], notes: [] } }],
+      folders: [],
+      docs: [{ id: "d1", worldId: "w1", folderId: null, title: "團長", tags: [] },
+             { id: "d2", worldId: "w1", folderId: null, title: "遊俠", tags: [] }],
+      trash: { docs: [], folders: [], canvas: [] }
+    };
+    activeWorldId = "w1";
+    function __kill(id) { var d = appData.docs.find(function(x) { return x.id === id; });
+      appData.docs = appData.docs.filter(function(x) { return x.id !== id; }); moveDocsToTrash([d]); }
+  `);
+  return app;
+}
+
+test("刪文檔時拆出來的節點，標記它跟著哪一篇", function() {
+  const app = nodeFollowApp();
+  app.run(`__kill("d1")`);
+  const e = host(app.run(`appData.trash.canvas[0]`));
+  assert.strictEqual(e.kind, "node");
+  assert.strictEqual(e.withDoc, "d1");
+  assert.strictEqual(app.run(`canvasTrashFollowsDoc(appData.trash.canvas[0])`), "d1");
+});
+
+test("舊資料沒有標記：用「隨文檔一起刪除」那個標籤認得出來", function() {
+  const app = nodeFollowApp();
+  assert.strictEqual(app.run(`canvasTrashFollowsDoc({ kind: "node", label: "（隨文檔一起刪除的白板節點）", node: { id: "n", docId: "dz" } })`), "dz");
+  assert.strictEqual(app.run(`canvasTrashFollowsDoc({ kind: "node", label: "使用者自己刪的", node: { id: "n", docId: "dz" } })`), null,
+    "使用者在白板上自己刪的節點不跟著文檔，照舊獨立一列");
+  assert.strictEqual(app.run(`canvasTrashFollowsDoc({ kind: "note", withDoc: "dz", note: { id: "n" } })`), null,
+    "只有節點會跟著文檔");
+});
+
+test("文檔搬到別的世界觀時留下的節點不跟著文檔", function() {
+  /* 那篇文檔沒有被刪，還活在另一個世界觀。如果標成跟著它，之後它在新的
+     世界觀被刪、再復原時，會把舊世界觀的節點也一起帶回舊白板——指著一篇
+     已經不屬於那裡的文檔。 */
+  const body = codeOnly(bodyOf(directoryJs, "moveItemInto"));
+  assert.match(body, /trashOrphanNodesForDocs\(leavingDocIds, "（文檔搬到別的世界觀時留下的白板節點）", false\)/);
+});
+
+test("復原文檔：它的節點與連線一起回到白板，垃圾桶裡不留", function() {
+  const app = nodeFollowApp();
+  app.run(`__kill("d1"); restoreDocFromTrash("d1");`);
+  const r = host(app.run(`({ nodes: appData.worldviews[0].canvas.nodes.map(function(n) { return n.id; }).sort(),
+    edges: appData.worldviews[0].canvas.edges.map(function(e) { return e.label; }),
+    trash: appData.trash.canvas.length, alerts: __alerts })`));
+  assert.deepStrictEqual(r.nodes, ["node_d1", "node_d2"], "節點要跟著回來");
+  assert.deepStrictEqual(r.edges, ["宿敵"], "連線說明也回來");
+  assert.strictEqual(r.trash, 0, "垃圾桶裡不留一筆孤零零的節點");
+  assert.deepStrictEqual(r.alerts, [], "跟著回來的過程不要跳任何提示");
+});
+
+test("永久刪除文檔：它的節點一起刪掉", function() {
+  const app = nodeFollowApp();
+  app.run(`__kill("d1"); permanentlyDeleteTrashDoc("d1");`);
+  assert.strictEqual(app.run(`appData.trash.canvas.length`), 0,
+    "不然垃圾桶裡會剩一筆再也復原不了的節點（它的文檔已經永久刪了）");
+});
+
+test("垃圾桶清單：文檔還在垃圾桶時，跟著它的節點不獨立列出", function() {
+  const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
+  assert.match(body, /canvasTrashFollowsDoc\(/, "要看每一筆是不是跟著某篇文檔");
+  assert.match(body, /trashedDocIds\.has\(/,
+    "只有那篇文檔還在垃圾桶時才藏 —— 文檔不在了（例如早就被清掉），節點要能被看見");
+});
+
+test("跟著文檔復原節點：好幾顆時一顆都不漏（從後往前做）", function() {
+  /* 舊資料裡同一篇文檔可能在兩個世界觀的白板上各有一顆節點，刪它時會拆出
+     相鄰的兩筆。restoreCanvasTrashItem 每復原一筆就把它從陣列裡拿掉——從前
+     往後做的話，第二筆會往前遞補到剛剛那個位置，然後被跳過。 */
+  const app = nodeFollowApp();
+  app.run(`
+    appData.worldviews.push({ id: "w2", name: "外傳", canvas: { nodes: [{ id: "node_d1_w2", docId: "d1", x: 0, y: 0 }], edges: [], notes: [] } });
+    __kill("d1");
+  `);
+  assert.strictEqual(app.run(`appData.trash.canvas.length`), 2, "兩個世界觀各拆出一筆");
+  app.run(`restoreDocFromTrash("d1")`);
+  assert.strictEqual(app.run(`appData.trash.canvas.length`), 0, "兩筆都要回去，不能漏掉第二筆");
+  assert.strictEqual(app.run(`appData.worldviews[1].canvas.nodes.length`), 1);
+});
+
+test("跟著文檔復原節點：放不回去的安靜地留著，不跳提示", function() {
+  /* 例如節點所屬的世界觀已經不在了。一般的「復原」會跳提示告訴使用者為什麼
+     不行；跟著文檔一起復原時，使用者按的是「復原文檔」、文檔也確實回來了，
+     跳一個關於節點的警告只會讓人以為文檔沒復原成功。 */
+  const app = nodeFollowApp();
+  app.run(`
+    __kill("d1");
+    appData.trash.canvas[0].worldId = "不存在的世界觀";
+    restoreDocFromTrash("d1");
+  `);
+  assert.deepStrictEqual(host(app.run("__alerts")), [], "不跳提示");
+  assert.strictEqual(app.run(`appData.trash.canvas.length`), 1,
+    "放不回去就留在垃圾桶——文檔已經不在垃圾桶了，所以它會變成獨立一列，看得到");
+  assert.ok(app.run(`appData.docs.some(function(d) { return d.id === "d1"; })`), "文檔本身要回來");
 });

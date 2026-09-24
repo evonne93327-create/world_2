@@ -122,6 +122,239 @@ function addCurrentDocToCanvas() {
   focusCanvasNode(currentDoc.id);
 }
 
+/* ---------- 批量投射 ----------
+
+   一篇一篇投射的話，二十篇角色就要開二十次文檔、按二十次「投射白板」。
+   這裡一次勾選、一次放上去。
+
+   只列「目前這個世界觀」的文檔：白板是一個世界觀一張，列別的世界觀的
+   文檔只會讓人以為可以把它們放到這張白板上。 */
+
+/* 新節點要放在哪裡。純函式，不碰 DOM。
+
+   放在既有節點的**下方**、排成網格：
+   - 不會疊在任何既有節點上（原本單篇投射是照數量斜斜地錯開，一次放十幾篇
+     的話會疊成一坨，而且會壓在使用者已經排好的節點上）
+   - 欄數取接近正方形（上限 4 欄）。3 篇排成一橫排太長、20 篇排成一直排
+     太高，都要捲很久才看得完
+
+   既有節點的高度這裡不知道（要量 DOM），用一個保守的估計值往下讓。
+   估大了只是多空一點，估小了才會疊到。 */
+const BATCH_GAP_X = 40;
+const BATCH_ROW_H = 150;
+const BATCH_MAX_COLS = 4;
+const BATCH_EST_NODE_H = 120;
+
+function batchNodePositions(existingNodes, count) {
+  if (!count || count < 1) return [];
+  const cols = Math.min(BATCH_MAX_COLS, Math.max(1, Math.ceil(Math.sqrt(count))));
+
+  let originX = 40, originY = 60;
+  const nodes = existingNodes || [];
+  if (nodes.length) {
+    let minX = Infinity, maxBottom = -Infinity;
+    nodes.forEach(function(n) {
+      if (typeof n.x === "number" && n.x < minX) minX = n.x;
+      if (typeof n.y === "number" && n.y + BATCH_EST_NODE_H > maxBottom) maxBottom = n.y + BATCH_EST_NODE_H;
+    });
+    if (isFinite(minX)) originX = minX;
+    if (isFinite(maxBottom)) originY = maxBottom + BATCH_GAP_X;
+  }
+
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    out.push({
+      x: originX + (i % cols) * (CANVAS_NODE_W + BATCH_GAP_X),
+      y: originY + Math.floor(i / cols) * BATCH_ROW_H
+    });
+  }
+  return out;
+}
+
+/* 真的放上去。回傳實際新增的文檔 id（已經在白板上的、不屬於這個世界觀
+   的、重複的都會跳過）——呼叫端要拿它來決定畫面要對準哪裡。 */
+function projectDocsToCanvas(docIds) {
+  const canvas = getCurrentWorldCanvas();
+  const onBoard = new Set(canvas.nodes.map(function(n) { return n.docId; }));
+  const ids = (docIds || []).filter(function(id, i, arr) {
+    return !onBoard.has(id) && arr.indexOf(id) === i &&
+      appData.docs.some(function(d) { return d.id === id && d.worldId === activeWorldId; });
+  });
+  if (!ids.length) return [];
+
+  const spots = batchNodePositions(canvas.nodes, ids.length);
+  ids.forEach(function(id, i) {
+    canvas.nodes.push({ id: "node_" + id, docId: id, x: spots[i].x, y: spots[i].y });
+  });
+  saveData();
+  return ids;
+}
+
+function openBatchProjectModal() {
+  renderBatchProjectList();
+  document.getElementById("batchProjectModal").classList.add("active");
+}
+
+function closeBatchProjectModal() {
+  document.getElementById("batchProjectModal").classList.remove("active");
+}
+
+/* 依資料夾的樹狀結構列出來，資料夾那一列的勾勾一次切換底下所有文檔
+   （含更深的子資料夾）。
+
+   已經在白板上的文檔照樣列出來、勾著但不能動，並標「已在白板上」——
+   直接藏起來的話，使用者會以為那篇不見了，或是以為沒列到是漏掉。
+
+   一律 createElement + textContent（硬規則 5；批量匯出那邊以前就是拼 HTML
+   被做出一個可利用的洞，見 openBatchExportModal 的註解）。 */
+function renderBatchProjectList() {
+  const box = document.getElementById("batchProjectList");
+  if (!box) return;
+  box.innerHTML = "";
+
+  const onBoard = new Set(getCurrentWorldCanvas().nodes.map(function(n) { return n.docId; }));
+  const worldDocs = appData.docs.filter(function(d) { return d.worldId === activeWorldId; });
+  const worldFolders = appData.folders.filter(function(f) { return f.worldId === activeWorldId; });
+  const folderIds = new Set(worldFolders.map(function(f) { return f.id; }));
+
+  if (!worldDocs.length) {
+    const empty = document.createElement("div");
+    empty.className = "batch-project-empty";
+    empty.textContent = "這個世界觀還沒有文檔。";
+    box.appendChild(empty);
+    updateBatchProjectCount();
+    return;
+  }
+
+  function docRow(d, depth) {
+    const row = document.createElement("label");
+    row.className = "batch-project-row";
+    row.style.paddingLeft = (8 + depth * 18) + "px";
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "batch-project-doc";
+    cb.dataset.id = d.id;
+    const already = onBoard.has(d.id);
+    cb.checked = already;
+    cb.disabled = already;
+    cb.onchange = updateBatchProjectCount;
+
+    const name = document.createElement("span");
+    name.className = "batch-project-name";
+    name.textContent = (d.icon || "📄") + " " + (d.title || "無標題文檔");
+
+    row.appendChild(cb);
+    row.appendChild(name);
+    if (already) {
+      row.classList.add("is-on-board");
+      const tag = document.createElement("span");
+      tag.className = "batch-project-tag";
+      tag.textContent = "已在白板上";
+      row.appendChild(tag);
+    }
+    return row;
+  }
+
+  /* seen 防資料損毀時 parentId 繞成圈（跟 folderSubtreeHasMatch 同一招）。 */
+  const seen = {};
+  function folderGroup(folder, depth) {
+    if (seen[folder.id]) return null;
+    seen[folder.id] = true;
+
+    const group = document.createElement("div");
+    group.className = "batch-project-group";
+
+    const head = document.createElement("label");
+    head.className = "batch-project-row is-folder";
+    head.style.paddingLeft = (8 + depth * 18) + "px";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "batch-project-folder";
+    const name = document.createElement("span");
+    name.className = "batch-project-name";
+    name.textContent = (folder.icon || "📁") + " " + folder.name;
+    head.appendChild(cb);
+    head.appendChild(name);
+    group.appendChild(head);
+
+    worldFolders.filter(function(f) { return f.parentId === folder.id; })
+      .forEach(function(sub) {
+        const g = folderGroup(sub, depth + 1);
+        if (g) group.appendChild(g);
+      });
+    worldDocs.filter(function(d) { return d.folderId === folder.id; })
+      .forEach(function(d) { group.appendChild(docRow(d, depth + 1)); });
+
+    cb.onchange = function() {
+      group.querySelectorAll(".batch-project-doc:not(:disabled)")
+        .forEach(function(x) { x.checked = cb.checked; });
+      updateBatchProjectCount();
+    };
+    return group;
+  }
+
+  /* 最上層＝沒有上層、或上層不在這個世界觀裡的資料夾。後者是資料不一致
+     （上層被刪掉、或被搬到別的世界觀），不當成最上層的話那一整支就永遠
+     列不出來。 */
+  worldFolders
+    .filter(function(f) { return !f.parentId || !folderIds.has(f.parentId); })
+    .forEach(function(f) {
+      const g = folderGroup(f, 0);
+      if (g) box.appendChild(g);
+    });
+
+  /* 根目錄的文檔，以及「資料夾不見了」的文檔。後者在目錄樹裡是畫不出來的
+     （那邊只從資料夾往下找），這裡至少讓它們被看見、被放上白板。 */
+  worldDocs
+    .filter(function(d) { return !d.folderId || !seen[d.folderId]; })
+    .forEach(function(d) { box.appendChild(docRow(d, 0)); });
+
+  updateBatchProjectCount();
+}
+
+/* 按鈕上的數字，以及每個資料夾勾勾的三種狀態（全勾／部分／沒勾）。
+   「部分」用 indeterminate 畫那條橫線，不然勾了一半的資料夾看起來跟
+   沒勾一樣，使用者會以為點一下是「全勾」，結果是「全取消」。 */
+function updateBatchProjectCount() {
+  const box = document.getElementById("batchProjectList");
+  const btn = document.getElementById("batchProjectConfirmBtn");
+  if (!box) return;
+
+  const n = box.querySelectorAll(".batch-project-doc:checked:not(:disabled)").length;
+  if (btn) {
+    btn.textContent = n ? ("📌 投射 " + n + " 篇") : "📌 投射";
+    btn.disabled = n === 0;
+  }
+
+  box.querySelectorAll(".batch-project-group").forEach(function(group) {
+    const cb = group.querySelector(".batch-project-folder");
+    const docs = group.querySelectorAll(".batch-project-doc:not(:disabled)");
+    const on = group.querySelectorAll(".batch-project-doc:checked:not(:disabled)").length;
+    cb.disabled = docs.length === 0;          // 底下全都已經在白板上了
+    cb.checked = docs.length > 0 && on === docs.length;
+    cb.indeterminate = on > 0 && on < docs.length;
+  });
+}
+
+function toggleBatchProjectAll(status) {
+  document.querySelectorAll("#batchProjectList .batch-project-doc:not(:disabled)")
+    .forEach(function(x) { x.checked = status; });
+  updateBatchProjectCount();
+}
+
+function confirmBatchProject() {
+  const ids = Array.from(document.querySelectorAll("#batchProjectList .batch-project-doc:checked:not(:disabled)"))
+    .map(function(x) { return x.dataset.id; });
+  const added = projectDocsToCanvas(ids);
+  closeBatchProjectModal();
+  if (!added.length) return;
+
+  switchView("canvas");
+  // 新的一批放在既有節點下方，可能完全在畫面外。對準第一個，跟單篇投射一樣
+  focusCanvasNode(added[0]);
+}
+
 /* ---------- 渲染節點 ----------
    節點現在是畫在 <canvasSvg> 裡的 <foreignObject>（內含一般 HTML），
    跟連線共用同一個 viewBox 做縮放，所以放大時是瀏覽器真的重新排版、
@@ -1171,22 +1404,47 @@ function completeConnection(targetNodeId) {
   const sourceId = connectingSourceNodeId;
   if (!sourceId || sourceId === targetNodeId) { cancelConnect(); return; }
 
-  const canvas = getCurrentWorldCanvas();
-  const relation = prompt("請輸入兩者關係：", "盟友 / 敵對 / 密探");
-  if (relation !== null) {
-    canvas.edges.push({
-      id: "edge_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
-      source: sourceId,
-      target: targetNodeId,
-      label: relation || "關聯",
-      color: "e_gray",
-      dash: "solid",
-      arrow: "none"
-    });
-    saveData();
-  }
+  /* 連線模式在打開彈窗的當下就收掉，不等彈窗關閉。
+
+     彈窗是非同步的：按「取消」、按 Escape、點遮罩都會關掉它，但只有「建立」
+     會回到這裡。等回來才收的話，從另外三條路關掉時連線模式會一直掛著——
+     下一次點節點會莫名其妙地拉出一條線。 */
   cancelConnect();
+
+  // 標籤寫出是哪兩個，彈窗蓋住白板之後才知道自己在連什麼
+  const nameOf = function(nodeId) {
+    const n = getCurrentWorldCanvas().nodes.find(function(x) { return x.id === nodeId; });
+    const d = n && appData.docs.find(function(x) { return x.id === n.docId; });
+    return d ? (d.title || "無標題文檔") : "？";
+  };
+
+  openTextInputModal({
+    title: "🔗 兩者關係",
+    fields: [{ label: nameOf(sourceId) + " ↔ " + nameOf(targetNodeId),
+               value: "盟友 / 敵對 / 密探", placeholder: "留白就寫「關聯」" }],
+    okText: "連線",
+    onSubmit: function(values) {
+      addCanvasEdge(sourceId, targetNodeId, values[0]);
+    }
+  });
+}
+
+/* 真的加一條線。留白就是「關聯」（原本 prompt() 版本就是這樣）。 */
+function addCanvasEdge(sourceId, targetNodeId, relation) {
+  const canvas = getCurrentWorldCanvas();
+  const edge = {
+    id: "edge_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+    source: sourceId,
+    target: targetNodeId,
+    label: String(relation || "").trim() || "關聯",
+    color: "e_gray",
+    dash: "solid",
+    arrow: "none"
+  };
+  canvas.edges.push(edge);
+  saveData();
   renderCanvasLines();
+  return edge;
 }
 
 /* ---------- 顏色 ---------- */
@@ -1883,13 +2141,46 @@ function trashCanvasNote(noteId) {
 
 /* 從垃圾桶把白板物件放回去。節點連同它的線一起回來；線要回去的話兩端的
    節點都還得在，否則會出現連到空氣的線。 */
-function restoreCanvasTrashItem(index) {
+/* 舊版刪文檔時拆出來的節點用的標籤。那時候還沒有 withDoc 標記，只能靠它
+   認出「這一筆是跟著某篇文檔的」。 */
+const TRASH_NODE_WITH_DOC_LABEL = "（隨文檔一起刪除的白板節點）";
+
+/* 這一筆白板垃圾跟著哪一篇文檔（因為那篇被刪才進來的）。不是就回 null。
+   只有節點會跟著文檔；便條紙與連線、使用者在白板上自己刪的節點都不算。 */
+function canvasTrashFollowsDoc(entry) {
+  if (!entry || entry.kind !== "node") return null;
+  if (entry.withDoc) return entry.withDoc;
+  if (entry.label === TRASH_NODE_WITH_DOC_LABEL && entry.node && entry.node.docId) return entry.node.docId;
+  return null;
+}
+
+/* 復原一篇文檔時，把跟著它的節點（連同兩端都在的連線）一起放回白板。
+   從後面往前做：restoreCanvasTrashItem 會把那一筆從陣列裡拿掉，往前走索引
+   才不會錯位。放不回去的（例如它的世界觀已經不在了）安靜地留在垃圾桶，
+   那時候它就會變成獨立的一列，還看得到。 */
+function restoreNodesFollowingDoc(docId) {
+  const list = (appData.trash && appData.trash.canvas) || [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (canvasTrashFollowsDoc(list[i]) === docId) restoreCanvasTrashItem(i, true);
+  }
+}
+
+/* 永久刪除一篇文檔時，跟著它的節點一起刪掉——不然垃圾桶裡會剩一筆再也
+   復原不了的節點。 */
+function dropNodesFollowingDoc(docId) {
+  if (!appData.trash || !Array.isArray(appData.trash.canvas)) return;
+  appData.trash.canvas = appData.trash.canvas.filter(function(e) { return canvasTrashFollowsDoc(e) !== docId; });
+}
+
+/* quiet：跟著文檔一起復原時用，失敗就安靜地回 false，不跳提示。 */
+function restoreCanvasTrashItem(index, quiet) {
   const list = (appData.trash && appData.trash.canvas) || [];
   const entry = list[index];
   if (!entry) return false;
+  const say = function(msg) { if (!quiet) alert(msg); };
 
   const world = appData.worldviews.find(w => w.id === entry.worldId);
-  if (!world) { alert("這個項目所屬的世界觀已經不存在了，無法復原。"); return false; }
+  if (!world) { say("這個項目所屬的世界觀已經不存在了，無法復原。"); return false; }
   if (!world.canvas) world.canvas = { nodes: [], edges: [], notes: [] };
   const c = world.canvas;
   if (!Array.isArray(c.nodes)) c.nodes = [];
@@ -1898,7 +2189,7 @@ function restoreCanvasTrashItem(index) {
 
   if (entry.kind === "node") {
     if (!appData.docs.find(d => d.id === entry.node.docId)) {
-      alert("這個節點對應的文檔已經不在了（可能還在垃圾桶裡）。請先復原那篇文檔。");
+      say("這個節點對應的文檔已經不在了（可能還在垃圾桶裡）。請先復原那篇文檔。");
       return false;
     }
     if (!c.nodes.find(n => n.id === entry.node.id)) c.nodes.push(entry.node);
@@ -1909,7 +2200,7 @@ function restoreCanvasTrashItem(index) {
   } else if (entry.kind === "edge") {
     const e = entry.edge;
     if (!c.nodes.find(n => n.id === e.source) || !c.nodes.find(n => n.id === e.target)) {
-      alert("這條連線兩端的節點不是都還在白板上，無法復原。");
+      say("這條連線兩端的節點不是都還在白板上，無法復原。");
       return false;
     }
     if (!c.edges.find(x => x.id === e.id)) c.edges.push(e);
@@ -1930,8 +2221,18 @@ function restoreCanvasTrashItem(index) {
    用久了會一直累積，佔著本來就只有 5MB 的空間。
 
    跟著文檔一起收進垃圾桶：這樣復原文檔之後，節點也回得來。 */
-function trashOrphanNodesForDocs(docIds) {
+/* label 是垃圾桶裡那一筆顯示的說明。刪文檔與「文檔搬到別的世界觀」都會
+   走這裡，兩種情況給使用者看的原因不一樣。 */
+/* followsDoc（預設 true）：這些節點是「因為文檔被刪」才進垃圾桶的，標上
+   withDoc 讓它們跟著那篇文檔——垃圾桶裡不獨立列出，復原文檔時一起回來，
+   永久刪除文檔時一起刪掉（使用者：「直接跟著文檔本身，不用獨立出來」）。
+
+   文檔搬到別的世界觀時留下的節點要傳 false：那篇文檔沒有被刪，還活在另一個
+   世界觀。標成跟著它的話，之後它在新的世界觀被刪、再復原時，會把舊世界觀的
+   節點也帶回舊白板——指著一篇已經不屬於那裡的文檔。 */
+function trashOrphanNodesForDocs(docIds, label, followsDoc) {
   if (!docIds || !docIds.length) return;
+  if (followsDoc === undefined) followsDoc = true;
   const ids = {};
   docIds.forEach(function(id) { ids[id] = true; });
 
@@ -1943,13 +2244,15 @@ function trashOrphanNodesForDocs(docIds) {
 
     doomed.forEach(function(node) {
       const edges = (c.edges || []).filter(e => e.source === node.id || e.target === node.id);
-      pushCanvasTrash({
+      const entry = {
         kind: "node",
         worldId: w.id,
-        label: "（隨文檔一起刪除的白板節點）",
+        label: label || TRASH_NODE_WITH_DOC_LABEL,
         node: node,
         edges: edges
-      });
+      };
+      if (followsDoc) entry.withDoc = node.docId;
+      pushCanvasTrash(entry);
     });
 
     const doomedIds = {};

@@ -624,7 +624,7 @@ function conflictListHtml(conflicts) {
 
   const shown = conflicts.slice(0, CONFLICT_LIST_MAX);
   const rest = conflicts.length - shown.length;
-  const kindLabel = { doc: "📄", folder: "📁", world: "🌐", trashDoc: "🗑️", trashFolder: "🗑️" };
+  const kindLabel = { doc: "📄", folder: "📁", world: "🌐", trashDoc: "🗑️", trashFolder: "🗑️", trashCanvas: "🗑️", trashWorld: "🗑️" };
 
   return '<div style="margin:8px 0; padding:8px 10px; background:var(--bg-sunken);' +
          ' border-radius:8px; font-size:12px; line-height:1.8;">' +

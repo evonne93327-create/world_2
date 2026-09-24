@@ -1292,6 +1292,83 @@ main.content-workspace {
 }
 .modal-overlay.active { display: flex; }
 
+/* ---------- 垃圾桶的分組標題 ---------- */
+
+.trash-section-title {
+  font-size: var(--fs-12);
+  font-weight: 700;
+  color: var(--text-secondary);
+  padding: var(--sp-10) var(--sp-4) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--sp-4);
+}
+.trash-section-title:first-child { padding-top: var(--sp-2); }
+/* 第二個區塊（「現有的世界觀」）上面再加一條線，把它跟上面「刪除的世界觀」
+   隔開（使用者要的）。用 :not(:first-child) 而不是寫死那一個：只有上面還有
+   別的區塊時才需要分隔線，第一個區塊上面就是說明文字，不用。 */
+.trash-section-title:not(:first-child) {
+  border-top: 1px solid var(--border);
+  margin-top: var(--sp-12);
+}
+.trash-group-title {
+  font-size: var(--fs-12);
+  font-weight: 700;
+  color: var(--text-primary);
+  padding: var(--sp-8) var(--sp-4) var(--sp-2);
+}
+
+/* ---------- 輸入名稱的彈窗 ---------- */
+
+.text-input-fields { display: flex; flex-direction: column; gap: var(--sp-12); }
+.text-input-field { display: flex; flex-direction: column; gap: var(--sp-4); }
+.text-input-label { font-size: var(--fs-12); color: var(--text-secondary); }
+/* 16px 以上 iOS 才不會在聚焦時自動把整頁放大（小於 16px 會放大，
+   而且放大之後不會自己縮回來） */
+.text-input-field .form-input { font-size: 16px; }
+.text-input-field .form-input.is-invalid { border-color: var(--danger); box-shadow: 0 0 0 2px var(--danger-light); }
+
+/* ---------- 移動／複製到別的世界觀 ---------- */
+
+.move-mode-hint[hidden] { display: none; }
+.move-mode-hint { font-size: var(--fs-10); color: var(--text-muted); line-height: 1.5; margin: 0; }
+/* 按鈕上的 hidden 屬性要真的藏起來——.btn 設了 display，會蓋掉瀏覽器預設的
+   [hidden] { display: none }，「複製」會在同一個世界觀時也冒出來 */
+#moveCopyBtn[hidden] { display: none; }
+
+/* ---------- 批量投射白板 ---------- */
+
+.batch-project-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--sp-4) 0;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.batch-project-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--sp-6) var(--sp-8);
+  font-size: var(--fs-12);
+  cursor: pointer;
+  /* 手機上點一整列都能勾，不必瞄準那個小方框 */
+  min-height: 32px;
+}
+.batch-project-row:hover { background: var(--bg-sunken); }
+.batch-project-row.is-folder { font-weight: 700; }
+.batch-project-row.is-on-board { color: var(--text-muted); cursor: default; }
+/* min-width: 0 才讓長標題的 ellipsis 生效（flex 子項的預設最小寬度是內容寬） */
+.batch-project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-project-tag {
+  flex-shrink: 0;
+  font-size: var(--fs-10);
+  padding: 1px var(--sp-6);
+  border-radius: var(--radius-4);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+}
+.batch-project-empty { padding: var(--sp-16); text-align: center; color: var(--text-muted); font-size: var(--fs-12); }
+
 /* ---------- 世界觀清單 ---------- */
 
 .world-list-body {
@@ -1611,11 +1688,17 @@ main.content-workspace {
   white-space: nowrap;
   font-weight: 600;
 }
-.trash-item-meta {
+.trash-item-text {
+  flex: 1;
+  min-width: 0;       /* 沒有這一行，裡面名稱的省略號不會生效 */
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+/* 第二行：刪除時間（刪掉的世界觀前面還有「N 項」），補充說明的小字 */
+.trash-item-sub {
   font-size: var(--fs-10);
   color: var(--text-muted);
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 .trash-item-actions {
   display: flex;

@@ -312,6 +312,16 @@ function normalizeImportedDatabase(data) {
     }
     if (Array.isArray(data.trash.folders)) clean.trash.folders = data.trash.folders;
     if (Array.isArray(data.trash.canvas)) clean.trash.canvas = data.trash.canvas;
+    /* 整筆刪掉的世界觀：跟現有的世界觀過同一道整理（名稱、圖示、白板的
+       形狀、簡介），再把刪除時間補回去。不帶的話，從備份還原之後那些世界觀
+       就只剩散落在垃圾桶裡的文檔，沒辦法整個復原。 */
+    if (Array.isArray(data.trash.worlds)) {
+      clean.trash.worlds = data.trash.worlds
+        .filter(function(w) { return w && typeof w === "object" && typeof w.id === "string"; })
+        .map(function(w) {
+          return Object.assign(normalizeImportedWorld(w), { deletedAt: w.deletedAt, deletedTs: w.deletedTs });
+        });
+    }
   }
   return clean;
 }

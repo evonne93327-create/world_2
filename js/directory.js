@@ -83,22 +83,30 @@ function renderWorldDesc() {
 
 /* 沒指定就改目前這個世界觀（側欄那一行點下去走的是這條）。
 
-   用 prompt() 是跟著旁邊的「重新命名」走的——這個 app 的輕量輸入都用它。
-   差別在這裡要分得出「按取消」（null）跟「清空」（空字串）：簡介本來就
-   可以清掉，不能像改名那樣把空字串當成取消。 */
+   按「取消」＝不動；按「儲存」但留白＝清掉。簡介本來就可以清掉，不能像
+   改名那樣把空字串當成取消。 */
 function promptEditWorldDesc(worldId) {
  const id = worldId || activeWorldId;
  const world = appData.worldviews.find(w => w.id === id);
  if (!world) return;
 
- const next = prompt("一句話簡介（清空就留白）：", world.desc || "");
- if (next === null) return;
-
- const val = next.trim().slice(0, WORLD_DESC_MAX_LEN);
- if (val) world.desc = val; else delete world.desc;
-
+ openTextInputModal({
+ title: "📝 一句話簡介",
+ fields: [{ label: (world.icon || "🌐") + " " + world.name, value: world.desc || "",
+ placeholder: "清空就留白", maxLength: WORLD_DESC_MAX_LEN }],
+ okText: "儲存",
+ onSubmit: function(values) {
+ applyWorldDesc(world, values[0]);
  saveData();
  updateWorldBadge();
+ }
+ });
+}
+
+/* 寫入簡介：去頭尾空白、截長度，空的就把欄位拿掉（不要留一個空字串）。 */
+function applyWorldDesc(world, raw) {
+ const val = String(raw || "").trim().slice(0, WORLD_DESC_MAX_LEN);
+ if (val) world.desc = val; else delete world.desc;
 }
 
 /* ==========================================================
@@ -424,10 +432,13 @@ function moveItemInto(payload, targetFolderId, targetWorldId) {
   const folderId = targetFolderId || null;
   const worldId = targetWorldId || activeWorldId;
 
+  let leavingDocIds = [];
+
   if (payload.type === "doc") {
     const doc = appData.docs.find(d => d.id === payload.id);
     if (!doc) return false;
     if ((doc.folderId || null) === folderId && doc.worldId === worldId) return false;
+    if (doc.worldId !== worldId) leavingDocIds = [doc.id];
     doc.folderId = folderId;
     doc.worldId = worldId;
   } else if (payload.type === "folder") {
@@ -438,16 +449,190 @@ function moveItemInto(payload, targetFolderId, targetWorldId) {
     if (payload.id === folderId) return false;
     if (folderId && isDescendantOf(payload.id, folderId)) return false;
     if ((f.parentId || null) === folderId && f.worldId === worldId) return false;
+
+    /* 換世界觀的時候，底下整棵子樹都要一起換。
+
+       原本只改了資料夾自己的 worldId：它搬過去了，但裡面的子資料夾與文檔
+       還留在原本的世界觀，而它們的上層已經不在那裡了——兩邊的目錄樹都
+       畫不出它們。資料都還在，使用者看到的是「搬過去之後裡面全空了、
+       原本那邊也不見了」。 */
+    if (f.worldId !== worldId) {
+      const sub = folderSubtree(f.id);
+      appData.folders.forEach(function(x) {
+        if (sub.folderIds.has(x.id)) x.worldId = worldId;
+      });
+      appData.docs.forEach(function(d) {
+        if (sub.docIds.has(d.id)) d.worldId = worldId;
+      });
+      leavingDocIds = Array.from(sub.docIds);
+    }
     f.parentId = folderId;
     f.worldId = worldId;
   } else {
     return false;
   }
 
+  /* 搬去別的世界觀的文檔，在原本那張白板上的節點要收掉。
+
+     白板畫節點時只看「這篇文檔還在不在」，不看它屬於哪個世界觀，所以不收
+     的話原本那張白板會一直掛著別的世界觀的文檔。收進垃圾桶而不是直接丟：
+     連線上寫的關係說明是使用者打的字，搬回來的時候還救得回來。 */
+  if (leavingDocIds.length && typeof trashOrphanNodesForDocs === "function") {
+    trashOrphanNodesForDocs(leavingDocIds, "（文檔搬到別的世界觀時留下的白板節點）", false);
+    if (typeof refreshCanvasIfVisible === "function") refreshCanvasIfVisible();
+  }
+
   saveData();
   renderSidebarTree();
   renderBreadcrumb();
   return true;
+}
+
+/* 一個資料夾底下的整棵子樹（含它自己）。
+
+   從上往下找，不是對每個資料夾往上問 isDescendantOf()：那個是沿著
+   parentId 一路往上走，資料損毀繞成圈又剛好沒經過起點時會走不完。
+   這裡記著走過的，繞成圈也會停。 */
+function folderSubtree(rootId) {
+  const folderIds = new Set([rootId]);
+  const queue = [rootId];
+  while (queue.length) {
+    const cur = queue.shift();
+    appData.folders.forEach(function(f) {
+      if (f.parentId === cur && !folderIds.has(f.id)) {
+        folderIds.add(f.id);
+        queue.push(f.id);
+      }
+    });
+  }
+  const docIds = new Set();
+  appData.docs.forEach(function(d) {
+    if (d.folderId && folderIds.has(d.folderId)) docIds.add(d.id);
+  });
+  return { folderIds: folderIds, docIds: docIds };
+}
+
+/* 同一毫秒內會產生很多個（複製一整個資料夾），所以一定要有隨機尾碼。 */
+function newItemId(prefix) {
+  return prefix + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
+}
+
+/* 複製一份到別的地方。回傳新的那一份的 id，失敗回 null。
+
+   資料夾是整棵子樹一起複製：每個子資料夾、每篇文檔都拿新的 id，
+   上下層的關係照原本的對應過去。
+
+   刻意不複製的：
+   - 白板上的節點與連線。白板是一個世界觀一張，而連線的另一端在原本的
+     世界觀裡，搬不過去。要的話到那邊用「批量投射白板」放上去。
+   - 復原紀錄。那是「這一篇被怎麼改過」，複製出來的是新的一篇。 */
+function copyItemInto(payload, targetFolderId, targetWorldId) {
+  if (!payload || !payload.id) return null;
+  const folderId = targetFolderId || null;
+  const worldId = targetWorldId || activeWorldId;
+  const now = formatTime(new Date());
+
+  function cloneDoc(d, newFolderId) {
+    const c = JSON.parse(JSON.stringify(d));
+    c.id = newItemId("doc_");
+    c.worldId = worldId;
+    c.folderId = newFolderId;
+    c.updatedAt = now;
+    return c;
+  }
+
+  if (payload.type === "doc") {
+    const doc = appData.docs.find(d => d.id === payload.id);
+    if (!doc) return null;
+    const c = cloneDoc(doc, folderId);
+    appData.docs.unshift(c);
+    return c.id;
+  }
+
+  if (payload.type === "folder") {
+    const root = appData.folders.find(f => f.id === payload.id);
+    if (!root) return null;
+    // 跟搬移同一條規則：複製進自己的子孫會無止盡地長（複製的過程中子孫又多了一份）
+    if (folderId && (folderId === root.id || isDescendantOf(root.id, folderId))) return null;
+
+    const sub = folderSubtree(root.id);
+    const idMap = {};
+    sub.folderIds.forEach(function(id) { idMap[id] = newItemId("f_"); });
+
+    const newFolders = [];
+    appData.folders.forEach(function(f) {
+      if (!sub.folderIds.has(f.id)) return;
+      const c = JSON.parse(JSON.stringify(f));
+      c.id = idMap[f.id];
+      c.worldId = worldId;
+      c.parentId = f.id === root.id ? folderId : idMap[f.parentId];
+      newFolders.push(c);
+    });
+
+    const newDocs = [];
+    appData.docs.forEach(function(d) {
+      if (sub.docIds.has(d.id)) newDocs.push(cloneDoc(d, idMap[d.folderId]));
+    });
+
+    newFolders.forEach(function(f) { appData.folders.push(f); });
+    newDocs.forEach(function(d) { appData.docs.push(d); });
+    return idMap[root.id];
+  }
+  return null;
+}
+
+/* 「移動」彈窗裡的目的地清單，照這個順序：
+
+     🌐 世界觀一（根目錄）
+     　📁 它的資料夾
+     　　📁 更深一層
+     🌐 世界觀二（根目錄）
+     　📁 它的資料夾
+
+   原本是「先列全部的世界觀，再列全部的資料夾」，資料夾看不出是哪個世界觀
+   的，同名的資料夾（每個世界觀都有一個「角色」）根本分不出來。
+
+   資料夾不能搬進自己或自己的子孫，所以搬資料夾時那一整支不列。
+   目前所在的位置會標出來，打開時也預設選它——這樣一眼就知道「現在在哪」。 */
+function moveTargetOptions(ref) {
+  const out = [];
+  let currentWorldId = null, currentParentId = null, excluded = new Set();
+
+  if (ref && ref.type === "doc") {
+    const d = appData.docs.find(x => x.id === ref.id);
+    if (d) { currentWorldId = d.worldId; currentParentId = d.folderId || null; }
+  } else if (ref && ref.type === "folder") {
+    const f = appData.folders.find(x => x.id === ref.id);
+    if (f) { currentWorldId = f.worldId; currentParentId = f.parentId || null; }
+    excluded = folderSubtree(ref.id).folderIds;
+  }
+
+  appData.worldviews.forEach(function(w) {
+    out.push({
+      worldId: w.id, parentId: null, depth: 0,
+      label: (w.icon || "🌐") + " " + w.name + "（根目錄）",
+      current: w.id === currentWorldId && currentParentId === null
+    });
+
+    const worldFolders = appData.folders.filter(f => f.worldId === w.id);
+    const ids = new Set(worldFolders.map(f => f.id));
+    const seen = {};
+    function walk(folder, depth) {
+      if (seen[folder.id] || excluded.has(folder.id)) return;
+      seen[folder.id] = true;
+      out.push({
+        worldId: w.id, parentId: folder.id, depth: depth,
+        label: "\u3000".repeat(depth) + (folder.icon || "📁") + " " + folder.name,
+        current: w.id === currentWorldId && currentParentId === folder.id
+      });
+      worldFolders.filter(f => f.parentId === folder.id)
+        .forEach(function(sub) { walk(sub, depth + 1); });
+    }
+    // 上層不在這個世界觀裡的（資料不一致）也當成最上層，不然那一支永遠選不到
+    worldFolders.filter(f => !f.parentId || !ids.has(f.parentId))
+      .forEach(function(f) { walk(f, 1); });
+  });
+  return out;
 }
 
 /* 手指底下是哪個資料夾。
@@ -838,19 +1023,37 @@ function closeAllBreadcrumbDropdowns() {
 
    文檔的形狀跟「新增文檔」共用 makeNewDoc()，兩邊不會各長各的。 */
 function promptCreateWorldview() {
- const name = prompt("請輸入新世界觀名稱：", "新世界觀");
- if (name && name.trim()) {
+ openTextInputModal({
+ title: "🌐 新增世界觀",
+ fields: [
+ { label: "名稱", value: "新世界觀" },
+ { label: "一句話簡介（可以留白）", value: "", placeholder: "例如：劍與魔法的帝國",
+ maxLength: WORLD_DESC_MAX_LEN }
+ ],
+ okText: "建立",
+ onSubmit: function(values) {
+ const name = values[0].trim();
+ if (!name) { markTextInputInvalid(0); return false; }   // 名稱不能空，留著讓他補
+ createWorldview(name, values[1]);
+ }
+ });
+}
+
+/* 真的建。拆出來是因為 openTextInputModal 是非同步的（按了按鈕才回來），
+   而測試要能直接呼叫它。 */
+function createWorldview(name, desc) {
  const newWorld = {
  id: "w_" + Date.now(),
- name: name.trim(),
+ name: name,
  icon: "🌐",
  canvas: { nodes: [], edges: [] }
  };
+ applyWorldDesc(newWorld, desc);
  appData.worldviews.push(newWorld);
  appData.docs.unshift(makeNewDoc(newWorld.id, null));
  selectWorld(newWorld.id);
  saveData();
- }
+ return newWorld;
 }
 
 function createFolderInCurrentContext() {
@@ -899,19 +1102,32 @@ function createDocInCurrentContext() {
  createNewDoc(resolveNewDocFolderId(), activeWorldId);
 }
 
+/* 預設名稱「新分類」一打開就是反藍的，直接打字就取代掉。 */
 function promptCreateFolder(parentId = null, worldId = null) {
- const name = prompt("請輸入資料夾名稱：", "新分類");
- if (name && name.trim()) {
- appData.folders.push({
- id: "f_" + Date.now(),
- worldId: worldId || activeWorldId,
- parentId: parentId,
- name: name.trim(),
- icon: "📁"
+ openTextInputModal({
+ title: "📁 新增資料夾",
+ fields: [{ label: "名稱", value: "新分類" }],
+ okText: "建立",
+ onSubmit: function(values) {
+ const name = values[0].trim();
+ if (!name) { markTextInputInvalid(0); return false; }
+ createFolder(name, parentId, worldId);
+ }
  });
+}
+
+function createFolder(name, parentId, worldId) {
+ const folder = {
+ id: newItemId("f_"),
+ worldId: worldId || activeWorldId,
+ parentId: parentId || null,
+ name: name,
+ icon: "📁"
+ };
+ appData.folders.push(folder);
  saveData();
  renderSidebarTree();
- }
+ return folder;
 }
 
 /* 一篇空白文檔長什麼樣子，只寫在這裡一份。
@@ -950,9 +1166,19 @@ function createNewDoc(targetFolderId = null, worldId = null) {
 }
 
 function promptRenameItem(type, id, currentName) {
- const newName = prompt("請輸入新的名稱：", currentName);
- if (newName && newName.trim() && newName.trim() !== currentName) {
- const val = newName.trim();
+ openTextInputModal({
+ title: "✏️ 重新命名",
+ fields: [{ label: "名稱", value: currentName || "" }],
+ okText: "確定",
+ onSubmit: function(values) {
+ const val = values[0].trim();
+ if (!val) { markTextInputInvalid(0); return false; }
+ if (val !== currentName) renameItem(type, id, val);
+ }
+ });
+}
+
+function renameItem(type, id, val) {
  if (type === 'world') {
  const w = appData.worldviews.find(x => x.id === id);
  if (w) w.name = val;
@@ -972,7 +1198,6 @@ function promptRenameItem(type, id, currentName) {
  updateWorldBadge();
  // 白板上的節點顯示的就是這個標題，正在看白板時要一起更新
  refreshCanvasIfVisible();
- }
 }
 
 function toggleBatchDeleteMode() {
@@ -985,6 +1210,16 @@ function toggleBatchDeleteMode() {
  document.getElementById("appSidebar").classList.toggle("batch-mode", isBatchDeleteMode);
  updateBatchBarCount();
  renderSidebarTree();
+}
+
+/* 離開批量刪除模式（已經不在就什麼都不做）。
+
+   目錄收起來的時候呼叫。批量刪除是「在目錄裡勾選」的狀態，目錄都關了還
+   掛著的話：勾選清單留在記憶體裡看不到，下次打開目錄時那幾項還是勾著的，
+   隨手按一下「刪除選取項」就把早就忘記的東西刪掉了。 */
+function exitBatchDeleteMode() {
+ if (!isBatchDeleteMode) return;
+ toggleBatchDeleteMode();
 }
 
 function toggleBatchItemSelection(type, id) {
@@ -1107,15 +1342,139 @@ function deleteDocById(docId) {
  }
 }
 
+/* 世界觀刪掉之後，它的名字就不在任何地方了（appData.worldviews 裡那一筆被
+   拿掉），垃圾桶裡的東西只剩一個 worldId。垃圾桶要照「是哪個世界觀刪掉的」
+   分組顯示，所以在刪的當下把名字蓋在垃圾桶的**每一筆**上。
+
+   為什麼蓋在每一筆上，而不是另外存一份「已刪除的世界觀」清單：逐篇合併
+   （sync-merge.js）只合併 trash.docs 與 trash.folders，trash 底下多出來的
+   任何欄位在自動合併時都會被丟掉——另外存一份的話，同步一次名字就沒了。
+   蓋在每一筆上，它就跟著那一筆一起被合併。
+
+   不只蓋這次刪掉的：之前就從這個世界觀刪進垃圾桶的東西，現在也一起變成
+   「世界觀已經不在」，一樣要知道自己是哪裡來的。 */
+function stampDeletedWorldOnTrash(worldId, name, icon) {
+ const t = appData.trash || {};
+ ["docs", "folders", "canvas"].forEach(function(k) {
+ (t[k] || []).forEach(function(item) {
+ if (item.worldId !== worldId) return;
+ item.fromWorldName = name;
+ item.fromWorldIcon = icon || "🌐";
+ });
+ });
+}
+
+/* 從垃圾桶把整個世界觀復原回來。
+
+   帶回來的是「刪世界觀的當下在裡面的東西」（trashedWithWorld 標記的）。
+   在那之前就刪掉的留在垃圾桶——復原完它們就歸到這個（又存在了的）世界觀
+   底下，要的話可以再個別復原。
+
+   舊資料（刪的時候還沒有 trash.worlds）沒有整筆紀錄、也沒有標記：用蓋在
+   項目上的名字重建一個（白板是空的），屬於它的全部帶回來——分不出哪些是
+   早就刪掉的，寧可多帶。 */
+function restoreWorldFromTrash(worldId) {
+ const t = appData.trash;
+ if (!Array.isArray(t.worlds)) t.worlds = [];
+ if (appData.worldviews.some(w => w.id === worldId)) return;   // 已經在了（例如另一台先復原、同步過來）
+
+ const idx = t.worlds.findIndex(w => w.id === worldId);
+ let world;
+ let belongs;
+ if (idx !== -1) {
+ world = t.worlds.splice(idx, 1)[0];
+ belongs = function(x) { return x.worldId === worldId && x.trashedWithWorld === worldId; };
+ } else {
+ const any = (t.docs || []).concat(t.folders || [], t.canvas || [])
+ .find(x => x.worldId === worldId && x.fromWorldName);
+ world = {
+ id: worldId,
+ name: any ? any.fromWorldName : "復原的世界觀",
+ icon: any ? (any.fromWorldIcon || "🌐") : "🌐"
+ };
+ belongs = function(x) { return x.worldId === worldId; };
+ }
+ delete world.deletedAt;
+ delete world.deletedTs;
+ if (!world.canvas || typeof world.canvas !== "object") world.canvas = {};
+ ["nodes", "edges", "notes"].forEach(function(k) {
+ if (!Array.isArray(world.canvas[k])) world.canvas[k] = [];
+ });
+ appData.worldviews.push(world);
+
+ const clean = function(x) {
+ ["deletedAt", "deletedTs", "trashedWithWorld", "fromWorldName", "fromWorldIcon"].forEach(function(k) { delete x[k]; });
+ return x;
+ };
+ const backFolders = (t.folders || []).filter(belongs);
+ const backDocs = (t.docs || []).filter(belongs);
+ t.folders = (t.folders || []).filter(x => !belongs(x));
+ t.docs = (t.docs || []).filter(x => !belongs(x));
+
+ const folderIds = new Set(backFolders.map(f => f.id));
+ backFolders.forEach(function(f) {
+ clean(f);
+ // 上層不在這一批裡（早就被個別刪掉了）就放到最外層，不然畫不出來
+ if (f.parentId && !folderIds.has(f.parentId) && !appData.folders.some(x => x.id === f.parentId)) f.parentId = null;
+ appData.folders.push(f);
+ });
+ backDocs.forEach(function(d) {
+ clean(d);
+ if (d.folderId && !folderIds.has(d.folderId) && !appData.folders.some(x => x.id === d.folderId)) d.folderId = null;
+ if (!Array.isArray(d.manualTags) && typeof computeManualTagsFor === "function") {
+ d.manualTags = computeManualTagsFor(d.content, d.tags);
+ }
+ appData.docs.push(d);
+ });
+ // 舊資料（刪世界觀時節點還是一顆一顆拆進垃圾桶的）：跟著文檔回到白板
+ if (typeof restoreNodesFollowingDoc === "function") {
+ backDocs.forEach(function(d) { restoreNodesFollowingDoc(d.id); });
+ }
+
+ saveData();
+ updateWorldBadge();
+ renderSidebarTree();
+ if (typeof renderTrashList === "function") renderTrashList();
+ if (typeof refreshCanvasIfVisible === "function") refreshCanvasIfVisible();
+ return world;
+}
+
+/* 整個世界觀永久刪除：紀錄，加上垃圾桶裡屬於它的全部（包括更早就刪掉的——
+   世界觀都永久刪了，它們再也沒有地方可以回去）。 */
+function permanentlyDeleteTrashWorld(worldId) {
+ const t = appData.trash;
+ const rec = (t.worlds || []).find(w => w.id === worldId);
+ const name = rec ? rec.name : "這個世界觀";
+ if (!confirm("確定要永久刪除「" + name + "」整個世界觀嗎？裡面的東西會一起刪除，此動作無法復原！")) return;
+ const other = function(x) { return x.worldId !== worldId; };
+ t.worlds = (t.worlds || []).filter(w => w.id !== worldId);
+ t.docs = (t.docs || []).filter(other);
+ t.folders = (t.folders || []).filter(other);
+ t.canvas = (t.canvas || []).filter(other);
+ saveData();
+ if (typeof renderTrashList === "function") renderTrashList();
+}
+
 function deleteWorldById(worldId) {
  if (appData.worldviews.length <= 1) {
  alert("這是最後一個世界觀，無法刪除！");
  return;
  }
 
- if (!confirm("確定要刪除此世界觀嗎？\n（底下的所有資料夾與文檔會被移至垃圾桶，可以復原，但世界觀本身將直接刪除）")) {
+ if (!confirm("確定要刪除此世界觀嗎？\n（整個世界觀——資料夾、文檔、白板——會一起移到垃圾桶，可以整個復原）")) {
  return;
  }
+
+ const world = appData.worldviews.find(w => w.id === worldId);
+ if (!world) return;
+
+ /* 整筆存下來，**在動任何東西之前**：名稱、圖示、簡介、整張白板（節點、
+    連線、便條紙）。以前這一筆是直接丟掉的——文檔與資料夾進了垃圾桶，但
+    白板上的便條紙與連線說明永遠回不來，世界觀本身也只能重建一個新的。 */
+ const snapshot = JSON.parse(JSON.stringify(world));
+ const now = formatTime(new Date());
+ if (!Array.isArray(appData.trash.worlds)) appData.trash.worlds = [];
+ appData.trash.worlds.push(Object.assign(snapshot, { deletedAt: now, deletedTs: Date.now() }));
 
  const docsToTrash = appData.docs.filter(d => d.worldId === worldId);
  const foldersToTrash = appData.folders.filter(f => f.worldId === worldId);
@@ -1123,8 +1482,14 @@ function deleteWorldById(worldId) {
  appData.docs = appData.docs.filter(d => d.worldId !== worldId);
  appData.folders = appData.folders.filter(f => f.worldId !== worldId);
 
- if (typeof moveDocsToTrash === 'function') moveDocsToTrash(docsToTrash);
- if (typeof moveFoldersToTrash === 'function') moveFoldersToTrash(foldersToTrash);
+ /* 標記「隨世界觀一起進來的」：復原世界觀時只帶這些回去。在這之前就從
+    這個世界觀刪掉的東西不該跟著復活——那是使用者本來就丟掉的。
+    keepCanvas：白板節點已經在上面那一筆裡了，不要再拆一份進垃圾桶。 */
+ const opts = { extra: { trashedWithWorld: worldId }, keepCanvas: true };
+ if (typeof moveDocsToTrash === 'function') moveDocsToTrash(docsToTrash, opts);
+ if (typeof moveFoldersToTrash === 'function') moveFoldersToTrash(foldersToTrash, opts);
+
+ stampDeletedWorldOnTrash(worldId, world.name, world.icon);
 
  appData.worldviews = appData.worldviews.filter(w => w.id !== worldId);
 
