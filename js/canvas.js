@@ -6,6 +6,30 @@ const CANVAS_NODE_W = 200;
 
 let zoomIndicatorTimer = null;
 
+/* ---------- 白板物件的身分與時間 ----------
+
+   節點、連線、便條紙各自有一個永久的 id（建立時產生，之後不再改變），
+   新增／修改／刪除一律照 id 找物件，不用陣列索引——同步會逐個物件
+   合併，索引在兩台裝置上不會一樣。
+
+   createdAt／updatedAt 是 ISO 時間字串。只在「真的建立／改了內容」時
+   蓋章：舊資料沒有這兩欄也不補，補了的話每個物件在每台裝置上都會同時
+   「被改過」，下次同步就全部變成衝突。 */
+function canvasTimestamp() {
+  return new Date().toISOString();
+}
+
+function stampCanvasCreated(obj) {
+  const t = canvasTimestamp();
+  obj.createdAt = t;
+  obj.updatedAt = t;
+  return obj;
+}
+
+function touchCanvasObject(obj) {
+  if (obj) obj.updatedAt = canvasTimestamp();
+}
+
 function getCurrentWorldCanvas() {
   const world = appData.worldviews.find(w => w.id === activeWorldId);
   if (!world.canvas) world.canvas = { nodes: [], edges: [], notes: [] };
@@ -108,12 +132,12 @@ function addCurrentDocToCanvas() {
     return;
   }
 
-  canvas.nodes.push({
+  canvas.nodes.push(stampCanvasCreated({
     id: "node_" + currentDoc.id,
     docId: currentDoc.id,
     x: 40 + (canvas.nodes.length * 30) % 260,
     y: 60 + (canvas.nodes.length * 40) % 300
-  });
+  }));
 
   saveData();
   switchView('canvas');
@@ -184,7 +208,7 @@ function projectDocsToCanvas(docIds) {
 
   const spots = batchNodePositions(canvas.nodes, ids.length);
   ids.forEach(function(id, i) {
-    canvas.nodes.push({ id: "node_" + id, docId: id, x: spots[i].x, y: spots[i].y });
+    canvas.nodes.push(stampCanvasCreated({ id: "node_" + id, docId: id, x: spots[i].x, y: spots[i].y }));
   });
   saveData();
   return ids;
@@ -548,6 +572,7 @@ function openNodeColorPicker(node) {
       (node.color === key ? '<span style="margin-left:auto; color:' + pal.text + ';">✓</span>' : '');
     opt.onclick = function() {
       node.color = key;
+      touchCanvasObject(node);
       saveData();
       renderCanvas();
       popover.classList.remove("active");
@@ -648,6 +673,7 @@ function createCanvasNote(wx, wy) {
     h: NOTE_DEFAULT_H,
     text: ""
   };
+  stampCanvasCreated(note);
   canvas.notes.push(note);
   saveData();
   renderCanvas();
@@ -839,6 +865,7 @@ function renderCanvasNotes() {
     // 可能一直不 blur——只靠 blur 存檔的話，打完字點一下白板就會整段不見。
     body.addEventListener("input", function() {
       note.text = body.innerText.replace(/\u00a0/g, " ");
+      touchCanvasObject(note);
       scheduleNoteSave();
     });
 
@@ -846,7 +873,7 @@ function renderCanvasNotes() {
       body.setAttribute("contenteditable", "false");
       el.classList.remove("is-editing");
       const next = body.innerText.replace(/\u00a0/g, " ");
-      if (next !== note.text) note.text = next;
+      if (next !== note.text) { note.text = next; touchCanvasObject(note); }
       flushNoteSave();
     });
 
@@ -906,6 +933,7 @@ function enableNoteDrag(el, note, fo) {
   function end() {
     if (!dragging) return;
     dragging = false;
+    if (note.x !== initX || note.y !== initY) touchCanvasObject(note);
     saveData();
   }
   /* 取消：座標倒回去，而且不存檔。長按叫出選單時用——理由見
@@ -992,6 +1020,7 @@ function enableNoteResize(handle, el, note, fo) {
   function end() {
     if (!resizing) return;
     resizing = false;
+    if (note.w !== initW || note.h !== initH) touchCanvasObject(note);
     saveData();
   }
 
@@ -1178,6 +1207,7 @@ function canvasItemLocked(item) {
 function toggleCanvasItemLock(item, label) {
   if (!item) return;
   item.locked = !item.locked;
+  touchCanvasObject(item);
   saveData();
   renderCanvas();
   showDocToolHint(item.locked
@@ -1300,6 +1330,7 @@ function enableDualDrag(element, nodeData) {
   function endDrag() {
     if (!dragging) return;
     dragging = false;
+    if (nodeData.x !== initialLeft || nodeData.y !== initialTop) touchCanvasObject(nodeData);
     saveData();
   }
   /* 取消：跟 endDrag 不同，這裡把座標倒回去，而且不存檔。 */
@@ -1441,6 +1472,7 @@ function addCanvasEdge(sourceId, targetNodeId, relation) {
     dash: "solid",
     arrow: "none"
   };
+  stampCanvasCreated(edge);
   canvas.edges.push(edge);
   saveData();
   renderCanvasLines();
@@ -2033,6 +2065,7 @@ function saveEditingEdge() {
   const canvas = getCurrentWorldCanvas();
   const edge = canvas.edges.find(e => e.id === editingEdgeId);
   if (!edge) { closeEdgeEditModal(); return; }
+  const before = JSON.stringify(edge);
 
   const val = document.getElementById("edgeEditLabelInput").value.trim();
   edge.label = val || "關聯";
@@ -2047,6 +2080,8 @@ function saveEditingEdge() {
 
   const activeArrow = document.querySelector("#edgeArrowRow .edge-opt-btn.active");
   if (activeArrow) edge.arrow = activeArrow.getAttribute("data-arrow");
+  // 按「儲存」但什麼都沒改，不算修改（不然同步時會變成白白的衝突）
+  if (JSON.stringify(edge) !== before) touchCanvasObject(edge);
 
   saveData();
   renderCanvasLines();
@@ -2170,6 +2205,22 @@ function restoreNodesFollowingDoc(docId) {
 function dropNodesFollowingDoc(docId) {
   if (!appData.trash || !Array.isArray(appData.trash.canvas)) return;
   appData.trash.canvas = appData.trash.canvas.filter(function(e) { return canvasTrashFollowsDoc(e) !== docId; });
+}
+
+/* 垃圾桶列表上那一筆現在在陣列的第幾個。
+
+   列表畫好之後，同步可能已經把 trash.canvas 換過（另一台刪了或還原了東西），
+   畫的時候記下的索引就會指到別筆。所以點下去的那一刻才照 id（見
+   canvasTrashKey）重新找；組不出鍵的舊資料才退回原本的索引，而且那一格
+   必須還是同一筆。找不到回 -1。 */
+function canvasTrashIndexOf(entry, fallbackIndex) {
+  const list = (appData.trash && appData.trash.canvas) || [];
+  const key = typeof canvasTrashKey === "function" ? canvasTrashKey(entry) : null;
+  if (!key) return list[fallbackIndex] === entry ? fallbackIndex : -1;
+  for (let i = 0; i < list.length; i++) {
+    if (canvasTrashKey(list[i]) === key) return i;
+  }
+  return -1;
 }
 
 /* quiet：跟著文檔一起復原時用，失敗就安靜地回 false，不跳提示。 */

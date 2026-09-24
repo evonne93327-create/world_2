@@ -1045,8 +1045,8 @@ function renderTrashList() {
  canvasIcons[e.item.kind] || '🧩',
  e.item.label || '白板項目',
  e.item.deletedAt,
- function() { if (restoreCanvasTrashItem(e.index)) renderTrashList(); },
- function() { permanentlyDeleteCanvasTrashItem(e.index); }
+ function() { const i = canvasTrashIndexOf(e.item, e.index); if (i >= 0 && restoreCanvasTrashItem(i)) renderTrashList(); },
+ function() { const i = canvasTrashIndexOf(e.item, e.index); if (i >= 0) permanentlyDeleteCanvasTrashItem(i); }
  ));
  });
  }

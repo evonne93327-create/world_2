@@ -900,14 +900,17 @@ test("垃圾桶：清空就是全部清掉（所有世界觀共用一個）", fu
   assert.deepStrictEqual(left, [0, 0, 0]);
 });
 
-test("垃圾桶的清單：每一筆都列、白板項目帶著原本的索引", function() {
-  /* 白板項目是用「在原本陣列裡的索引」復原與刪除的。分組之後如果改用組裡的
-     索引，按「復原」會復原到別的那一筆。 */
+test("垃圾桶的清單：每一筆都列、白板項目點下去才照 id 找位置", function() {
+  /* 白板項目以前是用「畫清單當下的索引」復原與刪除的。清單開著的時候同步
+     可能換掉 trash.canvas，那個索引就會指到別筆——按「復原」復原到別的東西。
+     改成點下去的那一刻照 id 重新找（canvasTrashIndexOf）。 */
   const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
   assert.match(body, /\.map\(function\(item, index\) \{ return \{ item: item, index: index \}; \}\)/,
-    "分組之前先把原本的索引記下來");
-  assert.match(body, /restoreCanvasTrashItem\(e\.index\)/, "復原用原本的索引");
-  assert.match(body, /permanentlyDeleteCanvasTrashItem\(e\.index\)/, "刪除也是");
+    "分組之前先把原本的索引記下來（組不出 id 的舊資料退回用它）");
+  assert.match(body, /const i = canvasTrashIndexOf\(e\.item, e\.index\); if \(i >= 0 && restoreCanvasTrashItem\(i\)\)/,
+    "復原前照 id 重新找位置");
+  assert.match(body, /const i = canvasTrashIndexOf\(e\.item, e\.index\); if \(i >= 0\) permanentlyDeleteCanvasTrashItem\(i\)/,
+    "刪除也是");
   assert.ok(!/activeWorldId/.test(body), "不要再照目前的世界觀篩選 —— 全部放在一起");
   assert.ok(!/innerHTML\s*=\s*'/.test(body), "空的提示也走 textContent");
 });
