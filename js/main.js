@@ -980,6 +980,14 @@ function setupEdgeSwipe() {
     if (!edgeSwipe.claimed) {
       if (Math.abs(dx) < EDGE_SWIPE_DECIDE_PX && Math.abs(dy) < EDGE_SWIPE_DECIDE_PX) return;
 
+      /* 目錄裡有一列已經被拿起來了（或正在拖）：這一段移動是在搬東西，
+         不是要收目錄。不讓的話，拿起來之後往左下拖，目錄會被收掉、
+         拖曳被砍掉。 */
+      if (typeof touchDragInProgress === "function" && touchDragInProgress()) {
+        edgeSwipe = null;
+        return;
+      }
+
       // 方向不對（往上下捲、或往反方向）就整個放手，讓原本的行為照常
       const wantRight = !edgeSwipe.open;
       const horizontal = Math.abs(dx) > Math.abs(dy) * EDGE_SWIPE_SLOPE;

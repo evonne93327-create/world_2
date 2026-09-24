@@ -648,6 +648,47 @@ const DRAG_ARM_HOLD_MS = 300;    // 停穩多久算「拿起來」
 const DRAG_ARM_SLOP_PX = 8;      // 這段期間晃超過這麼多就當成要捲動
 const DRAG_START_SLOP_PX = 8;    // 拿起來之後移動超過這麼多才真的開始拖
 
+/* 從 window 的捕獲階段看著這一次觸碰，直到它結束。回傳一個停止函式。
+
+   為什麼長按的「取消」不能只掛在元素自己身上：左緣滑動（setupEdgeSwipe）
+   接手一個手勢之後會 stopPropagation()，免得底下的東西跟著動。它掛在
+   document 的捕獲階段，所以接下來的 touchmove 與 touchend 全都到不了元素
+   ——長按的計時器收不到「手指移動了」也收不到「手指放開了」，時間一到就
+   照樣觸發。實際發生過三種：
+
+   - 白板上從左緣右滑開目錄 → 長出一張便利貼
+   - 目錄開著、按在某一列上往左滑收起來 → 目錄收掉之後那一列的選單跳出來
+   - 拿起來之後往左下拖 → 被當成「收目錄」搶走
+
+   window 的捕獲階段排在 document 之前，誰 stopPropagation 都擋不到這裡。
+   這裡只看、只取消，不攔任何東西，所以排在最前面沒有副作用。
+
+   每一次觸碰掛一組、結束就拆，不是 attach 的時候掛：目錄每重畫一次就會對
+   每一列呼叫一次 attachContextMenu()，在那裡掛 window 監聽器會越疊越多。 */
+function watchTouchFromWindow(onMove, onEnd) {
+ function move(e) { onMove(e); }
+ function end(e) { stop(); onEnd(e); }
+ function stop() {
+ window.removeEventListener("touchmove", move, true);
+ window.removeEventListener("touchend", end, true);
+ window.removeEventListener("touchcancel", end, true);
+ }
+ window.addEventListener("touchmove", move, { capture: true, passive: true });
+ window.addEventListener("touchend", end, true);
+ window.addEventListener("touchcancel", end, true);
+ return stop;
+}
+
+/* 目前是不是有一列被「拿起來」了（含正在拖）。
+
+   左緣滑動要問這個：拿起來之後往左拖是在搬東西，不是要收目錄。只存一個
+   元素，因為同一時間只會有一根手指在拖。 */
+let touchDragOwner = null;
+
+function touchDragInProgress() {
+ return !!touchDragOwner;
+}
+
 /* dragHooks（選填）：{ start(x, y), move(x, y), end(x, y), cancel() }
    給得出這幾個的元素，按住一下下再移動就會進入拖曳。 */
 function attachContextMenu(element, itemsFn, titleFn, dragHooks) {
@@ -666,6 +707,7 @@ function attachContextMenu(element, itemsFn, titleFn, dragHooks) {
  let dragging = false;
  let longPressTriggered = false;
  let startX = 0, startY = 0;
+ let stopWatch = null;
 
  function clearTouchTimers() {
  clearTimeout(pressTimer);
@@ -677,6 +719,45 @@ function attachContextMenu(element, itemsFn, titleFn, dragHooks) {
  function disarmDrag() {
  dragArmed = false;
  element.classList.remove("drag-armed");
+ if (touchDragOwner === element) touchDragOwner = null;
+ }
+
+ /* 手指移動：還沒停穩就動了，兩個計時器各自看自己的容忍值。 */
+ function onWatchedMove(e) {
+ if (!pressTimer && !armTimer) return;
+ if (!e.touches || !e.touches[0]) return;
+ const dx = Math.abs(e.touches[0].clientX - startX);
+ const dy = Math.abs(e.touches[0].clientY - startY);
+
+ // 還沒停穩就動了 → 這是要捲動側欄（或是左緣滑動），不要拿起來
+ if (armTimer && (dx > DRAG_ARM_SLOP_PX || dy > DRAG_ARM_SLOP_PX)) {
+ clearTimeout(armTimer);
+ armTimer = null;
+ }
+ if (pressTimer && (dx > LONG_PRESS_SLOP_PX || dy > LONG_PRESS_SLOP_PX)) {
+ clearTimeout(pressTimer);
+ pressTimer = null;
+ }
+ }
+
+ /* 手指放開（或被系統收走）。這一條一定收得到，所以計時器與「拿起來」的
+    狀態都在這裡歸零。
+
+    正在拖的話，收尾交給元素自己的 touchend（它要算放在哪裡）。但萬一那個
+    touchend 被別人攔掉了，拖曳就永遠不會結束：幽靈掛在畫面上，
+    touchDragOwner 也一直不清，左緣滑動從此再也打不開目錄。所以排一個
+    下一輪的檢查——元素的 touchend 是同一次分派裡同步跑的，正常情況下
+    這時 dragging 早就是 false 了，這一段什麼都不做。 */
+ function onWatchedEnd() {
+ stopWatch = null;
+ clearTouchTimers();
+ if (!dragging) { disarmDrag(); return; }
+ setTimeout(function() {
+ if (!dragging) return;
+ dragging = false;
+ disarmDrag();
+ if (dragHooks && dragHooks.cancel) dragHooks.cancel();
+ }, 0);
  }
 
  element.addEventListener("touchstart", function(e) {
@@ -687,6 +768,8 @@ function attachContextMenu(element, itemsFn, titleFn, dragHooks) {
  longPressTriggered = false;
  startX = e.touches[0].clientX;
  startY = e.touches[0].clientY;
+ if (stopWatch) stopWatch();
+ stopWatch = watchTouchFromWindow(onWatchedMove, onWatchedEnd);
 
  /* 拿起來。純粹是狀態＋回饋，不動畫面上任何別的東西——使用者到這裡
     還是可以直接放手（那就當成一般的點擊）。 */
@@ -694,6 +777,7 @@ function attachContextMenu(element, itemsFn, titleFn, dragHooks) {
  armTimer = setTimeout(function() {
  armTimer = null;
  dragArmed = true;
+ touchDragOwner = element;
  if (navigator.vibrate) { try { navigator.vibrate(8); } catch (err) {} }
  element.classList.add("drag-armed");
  }, DRAG_ARM_HOLD_MS);
@@ -711,22 +795,6 @@ function attachContextMenu(element, itemsFn, titleFn, dragHooks) {
  /* 一定要在 showContextMenu 之後：它會先 clearContextMenuTouchGuard() */
  guardContextMenuFromTouchEcho();
  }, LONG_PRESS_DELAY_MS);
- }, { passive: true });
-
- element.addEventListener("touchmove", function(e) {
- if (!pressTimer && !armTimer) return;
- const dx = Math.abs(e.touches[0].clientX - startX);
- const dy = Math.abs(e.touches[0].clientY - startY);
-
- // 還沒停穩就動了 → 這是要捲動側欄，不要拿起來
- if (armTimer && (dx > DRAG_ARM_SLOP_PX || dy > DRAG_ARM_SLOP_PX)) {
- clearTimeout(armTimer);
- armTimer = null;
- }
- if (pressTimer && (dx > LONG_PRESS_SLOP_PX || dy > LONG_PRESS_SLOP_PX)) {
- clearTimeout(pressTimer);
- pressTimer = null;
- }
  }, { passive: true });
 
  /* 拖曳那條路要擋掉預設行為（否則側欄會跟著手指捲動），所以必須是
