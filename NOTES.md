@@ -16,7 +16,7 @@
 |---|---|
 | 線上位置 | https://evonne93327-create.github.io/world_2/ |
 | main | `3854360`（PR #52 合併後） |
-| service worker | **v80** |
+| service worker | **v81** |
 | 開發分支 | `claude/ipad-keyboard-button-placement-613jds` |
 | 開著的 PR | 無 |
 
@@ -646,7 +646,7 @@ Android 上也要先長按到系統自己認定是拖曳才會發。所以目錄
 ### 在 repo 裡的
 
 ```bash
-node --test          # 143 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 151 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |
@@ -658,7 +658,7 @@ node --test          # 143 項。注意：不要寫 node --test tests/，Node 22
 | `tests/wiring.test.js` | `onclick="foo()"` 有沒有對應的函式、鍵盤診斷的入口有沒有接上 |
 | `tests/sync.test.js` | 對帳的時機與接線；每一條都是「不做會弄丟資料」 |
 | `tests/sync-merge.test.js` | 逐篇三方合併的規則。全專案最危險的一段，測得最細 |
-| `tests/directory.test.js` | 目錄的搬移規則、整列收合、觸控拖曳、世界觀清單 |
+| `tests/directory.test.js` | 目錄的搬移規則、整列收合、觸控拖曳、世界觀清單、關目錄取消批量刪除、批量投射白板 |
 | `tests/editor.test.js` | 復原的捲動位置、圖片檢視的收尾、世界觀簡介 |
 | `tests/gestures.test.js` | 手勢之間搶事件：長按的取消要聽在 window 捕獲階段、左緣滑動要替拖曳讓路 |
 | `tests/helpers/load-app.js` | `node:vm` 沙箱；跨 realm 的 `deepStrictEqual` 會因為 prototype 不同而失敗，所以有個 `host()` 做 JSON round-trip；另有 `run()` 可以在沙箱**裡面**執行程式碼 |
