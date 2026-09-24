@@ -662,6 +662,34 @@ function getCanvasNotesLayer(svg) {
   return layer;
 }
 
+/* 同步拿到別台的修改時要重畫白板，但正在編輯的便條紙不能被換掉（焦點會
+   消失，後面打的字就不見了）。這時先記著，編輯結束（失焦）再補畫。 */
+let canvasRenderDeferred = false;
+
+function renderCanvasWhenNotEditing() {
+  if (document.querySelector(".canvas-note.is-editing")) {
+    canvasRenderDeferred = true;
+    return;
+  }
+  canvasRenderDeferred = false;
+  renderCanvas();
+}
+
+/* 編輯中延後重畫的那段時間，同步可能已經把這張便條紙換成另一個物件
+   （雲端的版本）。照 id 找現在資料裡的那一張，打的字才不會寫進一個已經
+   不在資料裡的舊物件。 */
+function liveCanvasNote(note) {
+  const world = appData.worldviews.find(w => w.canvas && (w.canvas.notes || []).some(n => n.id === note.id));
+  const found = world ? world.canvas.notes.find(n => n.id === note.id) : null;
+  return found || note;
+}
+
+function flushDeferredCanvasRender() {
+  if (!canvasRenderDeferred) return;
+  canvasRenderDeferred = false;
+  if (activeView === 'canvas') renderCanvas();
+}
+
 function createCanvasNote(wx, wy) {
   const canvas = getCurrentWorldCanvas();
   const note = {
@@ -864,8 +892,9 @@ function renderCanvasNotes() {
     // preventDefault，那會擋掉瀏覽器預設的焦點轉移，contenteditable 因此
     // 可能一直不 blur——只靠 blur 存檔的話，打完字點一下白板就會整段不見。
     body.addEventListener("input", function() {
-      note.text = body.innerText.replace(/\u00a0/g, " ");
-      touchCanvasObject(note);
+      const live = liveCanvasNote(note);
+      live.text = body.innerText.replace(/\u00a0/g, " ");
+      touchCanvasObject(live);
       scheduleNoteSave();
     });
 
@@ -873,8 +902,11 @@ function renderCanvasNotes() {
       body.setAttribute("contenteditable", "false");
       el.classList.remove("is-editing");
       const next = body.innerText.replace(/\u00a0/g, " ");
-      if (next !== note.text) { note.text = next; touchCanvasObject(note); }
+      const live = liveCanvasNote(note);
+      if (next !== live.text) { live.text = next; touchCanvasObject(live); }
       flushNoteSave();
+      // blur 當下元素還在處理事件，重畫排到下一輪
+      if (canvasRenderDeferred) setTimeout(flushDeferredCanvasRender, 0);
     });
 
     body.addEventListener("keydown", function(e) {
