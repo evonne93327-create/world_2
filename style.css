@@ -1277,6 +1277,74 @@ main.content-workspace {
 }
 .modal-overlay.active { display: flex; }
 
+/* ---------- 世界觀清單 ---------- */
+
+.world-list-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  overflow-y: auto;
+  /* .modal-card 自己已經 max-height: 85vh + overflow-y: auto，這裡再給一個
+     上限是為了讓「＋ 新增世界觀」那顆永遠留在看得見的地方——清單很長的時候
+     它會被推到卡片外面，使用者得先捲到底才找得到。 */
+  max-height: 60vh;
+}
+
+.world-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-10);
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  padding: var(--sp-10) var(--sp-12);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  /* 長按叫選單時手指就按在卡片上，不關掉的話 iOS 會改去選卡片的文字
+     （硬規則 3b） */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.world-card:hover { background: var(--bg-sunken); border-color: var(--accent-line); }
+.world-card.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.world-card-icon { font-size: var(--fs-22); line-height: 1.2; flex-shrink: 0; }
+
+/* min-width: 0 是必要的：flex 子項的預設最小寬度是內容寬度，沒有這一行的話
+   下面那幾個 ellipsis 永遠不會生效，卡片會被長簡介撐破。 */
+.world-card-main { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; flex: 1; }
+
+.world-card-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--fs-14);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.world-card-desc {
+  font-size: var(--fs-12);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.world-card-desc.is-empty { color: var(--text-muted); font-style: italic; }
+.world-card-meta { font-size: var(--fs-10); color: var(--text-muted); }
+
+.world-list-add { justify-content: center; }
+
+/* 上方徽章現在點得動了，補一個「這裡有東西可以展開」的小箭頭 */
+.nav-world-caret { font-size: var(--fs-10); color: var(--text-muted); flex-shrink: 0; }
+
 /* 圖片檢視：整片黑底、照片置中撐到最大，沒有卡片。
 
    .modal-card 的排版規則（固定寬度、內距、圓角）對一張照片全是干擾，
@@ -1826,6 +1894,30 @@ main.content-workspace {
   }
   .ctx-menu-item { padding: var(--sp-13) var(--sp-12); font-size: var(--fs-14); }
   .ctx-menu-title { font-size: var(--fs-12); padding: var(--sp-4) var(--sp-12) var(--sp-10); }
+
+  /* 世界觀清單在手機上是從底下滑上來的抽屜——那正是打開它的手勢
+     （從底部那一列往上滑）的反方向延伸，動作跟結果對得起來。
+     做法跟上面的 .ctx-menu 一樣，連動畫都共用。 */
+  .world-list-modal { align-items: flex-end; padding: 0; }
+  .world-list-modal .modal-card {
+    width: 100%;
+    max-width: 100%;
+    max-height: 80vh;
+    border-radius: var(--radius-18) var(--radius-18) 0 0;
+    padding: var(--sp-10) var(--sp-14) calc(var(--sp-14) + var(--safe-b));
+    animation: ctxSlideUp 0.2s ease;
+  }
+  .world-list-modal .modal-card::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 4px;
+    background: var(--border);
+    border-radius: var(--radius-2);
+    margin: var(--sp-2) auto var(--sp-8);
+    flex-shrink: 0;
+  }
+  .world-list-body { max-height: 56vh; }
 }
 
 /* ==========================================================

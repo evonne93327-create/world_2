@@ -1011,6 +1011,77 @@ function setupEdgeSwipe() {
 }
 
 /* ==========================================================
+   從底部那一列往上滑 → 世界觀清單
+
+   手機版世界觀那一欄會轉成底部的橫列，上面只有圖示。世界觀一多就認不出
+   哪個是哪個，而那一列本身沒有空間放名稱。往上滑把完整清單拉出來。
+
+   那一列的手勢預算：橫向捲動（世界觀多的時候本來就會捲）、點按鈕切換。
+   **往上**沒有人用，所以拿它不會打到任何東西。
+
+   跟左緣右滑（setupEdgeSwipe）同一套寫法，理由也一樣：
+
+   - 在 touchmove 才決定要不要接手，不在 touchstart。在 touchstart 就攔掉
+     的話，點那一列上的按鈕會被吃掉。
+   - 方向不對（橫的、或往下）就整個放手，讓那一列照常橫向捲動。
+   - 接手之後要 swallowNextClick()。起手點幾乎一定落在某顆世界觀按鈕上，
+     沒有這一段的話，滑開清單的同時會順手切換世界觀。
+   ========================================================== */
+
+const RAIL_SWIPE_MIN_PX = 40;     // 往上滑多遠才算數
+const RAIL_SWIPE_SLOPE = 1.2;     // 垂直位移要比水平明顯這麼多倍
+const RAIL_SWIPE_DECIDE_PX = 4;   // 移動超過這麼多才判斷方向
+
+let railSwipe = null;
+
+function setupRailSwipeUp() {
+  const rail = document.getElementById("appWorldRail");
+  if (!rail) return;
+
+  rail.addEventListener("touchstart", function(e) {
+    railSwipe = null;
+    /* 只有「那一列在底下」的時候才有這個手勢。桌機／平板版它是左邊的直欄，
+       往上滑在那裡的意思是捲動世界觀清單本身。 */
+    if (!isMobileLayout()) return;
+    if (e.touches.length !== 1) return;
+    if (document.querySelector(".modal-overlay.active")) return;
+
+    const t = e.touches[0];
+    railSwipe = { x0: t.clientX, y0: t.clientY, claimed: false, done: false };
+  }, { passive: true });
+
+  rail.addEventListener("touchmove", function(e) {
+    if (!railSwipe || railSwipe.done) return;
+
+    const t = e.touches[0];
+    const dx = t.clientX - railSwipe.x0;
+    const dy = t.clientY - railSwipe.y0;
+
+    if (!railSwipe.claimed) {
+      if (Math.abs(dx) < RAIL_SWIPE_DECIDE_PX && Math.abs(dy) < RAIL_SWIPE_DECIDE_PX) return;
+      const upward = dy < 0 && Math.abs(dy) > Math.abs(dx) * RAIL_SWIPE_SLOPE;
+      if (!upward) { railSwipe = null; return; }
+      railSwipe.claimed = true;
+    }
+
+    // 接手之後不要讓那一列同時橫向捲動
+    e.stopPropagation();
+    if (e.cancelable) e.preventDefault();
+
+    if (Math.abs(dy) < RAIL_SWIPE_MIN_PX) return;
+    railSwipe.done = true;
+    openWorldListModal();
+  }, { passive: false });
+
+  const finish = function() {
+    if (railSwipe && railSwipe.claimed) swallowNextClick();
+    railSwipe = null;
+  };
+  rail.addEventListener("touchend", finish);
+  rail.addEventListener("touchcancel", finish);
+}
+
+/* ==========================================================
    鍵盤診斷
 
    這個環境裝不起 WebKit，iOS 上鍵盤到底發生什麼事只有使用者的機器知道。

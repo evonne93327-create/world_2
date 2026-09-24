@@ -17,6 +17,8 @@ const { loadApp, host, ROOT } = require("./helpers/load-app.js");
 
 const directoryJs = fs.readFileSync(path.join(ROOT, "js", "directory.js"), "utf8");
 const modalJs = fs.readFileSync(path.join(ROOT, "js", "modal.js"), "utf8");
+const mainJs = fs.readFileSync(path.join(ROOT, "js", "main.js"), "utf8");
+const appJs = fs.readFileSync(path.join(ROOT, "js", "app.js"), "utf8");
 const css = fs.readFileSync(path.join(ROOT, "style.css"), "utf8");
 const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
 
@@ -258,4 +260,85 @@ test("文檔也有「移動」這條路", function() {
   assert.match(docMenu[0], /promptMoveDoc\(/, "文檔的長按選單裡要有「移動文檔」");
   assert.match(html, /id="moveModalTitle"/,
     "標題要有 id —— 同一個彈窗現在資料夾與文檔共用，字要能換");
+});
+
+/* ---------- 世界觀清單 ---------- */
+
+test("worldStats()：只算還在的文檔，時間取最新的那一筆", function() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js"
+  ]);
+  const docs = [
+    { id: "a", worldId: "w1", updatedAt: "2026-01-05 09:00" },
+    { id: "b", worldId: "w1", updatedAt: "2026-03-20 18:30" },
+    { id: "c", worldId: "w1", updatedAt: "2026-02-11 07:15" },
+    { id: "d", worldId: "w2", updatedAt: "2027-01-01 00:00" }
+  ];
+  const s = host(app.worldStats(docs, "w1"));
+  assert.strictEqual(s.count, 3, "別的世界觀的不要算進來");
+  assert.strictEqual(s.updatedAt, "2026-03-20 18:30",
+    "updatedAt 是固定寬度的字串，比字典序就是比時間");
+
+  assert.deepStrictEqual(host(app.worldStats(docs, "沒這個世界觀")),
+    { count: 0, updatedAt: "" }, "空的要回得出來，不要是 undefined");
+  assert.deepStrictEqual(host(app.worldStats(null, "w1")), { count: 0, updatedAt: "" });
+});
+
+test("worldStats()：缺 updatedAt 的文檔要算進篇數，不要弄壞時間", function() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js"
+  ]);
+  /* 匯入來的、或很早以前建的文檔可能沒有 updatedAt。那時候
+     undefined > "字串" 是 false，所以不會污染結果——但篇數要照算。 */
+  const s = host(app.worldStats([
+    { id: "a", worldId: "w1" },
+    { id: "b", worldId: "w1", updatedAt: "2026-03-20 18:30" },
+    { id: "c", worldId: "w1", updatedAt: null }
+  ], "w1"));
+  assert.strictEqual(s.count, 3);
+  assert.strictEqual(s.updatedAt, "2026-03-20 18:30");
+});
+
+test("世界觀清單一律 createElement + textContent", function() {
+  /* 名稱與簡介都是使用者寫的（或匯入來的）字，拼進 innerHTML 就是一個洞
+     （硬規則 5）。這個畫面一次列出全部的世界觀，等於把每一筆都攤開。 */
+  const body = codeOnly(bodyOf(directoryJs, "renderWorldList"));
+  assert.ok(!/innerHTML\s*=\s*[^"']/.test(body.replace('list.innerHTML = "";', "")),
+    "除了清空以外不可以碰 innerHTML");
+  assert.match(body, /name\.textContent = world\.name/, "名稱走 textContent");
+  assert.match(body, /desc\.textContent =/, "簡介走 textContent");
+});
+
+test("清單的兩個入口都接上了", function() {
+  /* 手機：從底部那一列往上滑；電腦／平板：點上方的世界觀徽章。
+     少接哪一個，那個版面就完全打不開這個畫面。 */
+  assert.match(html, /id="btnB_WorldBadge"[^>]*onclick="openWorldListModal\(\)"/,
+    "上方徽章要點得開清單");
+  assert.ok(!/id="btnB_WorldBadge"[^>]*is-static/.test(html),
+    "既然點得動就不該還掛著 is-static");
+  assert.match(mainJs, /function setupRailSwipeUp\(\)/, "要有往上滑那條路");
+  assert.match(mainJs, /openWorldListModal\(\)/, "滑到底要真的開清單");
+
+  assert.match(appJs, /setupRailSwipeUp\(\);/, "沒有人叫它的話那條路是死的");
+});
+
+test("往上滑：方向不對就整個放手，那一列還要能橫向捲", function() {
+  const body = codeOnly(bodyOf(mainJs, "setupRailSwipeUp"));
+  assert.match(body, /if \(!isMobileLayout\(\)\) return;/,
+    "只有「那一列在底下」時才有這個手勢 —— 桌機版它是左邊的直欄，" +
+    "往上滑在那裡的意思是捲動它自己");
+  assert.match(body, /dy < 0 && Math\.abs\(dy\) > Math\.abs\(dx\) \* RAIL_SWIPE_SLOPE/,
+    "要往上、而且垂直要比水平明顯，才算這個手勢");
+  assert.match(body, /railSwipe = null; return;/,
+    "方向不對要整個放手，不能只是不處理 —— 後面那幾個 touchmove 還會再進來");
+
+  /* 起手點幾乎一定落在某顆世界觀按鈕上。沒有這一段的話，滑開清單的同時
+     會順手切換世界觀（左緣右滑那邊踩過同一個坑）。 */
+  assert.match(body, /swallowNextClick\(\)/,
+    "接手過的手勢，收尾要把瀏覽器補上的那一下 click 吃掉");
+
+  assert.match(body, /\{ passive: false \}/,
+    "要擋掉那一列的橫向捲動，touchmove 必須是非被動的");
 });

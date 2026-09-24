@@ -21,6 +21,7 @@ window.addEventListener("DOMContentLoaded", function() {
   setupKbDiag();
   setupEdgeSwipe();
   setupImageViewer();
+  setupRailSwipeUp();
   initSync();
   initSyncRecovery();
   setupModalKeyboard();
