@@ -471,3 +471,77 @@ test("trash.canvas：組不出鍵的（缺欄位）照本機的留著，不丟",
   assert.deepStrictEqual(labels, ["note n1", "缺內容的便條紙"]);
   assert.strictEqual(app.canvasTrashKey(broken), null);
 });
+
+/* ==========================================================
+   垃圾桶裡整筆的世界觀（trash.worlds）
+
+   刪世界觀時整筆（含白板）存進 trash.worlds，才能整個復原。它是 trash 底下
+   新加的欄位——正是 trash.canvas 當初不見的那種情況，所以一加進來就要有人管。
+   它有 id（就是世界觀的 id），直接走跟文檔一樣的三方合併。
+   ========================================================== */
+
+function withTrashWorlds(data, worlds) {
+  data.trash = Object.assign({}, data.trash, { worlds: worlds });
+  return data;
+}
+function tw(id, name, ts) {
+  return { id: id, name: name || id, icon: "🐉", canvas: { nodes: [], edges: [], notes: [{ id: "n", text: name }] }, deletedTs: ts || 1 };
+}
+
+test("trash.worlds：自動合併之後還在", function() {
+  const before = withTrashWorlds(db([doc("d1", "原本")]), [tw("wX", "龍之谷")]);
+  const base = fingerprintOf(before);
+  const local = withTrashWorlds(db([doc("d1", "原本")]), [tw("wX", "龍之谷")]);
+  const remote = withTrashWorlds(db([doc("d1", "另一台改的")]), [tw("wX", "龍之谷")]);
+  const r = merge(base, local, remote);
+  assert.strictEqual(r.conflicts.length, 0);
+  assert.deepStrictEqual(r.data.trash.worlds.map(function(w) { return w.id; }), ["wX"],
+    "合併之後整個世界觀的紀錄不見了 —— 再也復原不回來");
+});
+
+test("trash.worlds：一台刪了世界觀、另一台沒動 → 兩邊都看得到那筆紀錄", function() {
+  const before = withTrashWorlds(db([]), []);
+  const base = fingerprintOf(before);
+  const local = withTrashWorlds(db([]), [tw("wX", "龍之谷")]);
+  const remote = withTrashWorlds(db([]), []);
+  const r = merge(base, local, remote);
+  assert.deepStrictEqual(r.data.trash.worlds.map(function(w) { return w.id; }), ["wX"]);
+});
+
+test("trash.worlds：一台把世界觀復原了、另一台沒動 → 跟著拿掉", function() {
+  /* 不然在平板上復原的世界觀，同步之後手機的垃圾桶裡還掛著一份。 */
+  const before = withTrashWorlds(db([]), [tw("wX", "龍之谷")]);
+  const base = fingerprintOf(before);
+  const local = withTrashWorlds(db([]), []);
+  const remote = withTrashWorlds(db([]), [tw("wX", "龍之谷")]);
+  const r = merge(base, local, remote);
+  assert.deepStrictEqual(r.data.trash.worlds, []);
+});
+
+test("trash.worlds：舊指紋沒有這一欄 → 兩邊都留", function() {
+  const base = fingerprintOf(db([]));
+  delete base.trashWorlds;
+  const r = merge(base, withTrashWorlds(db([]), [tw("wA")]), withTrashWorlds(db([]), [tw("wB")]));
+  assert.strictEqual(r.conflicts.length, 0);
+  assert.deepStrictEqual(r.data.trash.worlds.map(function(w) { return w.id; }).sort(), ["wA", "wB"]);
+});
+
+test("衝突清單裡，垃圾桶的世界觀用它的名字", function() {
+  const before = withTrashWorlds(db([]), [tw("wX", "龍之谷")]);
+  const base = fingerprintOf(before);
+  const local = withTrashWorlds(db([]), [Object.assign(tw("wX", "龍之谷"), { name: "龍之谷A" })]);
+  const remote = withTrashWorlds(db([]), [Object.assign(tw("wX", "龍之谷"), { name: "龍之谷B" })]);
+  const r = merge(base, local, remote);
+  assert.deepStrictEqual(r.conflicts.map(function(c) { return c.kind + ":" + c.title; }), ["trashWorld:龍之谷A"]);
+});
+
+test("trash.worlds：另一台刪了世界觀 → 這台合併之後也看得到那筆紀錄", function() {
+  /* 「照本機的留著」只保得住這一台的；另一台刪的世界觀要真的合併進來，
+     不然在平板上刪掉的世界觀，手機的垃圾桶裡永遠看不到、也復原不了。 */
+  const before = withTrashWorlds(db([doc("d1", "a")]), []);
+  const base = fingerprintOf(before);
+  const local = withTrashWorlds(db([doc("d1", "這台改的")]), []);
+  const remote = withTrashWorlds(db([doc("d1", "a")]), [tw("wX", "龍之谷")]);
+  const r = merge(base, local, remote);
+  assert.deepStrictEqual(r.data.trash.worlds.map(function(w) { return w.id; }), ["wX"]);
+});

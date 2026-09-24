@@ -124,6 +124,7 @@ function fingerprintOf(data) {
     trashDocs: hashById(trash.docs),
     trashFolders: hashById(trash.folders),
     trashCanvas: hashById(keyedCanvasTrash(trash.canvas)),
+    trashWorlds: hashById(trash.worlds),
     tagSettings: hashItem(d.tagSettings || {})
   };
 }
@@ -285,6 +286,16 @@ function mergeAppData(base, local, remote) {
     (localTrash.canvas || []).forEach(function(e) {
       if (!canvasTrashKey(e)) trash.canvas.push(e);
     });
+  }
+
+  /* 垃圾桶裡整筆的世界觀（刪世界觀時連白板一起存下來，才能整個復原）。
+     有 id（就是世界觀的 id），直接走一般的三方合併。規則同上：兩邊都沒有
+     就不加；舊指紋沒有 trashWorlds 時退成聯集。
+
+     「照本機的留著」在這裡不夠：那只保得住這一台刪的，另一台刪的世界觀
+     會永遠看不到、也復原不了。 */
+  if (localTrash.worlds || remoteTrash.worlds) {
+    trash.worlds = run("trashWorld", base.trashWorlds, localTrash.worlds, remoteTrash.worlds, nameOf);
   }
 
   /* trash 底下其他沒列到的欄位（以後加的）照本機的留著。跟下面頂層的規則

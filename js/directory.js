@@ -1364,15 +1364,113 @@ function stampDeletedWorldOnTrash(worldId, name, icon) {
  });
 }
 
+/* 從垃圾桶把整個世界觀復原回來。
+
+   帶回來的是「刪世界觀的當下在裡面的東西」（trashedWithWorld 標記的）。
+   在那之前就刪掉的留在垃圾桶——復原完它們就歸到這個（又存在了的）世界觀
+   底下，要的話可以再個別復原。
+
+   舊資料（刪的時候還沒有 trash.worlds）沒有整筆紀錄、也沒有標記：用蓋在
+   項目上的名字重建一個（白板是空的），屬於它的全部帶回來——分不出哪些是
+   早就刪掉的，寧可多帶。 */
+function restoreWorldFromTrash(worldId) {
+ const t = appData.trash;
+ if (!Array.isArray(t.worlds)) t.worlds = [];
+ if (appData.worldviews.some(w => w.id === worldId)) return;   // 已經在了（例如另一台先復原、同步過來）
+
+ const idx = t.worlds.findIndex(w => w.id === worldId);
+ let world;
+ let belongs;
+ if (idx !== -1) {
+ world = t.worlds.splice(idx, 1)[0];
+ belongs = function(x) { return x.worldId === worldId && x.trashedWithWorld === worldId; };
+ } else {
+ const any = (t.docs || []).concat(t.folders || [], t.canvas || [])
+ .find(x => x.worldId === worldId && x.fromWorldName);
+ world = {
+ id: worldId,
+ name: any ? any.fromWorldName : "復原的世界觀",
+ icon: any ? (any.fromWorldIcon || "🌐") : "🌐"
+ };
+ belongs = function(x) { return x.worldId === worldId; };
+ }
+ delete world.deletedAt;
+ delete world.deletedTs;
+ if (!world.canvas || typeof world.canvas !== "object") world.canvas = {};
+ ["nodes", "edges", "notes"].forEach(function(k) {
+ if (!Array.isArray(world.canvas[k])) world.canvas[k] = [];
+ });
+ appData.worldviews.push(world);
+
+ const clean = function(x) {
+ ["deletedAt", "deletedTs", "trashedWithWorld", "fromWorldName", "fromWorldIcon"].forEach(function(k) { delete x[k]; });
+ return x;
+ };
+ const backFolders = (t.folders || []).filter(belongs);
+ const backDocs = (t.docs || []).filter(belongs);
+ t.folders = (t.folders || []).filter(x => !belongs(x));
+ t.docs = (t.docs || []).filter(x => !belongs(x));
+
+ const folderIds = new Set(backFolders.map(f => f.id));
+ backFolders.forEach(function(f) {
+ clean(f);
+ // 上層不在這一批裡（早就被個別刪掉了）就放到最外層，不然畫不出來
+ if (f.parentId && !folderIds.has(f.parentId) && !appData.folders.some(x => x.id === f.parentId)) f.parentId = null;
+ appData.folders.push(f);
+ });
+ backDocs.forEach(function(d) {
+ clean(d);
+ if (d.folderId && !folderIds.has(d.folderId) && !appData.folders.some(x => x.id === d.folderId)) d.folderId = null;
+ if (!Array.isArray(d.manualTags) && typeof computeManualTagsFor === "function") {
+ d.manualTags = computeManualTagsFor(d.content, d.tags);
+ }
+ appData.docs.push(d);
+ });
+
+ saveData();
+ updateWorldBadge();
+ renderSidebarTree();
+ if (typeof renderTrashList === "function") renderTrashList();
+ if (typeof refreshCanvasIfVisible === "function") refreshCanvasIfVisible();
+ return world;
+}
+
+/* 整個世界觀永久刪除：紀錄，加上垃圾桶裡屬於它的全部（包括更早就刪掉的——
+   世界觀都永久刪了，它們再也沒有地方可以回去）。 */
+function permanentlyDeleteTrashWorld(worldId) {
+ const t = appData.trash;
+ const rec = (t.worlds || []).find(w => w.id === worldId);
+ const name = rec ? rec.name : "這個世界觀";
+ if (!confirm("確定要永久刪除「" + name + "」整個世界觀嗎？裡面的東西會一起刪除，此動作無法復原！")) return;
+ const other = function(x) { return x.worldId !== worldId; };
+ t.worlds = (t.worlds || []).filter(w => w.id !== worldId);
+ t.docs = (t.docs || []).filter(other);
+ t.folders = (t.folders || []).filter(other);
+ t.canvas = (t.canvas || []).filter(other);
+ saveData();
+ if (typeof renderTrashList === "function") renderTrashList();
+}
+
 function deleteWorldById(worldId) {
  if (appData.worldviews.length <= 1) {
  alert("這是最後一個世界觀，無法刪除！");
  return;
  }
 
- if (!confirm("確定要刪除此世界觀嗎？\n（底下的所有資料夾與文檔會被移至垃圾桶，可以復原，但世界觀本身將直接刪除）")) {
+ if (!confirm("確定要刪除此世界觀嗎？\n（整個世界觀——資料夾、文檔、白板——會一起移到垃圾桶，可以整個復原）")) {
  return;
  }
+
+ const world = appData.worldviews.find(w => w.id === worldId);
+ if (!world) return;
+
+ /* 整筆存下來，**在動任何東西之前**：名稱、圖示、簡介、整張白板（節點、
+    連線、便條紙）。以前這一筆是直接丟掉的——文檔與資料夾進了垃圾桶，但
+    白板上的便條紙與連線說明永遠回不來，世界觀本身也只能重建一個新的。 */
+ const snapshot = JSON.parse(JSON.stringify(world));
+ const now = formatTime(new Date());
+ if (!Array.isArray(appData.trash.worlds)) appData.trash.worlds = [];
+ appData.trash.worlds.push(Object.assign(snapshot, { deletedAt: now, deletedTs: Date.now() }));
 
  const docsToTrash = appData.docs.filter(d => d.worldId === worldId);
  const foldersToTrash = appData.folders.filter(f => f.worldId === worldId);
@@ -1380,11 +1478,14 @@ function deleteWorldById(worldId) {
  appData.docs = appData.docs.filter(d => d.worldId !== worldId);
  appData.folders = appData.folders.filter(f => f.worldId !== worldId);
 
- if (typeof moveDocsToTrash === 'function') moveDocsToTrash(docsToTrash);
- if (typeof moveFoldersToTrash === 'function') moveFoldersToTrash(foldersToTrash);
+ /* 標記「隨世界觀一起進來的」：復原世界觀時只帶這些回去。在這之前就從
+    這個世界觀刪掉的東西不該跟著復活——那是使用者本來就丟掉的。
+    keepCanvas：白板節點已經在上面那一筆裡了，不要再拆一份進垃圾桶。 */
+ const opts = { extra: { trashedWithWorld: worldId }, keepCanvas: true };
+ if (typeof moveDocsToTrash === 'function') moveDocsToTrash(docsToTrash, opts);
+ if (typeof moveFoldersToTrash === 'function') moveFoldersToTrash(foldersToTrash, opts);
 
- const world = appData.worldviews.find(w => w.id === worldId);
- if (world) stampDeletedWorldOnTrash(worldId, world.name, world.icon);
+ stampDeletedWorldOnTrash(worldId, world.name, world.icon);
 
  appData.worldviews = appData.worldviews.filter(w => w.id !== worldId);
 

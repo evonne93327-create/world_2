@@ -73,7 +73,7 @@ function computeManualTagsFor(content, tags) {
   };
 
   let removed = 0;
-  ["docs", "folders", "canvas"].forEach(function(kind) {
+  ["docs", "folders", "canvas", "worlds"].forEach(function(kind) {
     if (!Array.isArray(appData.trash[kind])) return;
     const before = appData.trash[kind].length;
     appData.trash[kind] = appData.trash[kind].filter(function(item) { return !expired(item); });

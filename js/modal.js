@@ -945,27 +945,33 @@ function buildDocMenuItems(doc) {
  ];
 }
 
-function moveDocsToTrash(docsArray) {
+/* opts（選填）：
+     extra      蓋在每一筆上的欄位（刪世界觀時用來標 trashedWithWorld）
+     keepCanvas 不要把白板節點拆進垃圾桶——刪整個世界觀時，節點已經在那個
+                世界觀的整筆紀錄裡了，再拆一份的話復原時會變成兩份 */
+function moveDocsToTrash(docsArray, opts) {
  if (!docsArray || !docsArray.length) return;
+ opts = opts || {};
  const now = formatTime(new Date());
  docsArray.forEach(function(d) {
  // deletedAt 是給人看的字串，deletedTs 才是拿來算保留期限的
- appData.trash.docs.push(Object.assign({}, d, { deletedAt: now, deletedTs: Date.now() }));
+ appData.trash.docs.push(Object.assign({}, d, opts.extra || {}, { deletedAt: now, deletedTs: Date.now() }));
  delete docHistory[d.id];
  });
 
  /* 白板上指向這些文檔的節點與連線原本會留在資料裡（畫的時候跳過不畫），
     一直累積佔空間。一起收進垃圾桶，復原文檔之後節點也回得來。 */
- if (typeof trashOrphanNodesForDocs === "function") {
+ if (!opts.keepCanvas && typeof trashOrphanNodesForDocs === "function") {
  trashOrphanNodesForDocs(docsArray.map(function(d) { return d.id; }));
  }
 }
 
-function moveFoldersToTrash(foldersArray) {
+function moveFoldersToTrash(foldersArray, opts) {
  if (!foldersArray || !foldersArray.length) return;
+ opts = opts || {};
  const now = formatTime(new Date());
  foldersArray.forEach(function(f) {
- appData.trash.folders.push(Object.assign({}, f, { deletedAt: now, deletedTs: Date.now() }));
+ appData.trash.folders.push(Object.assign({}, f, opts.extra || {}, { deletedAt: now, deletedTs: Date.now() }));
  });
 }
 
@@ -996,12 +1002,13 @@ function renderTrashList() {
 
  const folders = appData.trash.folders || [];
  const docs = appData.trash.docs || [];
+ const worlds = appData.trash.worlds || [];
  /* 白板上刪掉的節點／連線／便條紙是用「在原本陣列裡的索引」復原與刪除的
     （這三種東西的 id 各自獨立、不保證不重複），分組之前先把索引帶著。 */
  const canvasItems = (appData.trash.canvas || [])
  .map(function(item, index) { return { item: item, index: index }; });
 
- if (folders.length === 0 && docs.length === 0 && canvasItems.length === 0) {
+ if (folders.length === 0 && docs.length === 0 && canvasItems.length === 0 && worlds.length === 0) {
  const empty = document.createElement("div");
  empty.className = "hashtag-filter-empty";
  empty.textContent = "垃圾桶目前是空的";
@@ -1042,15 +1049,21 @@ function renderTrashList() {
  list.appendChild(h);
  }
 
- const groups = trashGroups(folders, docs, canvasItems);
+ const groups = trashGroups(folders, docs, canvasItems, worlds);
  const gone = groups.filter(function(g) { return g.deleted; });
  const alive = groups.filter(function(g) { return !g.deleted; });
 
+ /* 刪掉的世界觀：一個世界觀一列，「復原」就是整個世界觀回來。裡面有什麼
+    不列出來（使用者：「不需要把刪除的世界觀裡面有什麼列出來」），只寫會
+    一起回來幾項，讓人知道不是空的。 */
  if (gone.length) {
  heading("刪除的世界觀", "trash-section-title");
  gone.forEach(function(g) {
- heading((g.icon || "🌐") + " " + (g.name || "（名稱沒有留下來的世界觀）"), "trash-group-title");
- rowsFor(g.folders, g.docs, g.canvas);
+ const label = (g.name || "（名稱沒有留下來的世界觀）") +
+ (g.restoreCount ? "　·　" + g.restoreCount + " 項" : "");
+ list.appendChild(createTrashRow(g.icon || "🌐", label, g.deletedAt,
+ function() { restoreWorldFromTrash(g.worldId); },
+ function() { permanentlyDeleteTrashWorld(g.worldId); }));
  });
  // 上面有「刪除的世界觀」時才需要這個標題，把兩區分開
  if (alive.length) heading("現有的世界觀", "trash-section-title");
@@ -1066,28 +1079,49 @@ function renderTrashList() {
    順序：已經刪掉的世界觀在最上面（最近刪的在前），接著是現有的世界觀，照
    左側那一排的順序——跟使用者平常看到的順序一樣，比較好找。沒有東西的
    世界觀不列。 */
-function trashGroups(folders, docs, canvasItems) {
+function trashGroups(folders, docs, canvasItems, worlds) {
  const byWorld = {};
  const order = [];
+ const records = {};
+ (worlds || []).forEach(function(w) { if (w && w.id) records[w.id] = w; });
+
  function slot(item) {
  const key = item.worldId || "?";
  if (!byWorld[key]) {
  const live = appData.worldviews.find(function(w) { return w.id === key; });
+ const rec = records[key];
  byWorld[key] = {
  worldId: key, deleted: !live,
- name: live ? live.name : "", icon: live ? (live.icon || "") : "",
- folders: [], docs: [], canvas: [], latest: 0
+ name: live ? live.name : (rec ? rec.name : ""),
+ icon: live ? (live.icon || "") : (rec ? (rec.icon || "") : ""),
+ deletedAt: rec ? rec.deletedAt : "",
+ hasRecord: !!rec,
+ folders: [], docs: [], canvas: [], latest: rec ? (rec.deletedTs || 0) : 0,
+ restoreCount: 0
  };
  order.push(key);
  }
  const g = byWorld[key];
  if (g.deleted && !g.name && item.fromWorldName) { g.name = item.fromWorldName; g.icon = item.fromWorldIcon || ""; }
+ if (g.deleted && !g.deletedAt && item.deletedAt) g.deletedAt = item.deletedAt;
  if ((item.deletedTs || 0) > g.latest) g.latest = item.deletedTs || 0;
  return g;
  }
+
+ // 整筆紀錄先登記：沒有任何文檔的世界觀刪掉之後也要看得到
+ (worlds || []).forEach(function(w) { if (w && w.id) slot({ worldId: w.id }); });
  (folders || []).forEach(function(f) { slot(f).folders.push(f); });
  (docs || []).forEach(function(d) { slot(d).docs.push(d); });
  (canvasItems || []).forEach(function(e) { slot(e.item).canvas.push(e); });
+
+ /* 復原時會一起回來幾項——跟 restoreWorldFromTrash() 同一條規則：有整筆
+    紀錄的只算 trashedWithWorld 標記的；舊資料全部都算。 */
+ order.forEach(function(k) {
+ const g = byWorld[k];
+ if (!g.deleted) return;
+ const counts = function(x) { return !g.hasRecord || x.trashedWithWorld === k; };
+ g.restoreCount = g.folders.filter(counts).length + g.docs.filter(counts).length;
+ });
 
  const worldOrder = {};
  appData.worldviews.forEach(function(w, i) { worldOrder[w.id] = i; });
@@ -1209,12 +1243,14 @@ function permanentlyDeleteTrashDoc(docId) {
 
 function emptyTrash() {
  const t = appData.trash;
- const total = (t.docs || []).length + (t.folders || []).length + (t.canvas || []).length;
+ const total = (t.docs || []).length + (t.folders || []).length + (t.canvas || []).length +
+ (t.worlds || []).length;
  if (total === 0) { alert("垃圾桶目前是空的。"); return; }
  if (!confirm("確定要清空垃圾桶嗎？裡面的 " + total + " 個項目（所有世界觀的）將會永久刪除，此動作無法復原！")) return;
  t.docs = [];
  t.folders = [];
  t.canvas = [];
+ t.worlds = [];
  saveData();
  renderTrashList();
 }
