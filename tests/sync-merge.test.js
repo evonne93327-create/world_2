@@ -458,3 +458,16 @@ test("衝突清單：文檔排在垃圾桶的東西前面", function() {
   const r = merge(base, local, remote);
   assert.deepStrictEqual(r.conflicts.map(function(c) { return c.kind; }), ["doc", "trashDoc"]);
 });
+
+test("trash.canvas：組不出鍵的（缺欄位）照本機的留著，不丟", function() {
+  /* 資料缺欄位時沒辦法跟另一邊對應，但「沒辦法合併」不等於「可以丟」。 */
+  const broken = { kind: "note", worldId: "w1", label: "缺內容的便條紙", deletedTs: 5 };  // 沒有 note.id
+  const before = withCanvasTrash(db([doc("d1", "a")]), []);
+  const base = fingerprintOf(before);
+  const local = withCanvasTrash(db([doc("d1", "a")]), [broken, ctrash("note", "n1", 100)]);
+  const remote = withCanvasTrash(db([doc("d1", "b")]), []);
+  const r = merge(base, local, remote);
+  const labels = r.data.trash.canvas.map(function(e) { return e.label; }).sort();
+  assert.deepStrictEqual(labels, ["note n1", "缺內容的便條紙"]);
+  assert.strictEqual(app.canvasTrashKey(broken), null);
+});
