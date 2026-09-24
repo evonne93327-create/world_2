@@ -16,7 +16,7 @@
 |---|---|
 | 線上位置 | https://evonne93327-create.github.io/world_2/ |
 | main | `3854360`（PR #52 合併後） |
-| service worker | **v91** |
+| service worker | **v92** |
 | 開發分支 | `claude/ipad-keyboard-button-placement-613jds` |
 | 開著的 PR | 無 |
 
@@ -745,7 +745,7 @@ Android 上也要先長按到系統自己認定是拖曳才會發。所以目錄
 ### 在 repo 裡的
 
 ```bash
-node --test          # 202 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
+node --test          # 208 項。注意：不要寫 node --test tests/，Node 22 會去 require 那個目錄
 ```
 
 | 檔案 | 測什麼 |

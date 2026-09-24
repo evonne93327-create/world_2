@@ -1242,3 +1242,85 @@ test("垃圾桶：第二行的內容（實際畫出來）", function() {
   assert.deepStrictEqual(out.children, ["trash-item-icon", "trash-item-text", "trash-item-actions"],
     "一列就是：圖示、兩行文字、按鈕");
 });
+
+/* ---------- 因為刪文檔而進垃圾桶的節點，跟著文檔走 ---------- */
+
+/* 使用者：「如果是因為刪除掉文檔所以刪除的節點，直接跟著文檔本身，不用獨立
+   出來」。以前這種節點在垃圾桶裡是獨立的一列「（隨文檔一起刪除的白板節點）」，
+   復原文檔之後還要另外去復原它，不然白板上那篇就不見了。 */
+function nodeFollowApp() {
+  const app = loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"
+  ]);
+  app.run(`
+    saveData = function() {}; renderSidebarTree = function() {}; renderBreadcrumb = function() {};
+    renderTrashList = function() {}; refreshCanvasIfVisible = function() {};
+    confirm = function() { return true; }; var __alerts = []; alert = function(m) { __alerts.push(m); };
+    appData = {
+      worldviews: [{ id: "w1", name: "主", canvas: {
+        nodes: [{ id: "node_d1", docId: "d1", x: 0, y: 0 }, { id: "node_d2", docId: "d2", x: 300, y: 0 }],
+        edges: [{ id: "e1", source: "node_d1", target: "node_d2", label: "宿敵" }], notes: [] } }],
+      folders: [],
+      docs: [{ id: "d1", worldId: "w1", folderId: null, title: "團長", tags: [] },
+             { id: "d2", worldId: "w1", folderId: null, title: "遊俠", tags: [] }],
+      trash: { docs: [], folders: [], canvas: [] }
+    };
+    activeWorldId = "w1";
+    function __kill(id) { var d = appData.docs.find(function(x) { return x.id === id; });
+      appData.docs = appData.docs.filter(function(x) { return x.id !== id; }); moveDocsToTrash([d]); }
+  `);
+  return app;
+}
+
+test("刪文檔時拆出來的節點，標記它跟著哪一篇", function() {
+  const app = nodeFollowApp();
+  app.run(`__kill("d1")`);
+  const e = host(app.run(`appData.trash.canvas[0]`));
+  assert.strictEqual(e.kind, "node");
+  assert.strictEqual(e.withDoc, "d1");
+  assert.strictEqual(app.run(`canvasTrashFollowsDoc(appData.trash.canvas[0])`), "d1");
+});
+
+test("舊資料沒有標記：用「隨文檔一起刪除」那個標籤認得出來", function() {
+  const app = nodeFollowApp();
+  assert.strictEqual(app.run(`canvasTrashFollowsDoc({ kind: "node", label: "（隨文檔一起刪除的白板節點）", node: { id: "n", docId: "dz" } })`), "dz");
+  assert.strictEqual(app.run(`canvasTrashFollowsDoc({ kind: "node", label: "使用者自己刪的", node: { id: "n", docId: "dz" } })`), null,
+    "使用者在白板上自己刪的節點不跟著文檔，照舊獨立一列");
+  assert.strictEqual(app.run(`canvasTrashFollowsDoc({ kind: "note", withDoc: "dz", note: { id: "n" } })`), null,
+    "只有節點會跟著文檔");
+});
+
+test("文檔搬到別的世界觀時留下的節點不跟著文檔", function() {
+  /* 那篇文檔沒有被刪，還活在另一個世界觀。如果標成跟著它，之後它在新的
+     世界觀被刪、再復原時，會把舊世界觀的節點也一起帶回舊白板——指著一篇
+     已經不屬於那裡的文檔。 */
+  const body = codeOnly(bodyOf(directoryJs, "moveItemInto"));
+  assert.match(body, /trashOrphanNodesForDocs\(leavingDocIds, "（文檔搬到別的世界觀時留下的白板節點）", false\)/);
+});
+
+test("復原文檔：它的節點與連線一起回到白板，垃圾桶裡不留", function() {
+  const app = nodeFollowApp();
+  app.run(`__kill("d1"); restoreDocFromTrash("d1");`);
+  const r = host(app.run(`({ nodes: appData.worldviews[0].canvas.nodes.map(function(n) { return n.id; }).sort(),
+    edges: appData.worldviews[0].canvas.edges.map(function(e) { return e.label; }),
+    trash: appData.trash.canvas.length, alerts: __alerts })`));
+  assert.deepStrictEqual(r.nodes, ["node_d1", "node_d2"], "節點要跟著回來");
+  assert.deepStrictEqual(r.edges, ["宿敵"], "連線說明也回來");
+  assert.strictEqual(r.trash, 0, "垃圾桶裡不留一筆孤零零的節點");
+  assert.deepStrictEqual(r.alerts, [], "跟著回來的過程不要跳任何提示");
+});
+
+test("永久刪除文檔：它的節點一起刪掉", function() {
+  const app = nodeFollowApp();
+  app.run(`__kill("d1"); permanentlyDeleteTrashDoc("d1");`);
+  assert.strictEqual(app.run(`appData.trash.canvas.length`), 0,
+    "不然垃圾桶裡會剩一筆再也復原不了的節點（它的文檔已經永久刪了）");
+});
+
+test("垃圾桶清單：文檔還在垃圾桶時，跟著它的節點不獨立列出", function() {
+  const body = codeOnly(bodyOf(modalJs, "renderTrashList"));
+  assert.match(body, /canvasTrashFollowsDoc\(/, "要看每一筆是不是跟著某篇文檔");
+  assert.match(body, /trashedDocIds\.has\(/,
+    "只有那篇文檔還在垃圾桶時才藏 —— 文檔不在了（例如早就被清掉），節點要能被看見");
+});

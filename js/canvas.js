@@ -2141,13 +2141,46 @@ function trashCanvasNote(noteId) {
 
 /* 從垃圾桶把白板物件放回去。節點連同它的線一起回來；線要回去的話兩端的
    節點都還得在，否則會出現連到空氣的線。 */
-function restoreCanvasTrashItem(index) {
+/* 舊版刪文檔時拆出來的節點用的標籤。那時候還沒有 withDoc 標記，只能靠它
+   認出「這一筆是跟著某篇文檔的」。 */
+const TRASH_NODE_WITH_DOC_LABEL = "（隨文檔一起刪除的白板節點）";
+
+/* 這一筆白板垃圾跟著哪一篇文檔（因為那篇被刪才進來的）。不是就回 null。
+   只有節點會跟著文檔；便條紙與連線、使用者在白板上自己刪的節點都不算。 */
+function canvasTrashFollowsDoc(entry) {
+  if (!entry || entry.kind !== "node") return null;
+  if (entry.withDoc) return entry.withDoc;
+  if (entry.label === TRASH_NODE_WITH_DOC_LABEL && entry.node && entry.node.docId) return entry.node.docId;
+  return null;
+}
+
+/* 復原一篇文檔時，把跟著它的節點（連同兩端都在的連線）一起放回白板。
+   從後面往前做：restoreCanvasTrashItem 會把那一筆從陣列裡拿掉，往前走索引
+   才不會錯位。放不回去的（例如它的世界觀已經不在了）安靜地留在垃圾桶，
+   那時候它就會變成獨立的一列，還看得到。 */
+function restoreNodesFollowingDoc(docId) {
+  const list = (appData.trash && appData.trash.canvas) || [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (canvasTrashFollowsDoc(list[i]) === docId) restoreCanvasTrashItem(i, true);
+  }
+}
+
+/* 永久刪除一篇文檔時，跟著它的節點一起刪掉——不然垃圾桶裡會剩一筆再也
+   復原不了的節點。 */
+function dropNodesFollowingDoc(docId) {
+  if (!appData.trash || !Array.isArray(appData.trash.canvas)) return;
+  appData.trash.canvas = appData.trash.canvas.filter(function(e) { return canvasTrashFollowsDoc(e) !== docId; });
+}
+
+/* quiet：跟著文檔一起復原時用，失敗就安靜地回 false，不跳提示。 */
+function restoreCanvasTrashItem(index, quiet) {
   const list = (appData.trash && appData.trash.canvas) || [];
   const entry = list[index];
   if (!entry) return false;
+  const say = function(msg) { if (!quiet) alert(msg); };
 
   const world = appData.worldviews.find(w => w.id === entry.worldId);
-  if (!world) { alert("這個項目所屬的世界觀已經不存在了，無法復原。"); return false; }
+  if (!world) { say("這個項目所屬的世界觀已經不存在了，無法復原。"); return false; }
   if (!world.canvas) world.canvas = { nodes: [], edges: [], notes: [] };
   const c = world.canvas;
   if (!Array.isArray(c.nodes)) c.nodes = [];
@@ -2156,7 +2189,7 @@ function restoreCanvasTrashItem(index) {
 
   if (entry.kind === "node") {
     if (!appData.docs.find(d => d.id === entry.node.docId)) {
-      alert("這個節點對應的文檔已經不在了（可能還在垃圾桶裡）。請先復原那篇文檔。");
+      say("這個節點對應的文檔已經不在了（可能還在垃圾桶裡）。請先復原那篇文檔。");
       return false;
     }
     if (!c.nodes.find(n => n.id === entry.node.id)) c.nodes.push(entry.node);
@@ -2167,7 +2200,7 @@ function restoreCanvasTrashItem(index) {
   } else if (entry.kind === "edge") {
     const e = entry.edge;
     if (!c.nodes.find(n => n.id === e.source) || !c.nodes.find(n => n.id === e.target)) {
-      alert("這條連線兩端的節點不是都還在白板上，無法復原。");
+      say("這條連線兩端的節點不是都還在白板上，無法復原。");
       return false;
     }
     if (!c.edges.find(x => x.id === e.id)) c.edges.push(e);
@@ -2190,8 +2223,16 @@ function restoreCanvasTrashItem(index) {
    跟著文檔一起收進垃圾桶：這樣復原文檔之後，節點也回得來。 */
 /* label 是垃圾桶裡那一筆顯示的說明。刪文檔與「文檔搬到別的世界觀」都會
    走這裡，兩種情況給使用者看的原因不一樣。 */
-function trashOrphanNodesForDocs(docIds, label) {
+/* followsDoc（預設 true）：這些節點是「因為文檔被刪」才進垃圾桶的，標上
+   withDoc 讓它們跟著那篇文檔——垃圾桶裡不獨立列出，復原文檔時一起回來，
+   永久刪除文檔時一起刪掉（使用者：「直接跟著文檔本身，不用獨立出來」）。
+
+   文檔搬到別的世界觀時留下的節點要傳 false：那篇文檔沒有被刪，還活在另一個
+   世界觀。標成跟著它的話，之後它在新的世界觀被刪、再復原時，會把舊世界觀的
+   節點也帶回舊白板——指著一篇已經不屬於那裡的文檔。 */
+function trashOrphanNodesForDocs(docIds, label, followsDoc) {
   if (!docIds || !docIds.length) return;
+  if (followsDoc === undefined) followsDoc = true;
   const ids = {};
   docIds.forEach(function(id) { ids[id] = true; });
 
@@ -2203,13 +2244,15 @@ function trashOrphanNodesForDocs(docIds, label) {
 
     doomed.forEach(function(node) {
       const edges = (c.edges || []).filter(e => e.source === node.id || e.target === node.id);
-      pushCanvasTrash({
+      const entry = {
         kind: "node",
         worldId: w.id,
-        label: label || "（隨文檔一起刪除的白板節點）",
+        label: label || TRASH_NODE_WITH_DOC_LABEL,
         node: node,
         edges: edges
-      });
+      };
+      if (followsDoc) entry.withDoc = node.docId;
+      pushCanvasTrash(entry);
     });
 
     const doomedIds = {};

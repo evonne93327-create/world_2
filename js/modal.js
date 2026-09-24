@@ -1005,8 +1005,16 @@ function renderTrashList() {
  const worlds = appData.trash.worlds || [];
  /* 白板上刪掉的節點／連線／便條紙是用「在原本陣列裡的索引」復原與刪除的
     （這三種東西的 id 各自獨立、不保證不重複），分組之前先把索引帶著。 */
+ /* 跟著某篇文檔的節點（因為刪那篇才進來的），只要那篇還在垃圾桶就不獨立
+    列出——它們會跟著文檔一起復原或刪除。那篇不在垃圾桶了（早就被清掉、
+    或復原時節點沒放回去）就照常列出來，不然會變成看不到的垃圾。 */
+ const trashedDocIds = new Set(docs.map(function(d) { return d.id; }));
  const canvasItems = (appData.trash.canvas || [])
- .map(function(item, index) { return { item: item, index: index }; });
+ .map(function(item, index) { return { item: item, index: index }; })
+ .filter(function(e) {
+ const docId = canvasTrashFollowsDoc(e.item);
+ return !(docId && trashedDocIds.has(docId));
+ });
 
  if (folders.length === 0 && docs.length === 0 && canvasItems.length === 0 && worlds.length === 0) {
  const empty = document.createElement("div");
@@ -1237,6 +1245,8 @@ function restoreDocFromTrash(docId) {
  if (!Array.isArray(doc.manualTags)) doc.manualTags = computeManualTagsFor(doc.content, doc.tags);
 
  appData.docs.push(doc);
+ // 因為刪它才進垃圾桶的節點跟著回白板（它們在垃圾桶裡本來就沒有獨立列出來）
+ if (typeof restoreNodesFollowingDoc === "function") restoreNodesFollowingDoc(doc.id);
  saveData();
  renderSidebarTree();
  renderTrashList();
@@ -1252,6 +1262,7 @@ function permanentlyDeleteTrashFolder(folderId) {
 function permanentlyDeleteTrashDoc(docId) {
  if (!confirm("確定要永久刪除此文檔嗎？此動作無法復原！")) return;
  appData.trash.docs = appData.trash.docs.filter(d => d.id !== docId);
+ if (typeof dropNodesFollowingDoc === "function") dropNodesFollowingDoc(docId);
  saveData();
  renderTrashList();
 }

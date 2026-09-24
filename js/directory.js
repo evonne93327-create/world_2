@@ -478,7 +478,7 @@ function moveItemInto(payload, targetFolderId, targetWorldId) {
      的話原本那張白板會一直掛著別的世界觀的文檔。收進垃圾桶而不是直接丟：
      連線上寫的關係說明是使用者打的字，搬回來的時候還救得回來。 */
   if (leavingDocIds.length && typeof trashOrphanNodesForDocs === "function") {
-    trashOrphanNodesForDocs(leavingDocIds, "（文檔搬到別的世界觀時留下的白板節點）");
+    trashOrphanNodesForDocs(leavingDocIds, "（文檔搬到別的世界觀時留下的白板節點）", false);
     if (typeof refreshCanvasIfVisible === "function") refreshCanvasIfVisible();
   }
 
@@ -1426,6 +1426,10 @@ function restoreWorldFromTrash(worldId) {
  }
  appData.docs.push(d);
  });
+ // 舊資料（刪世界觀時節點還是一顆一顆拆進垃圾桶的）：跟著文檔回到白板
+ if (typeof restoreNodesFollowingDoc === "function") {
+ backDocs.forEach(function(d) { restoreNodesFollowingDoc(d.id); });
+ }
 
  saveData();
  updateWorldBadge();
