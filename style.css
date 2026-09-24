@@ -1304,18 +1304,11 @@ main.content-workspace {
 
 /* ---------- 移動／複製到別的世界觀 ---------- */
 
-.move-mode-row[hidden] { display: none; }
-.move-mode-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-6) var(--sp-16);
-  padding: var(--sp-10) var(--sp-12);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-sunken);
-}
-.move-mode-opt { display: inline-flex; align-items: center; gap: var(--sp-6); font-size: var(--fs-12); cursor: pointer; min-height: 28px; }
-.move-mode-hint { flex-basis: 100%; font-size: var(--fs-10); color: var(--text-muted); line-height: 1.5; }
+.move-mode-hint[hidden] { display: none; }
+.move-mode-hint { font-size: var(--fs-10); color: var(--text-muted); line-height: 1.5; margin: 0; }
+/* 按鈕上的 hidden 屬性要真的藏起來——.btn 設了 display，會蓋掉瀏覽器預設的
+   [hidden] { display: none }，「複製」會在同一個世界觀時也冒出來 */
+#moveCopyBtn[hidden] { display: none; }
 
 /* ---------- 批量投射白板 ---------- */
 

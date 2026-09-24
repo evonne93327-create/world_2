@@ -201,3 +201,53 @@ test("匯入的簡介：非字串丟掉、太長截掉", function() {
   const none = host(app.normalizeImportedWorld({ id: "w", name: "X" }));
   assert.ok(!("desc" in none), "本來就沒有的不要補一個空字串出來");
 });
+
+/* ---------- 加標籤、白板拉線：改用輸入彈窗之後的行為 ---------- */
+
+function tagApp() {
+  const app = loadApp(["js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+                       "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"]);
+  app.run(`
+    saveData = function() {};
+    renderLiveHashtags = function() {};
+    renderSidebarTree = function() {};
+    renderCanvasLines = function() {};
+    appData = {
+      worldviews: [{ id: "w1", name: "主", canvas: { nodes: [
+        { id: "n1", docId: "d1", x: 0, y: 0 }, { id: "n2", docId: "d2", x: 300, y: 0 }], edges: [], notes: [] } }],
+      folders: [],
+      docs: [{ id: "d1", worldId: "w1", title: "團長", tags: ["舊"], manualTags: [] },
+             { id: "d2", worldId: "w1", title: "遊俠", tags: [] }],
+      tagSettings: {}
+    };
+    activeWorldId = "w1"; activeDocId = "d1";
+  `);
+  return app;
+}
+
+test("加標籤：逗號分隔（半形全形都行）、去掉 #、不重複", function() {
+  const app = tagApp();
+  assert.strictEqual(app.run(`addManualTagsToActiveDoc(" #帝國軍方 , 主角群，舊,, ")`), true);
+  const d = host(app.run(`appData.docs[0]`));
+  assert.deepStrictEqual(d.tags, ["舊", "帝國軍方", "主角群"]);
+  assert.deepStrictEqual(d.manualTags, ["帝國軍方", "主角群", "舊"]);
+  assert.strictEqual(app.run(`appData.tagSettings["帝國軍方"]`), "c_gray", "新標籤給預設顏色");
+});
+
+test("加標籤：全是空白或逗號就不算，讓彈窗留著", function() {
+  const app = tagApp();
+  ["", "   ", ",，, ", "#"].forEach(function(input) {
+    assert.strictEqual(app.run(`addManualTagsToActiveDoc(${JSON.stringify(input)})`), false,
+      JSON.stringify(input) + " 不該算加到東西");
+  });
+  assert.deepStrictEqual(host(app.run(`appData.docs[0].tags`)), ["舊"]);
+});
+
+test("白板拉線：留白就是「關聯」，前後空白去掉", function() {
+  const app = tagApp();
+  const e1 = host(app.run(`addCanvasEdge("n1", "n2", "   ")`));
+  assert.strictEqual(e1.label, "關聯", "跟原本 prompt() 版本一樣：留白＝關聯");
+  const e2 = host(app.run(`addCanvasEdge("n1", "n2", "  宿敵  ")`));
+  assert.strictEqual(e2.label, "宿敵");
+  assert.strictEqual(app.run(`getCurrentWorldCanvas().edges.length`), 2);
+});

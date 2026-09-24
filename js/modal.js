@@ -406,27 +406,39 @@ function renderLiveHashtags(tags) {
  addBtn.className = "btn-add-tag";
  addBtn.textContent = "＋ 標籤";
  addBtn.onclick = function() {
- const inputStr = prompt("請輸入欲加入的 Hashtag（可用逗號「,」同時新增多個）：");
- if (inputStr && inputStr.trim()) {
- const rawTags = inputStr.split(/[,，]/);
+ openTextInputModal({
+ title: "🏷️ 加入標籤",
+ fields: [{ label: "標籤（可以用逗號同時加好幾個）", value: "", placeholder: "例如：帝國軍方, 主角群" }],
+ okText: "加入",
+ onSubmit: function(values) {
+ if (!addManualTagsToActiveDoc(values[0])) { markTextInputInvalid(0); return false; }
+ }
+ });
+ };
+ bar.appendChild(addBtn);
+}
+
+/* 把輸入的一串標籤加到目前這篇。逗號（半形、全形）分隔，開頭的 # 會拿掉。
+   回傳有沒有真的加到東西——全是空白或逗號的話回 false，讓彈窗留著。 */
+function addManualTagsToActiveDoc(inputStr) {
  const doc = appData.docs.find(d => d.id === activeDocId);
- if (doc) {
+ if (!doc) return false;
+ const clean = String(inputStr || "").split(/[,，]/)
+ .map(function(item) { return item.trim().replace(/^#/, ''); })
+ .filter(Boolean);
+ if (!clean.length) return false;
+
  if (!doc.tags) doc.tags = [];
  if (!Array.isArray(doc.manualTags)) doc.manualTags = [];
- rawTags.forEach(function(item) {
- const clean = item.trim().replace(/^#/, '');
- if (!clean) return;
- if (!doc.tags.includes(clean)) doc.tags.push(clean);
- if (!doc.manualTags.includes(clean)) doc.manualTags.push(clean);
- if (!appData.tagSettings[clean]) appData.tagSettings[clean] = "c_gray";
+ clean.forEach(function(tag) {
+ if (!doc.tags.includes(tag)) doc.tags.push(tag);
+ if (!doc.manualTags.includes(tag)) doc.manualTags.push(tag);
+ if (!appData.tagSettings[tag]) appData.tagSettings[tag] = "c_gray";
  });
  saveData();
  renderLiveHashtags(doc.tags);
  renderSidebarTree();
- }
- }
- };
- bar.appendChild(addBtn);
+ return true;
 }
 
 function removeHashtagFromDoc(tag) {
@@ -1341,9 +1353,6 @@ function openMoveModal(ref) {
  select.appendChild(opt);
  });
 
- // 每次打開都回到「移動」，不要沿用上一次選的「複製」
- const moveRadio = document.querySelector('input[name="moveMode"][value="move"]');
- if (moveRadio) moveRadio.checked = true;
  updateMoveModeVisibility();
 
  document.getElementById("moveModal").classList.add("active");
@@ -1360,26 +1369,19 @@ function moveTargetIsOtherWorld() {
  return !!src && src.worldId !== target.worldId;
 }
 
-function selectedMoveMode() {
- const r = document.querySelector('input[name="moveMode"]:checked');
- return (r && r.value === "copy" && moveTargetIsOtherWorld()) ? "copy" : "move";
-}
-
+/* 目的地換了就重算：「複製」那顆只在別的世界觀時出現，底下那行說明也是。 */
 function updateMoveModeVisibility() {
- const row = document.getElementById("moveModeRow");
- const btn = document.getElementById("moveConfirmBtn");
+ const copyBtn = document.getElementById("moveCopyBtn");
  const hint = document.getElementById("moveModeHint");
  const other = moveTargetIsOtherWorld();
- if (row) row.hidden = !other;
-
- const mode = selectedMoveMode();
- if (btn) btn.textContent = mode === "copy" ? "確認複製" : "確認移動";
+ if (copyBtn) copyBtn.hidden = !other;
  if (hint) {
- /* 兩個選項的後果差很多，講清楚：搬過去的話原本那張白板上的節點會
-    收進垃圾桶；複製的話白板不會跟著過去。 */
- hint.textContent = !other ? "" : (mode === "copy"
- ? "原本的留在這裡不動。白板上的節點不會跟著複製，要的話到那邊用「批量投射白板」放上去。"
- : "原本這個世界觀的白板上如果有它，那個節點會收進垃圾桶（連線說明救得回來）。");
+ /* 兩顆按鈕的後果差很多，講清楚：移動的話原本那張白板上的節點會收進
+    垃圾桶；複製的話白板不會跟著過去。 */
+ hint.hidden = !other;
+ hint.textContent = other
+ ? "複製：原本的留在這裡，白板節點不跟過去。移動：這邊白板上的節點會收進垃圾桶（救得回來）。"
+ : "";
  }
 }
 
@@ -1387,13 +1389,19 @@ function closeMoveModal() {
 document.getElementById("moveModal").classList.remove("active"); 
 }
 
-function confirmMoveFolder() {
+/* mode：按了哪一顆，"copy" 或 "move"。
+
+   「複製」那顆在同一個世界觀時是藏起來的，但還是再擋一次：按鈕狀態跟目的地
+   不同步的那一瞬間（例如改了選項、change 事件還沒到），同世界觀的複製會在
+   同一個目錄多出一份一樣的。 */
+function confirmMoveOrCopy(mode) {
  const select = document.getElementById("moveTargetSelect");
  if (!select.value || !moveTargetRef) return;
  const target = JSON.parse(select.value);
  const payload = { type: moveTargetRef.type, id: moveTargetRef.id };
- const mode = selectedMoveMode();
  const crossWorld = moveTargetIsOtherWorld();
+ if (mode === "copy" && !crossWorld) return;
+ if (mode !== "copy") mode = "move";
  const movedActiveDoc = crossWorld && mode === "move" && (
  (payload.type === "doc" && payload.id === activeDocId) ||
  (payload.type === "folder" && folderSubtree(payload.id).docIds.has(activeDocId)));

@@ -55,7 +55,7 @@ function callsTo(src, name) {
    不要用非貪婪配到第一個 \n} —— 裡面有巢狀區塊，那樣會在半路切斷。 */
 function bodyOf(src, name) {
   /* 尾巴補一個假的 "\nfunction "：檔案裡最後一個函式後面沒有下一個函式可以
-     當邊界，不補的話它永遠抓不到（confirmMoveFolder 就是 modal.js 的最後一個）。 */
+     當邊界，不補的話它永遠抓不到（檔案結尾的那個函式就是這樣）。 */
   const m = (src + "\nfunction ").match(new RegExp("function\\s+" + name + "\\s*\\([\\s\\S]*?(?=\\nfunction )"));
   assert.ok(m, "找不到 " + name + "()");
   return m[0];
@@ -137,12 +137,11 @@ test("搬移的規則只寫在 moveItemInto() 裡一份", function() {
   assert.match(drop[0], /moveItemInto\(/,
     "拖放收尾要走 moveItemInto()，不要自己指派 folderId/parentId");
 
-  const confirm = codeOnly(modalJs).match(/function confirmMoveFolder\(\)[\s\S]*?\n\}/);
-  assert.ok(confirm, "找不到 confirmMoveFolder()");
-  assert.match(confirm[0], /moveItemInto\(/,
-    "「移動」彈窗按確認也要走 moveItemInto()");
-  assert.ok(!/\.parentId\s*=/.test(confirm[0]),
-    "confirmMoveFolder() 不該自己改 parentId —— 那份規則會跟拖放那一份走鐘");
+  const confirm = codeOnly(bodyOf(modalJs, "confirmMoveOrCopy"));
+  assert.match(confirm, /moveItemInto\(/,
+    "「移動」彈窗按「移動」也要走 moveItemInto()");
+  assert.ok(!/\.parentId\s*=/.test(confirm),
+    "confirmMoveOrCopy() 不該自己改 parentId —— 那份規則會跟拖放那一份走鐘");
 
   assert.match(bodyOf(directoryJs, "moveItemInto"), /isDescendantOf\(/,
     "擋「搬進自己的子孫」的判斷要在 moveItemInto() 裡面，不是靠 UI 先過濾選項");
@@ -830,23 +829,40 @@ test("copyItemInto()：不能複製進自己的子孫", function() {
   assert.strictEqual(app.run(`copyItemInto({ type: "doc", id: "沒這篇" }, null, "w2")`), null);
 });
 
-test("移動彈窗：只有目的地在別的世界觀時才問「移動還是複製」", function() {
-  const body = codeOnly(modalJs);
-  assert.match(bodyOf(modalJs, "updateMoveModeVisibility"), /row\.hidden = !other;/,
+test("移動彈窗：按鈕順序是 取消 → 複製 → 移動", function() {
+  /* 使用者指定的順序。「移動」在最右邊＝主要動作的位置。 */
+  const block = html.match(/id="moveTargetSelect"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/);
+  assert.ok(block, "找不到移動彈窗的按鈕列");
+  const labels = (block[0].match(/<button[^>]*>([^<]+)<\/button>/g) || [])
+    .map(function(b) { return b.replace(/<[^>]+>/g, "").trim(); });
+  assert.deepStrictEqual(labels, ["取消", "複製", "移動"]);
+
+  assert.match(block[0], /id="moveCopyBtn" onclick="confirmMoveOrCopy\('copy'\)" hidden/,
+    "「複製」預設藏起來，目的地是別的世界觀才出現");
+  assert.match(block[0], /onclick="confirmMoveOrCopy\('move'\)"/);
+  assert.ok(!/type="radio"/.test(block[0]), "不要再用單選框");
+
+  /* .btn 設了 display: inline-flex，會蓋掉瀏覽器預設的 [hidden]{display:none}。
+     少了這一條，「複製」在同一個世界觀時也會冒出來。 */
+  assert.match(css, /#moveCopyBtn\[hidden\]\s*\{\s*display:\s*none;/,
+    "hidden 屬性要真的藏得起來");
+});
+
+test("移動彈窗：只有目的地在別的世界觀時才有「複製」", function() {
+  assert.match(codeOnly(bodyOf(modalJs, "updateMoveModeVisibility")), /copyBtn\.hidden = !other;/,
     "同一個世界觀裡不給複製 —— 同一個目錄多一份一樣的沒有意義");
-  assert.match(codeOnly(bodyOf(modalJs, "selectedMoveMode")),
-    /r\.value === "copy" && moveTargetIsOtherWorld\(\)/,
-    "就算上一次選了複製、這次改選同世界觀，也要當成移動");
+
+  const confirm = codeOnly(bodyOf(modalJs, "confirmMoveOrCopy"));
+  assert.match(confirm, /if \(mode === "copy" && !crossWorld\) return;/,
+    "按鈕狀態跟目的地不同步的那一瞬間，同世界觀的複製也要擋掉");
+  assert.match(confirm, /copyItemInto\(/, "按複製走 copyItemInto()");
+  assert.match(confirm, /moveItemInto\(/, "按移動照舊走 moveItemInto()");
 
   const open = codeOnly(bodyOf(modalJs, "openMoveModal"));
   assert.match(open, /moveTargetOptions\(ref\)/, "清單要從 moveTargetOptions() 來（順序在那裡定、有測試）");
   assert.ok(!/appData\.worldviews\.forEach/.test(open), "不要在彈窗裡自己再排一次");
-  assert.match(open, /value="move"\]'\);[\s\S]*?moveRadio\.checked = true/,
-    "每次打開都回到「移動」，不要沿用上一次的「複製」");
-
-  const confirm = codeOnly(bodyOf(modalJs, "confirmMoveFolder"));
-  assert.match(confirm, /copyItemInto\(/, "選複製要走 copyItemInto()");
-  assert.match(confirm, /moveItemInto\(/, "選移動照舊走 moveItemInto()");
+  assert.match(open, /updateMoveModeVisibility\(\)/,
+    "打開時就要算一次 —— 目前位置是預設選項，「複製」一開始應該是藏著的");
 });
 
 /* ---------- 每個世界觀的垃圾桶獨立 ---------- */

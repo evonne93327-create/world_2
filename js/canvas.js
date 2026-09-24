@@ -1404,22 +1404,47 @@ function completeConnection(targetNodeId) {
   const sourceId = connectingSourceNodeId;
   if (!sourceId || sourceId === targetNodeId) { cancelConnect(); return; }
 
-  const canvas = getCurrentWorldCanvas();
-  const relation = prompt("請輸入兩者關係：", "盟友 / 敵對 / 密探");
-  if (relation !== null) {
-    canvas.edges.push({
-      id: "edge_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
-      source: sourceId,
-      target: targetNodeId,
-      label: relation || "關聯",
-      color: "e_gray",
-      dash: "solid",
-      arrow: "none"
-    });
-    saveData();
-  }
+  /* 連線模式在打開彈窗的當下就收掉，不等彈窗關閉。
+
+     彈窗是非同步的：按「取消」、按 Escape、點遮罩都會關掉它，但只有「建立」
+     會回到這裡。等回來才收的話，從另外三條路關掉時連線模式會一直掛著——
+     下一次點節點會莫名其妙地拉出一條線。 */
   cancelConnect();
+
+  // 標籤寫出是哪兩個，彈窗蓋住白板之後才知道自己在連什麼
+  const nameOf = function(nodeId) {
+    const n = getCurrentWorldCanvas().nodes.find(function(x) { return x.id === nodeId; });
+    const d = n && appData.docs.find(function(x) { return x.id === n.docId; });
+    return d ? (d.title || "無標題文檔") : "？";
+  };
+
+  openTextInputModal({
+    title: "🔗 兩者關係",
+    fields: [{ label: nameOf(sourceId) + " ↔ " + nameOf(targetNodeId),
+               value: "盟友 / 敵對 / 密探", placeholder: "留白就寫「關聯」" }],
+    okText: "連線",
+    onSubmit: function(values) {
+      addCanvasEdge(sourceId, targetNodeId, values[0]);
+    }
+  });
+}
+
+/* 真的加一條線。留白就是「關聯」（原本 prompt() 版本就是這樣）。 */
+function addCanvasEdge(sourceId, targetNodeId, relation) {
+  const canvas = getCurrentWorldCanvas();
+  const edge = {
+    id: "edge_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+    source: sourceId,
+    target: targetNodeId,
+    label: String(relation || "").trim() || "關聯",
+    color: "e_gray",
+    dash: "solid",
+    arrow: "none"
+  };
+  canvas.edges.push(edge);
+  saveData();
   renderCanvasLines();
+  return edge;
 }
 
 /* ---------- 顏色 ---------- */

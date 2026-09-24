@@ -143,13 +143,26 @@ test("使用者主動按的時候，防重複的那兩道閘門要讓路", funct
     "checkForUpdateNow() 要用 force 叫它");
 });
 
-test("directory.js 不再用瀏覽器內建的 prompt() 問名稱", function() {
+test("整個 app 都不再用瀏覽器內建的 prompt()", function() {
   /* 使用者要的是「預設文字反藍、直接打字就取代」。prompt() 的預設文字選不選
-     是瀏覽器決定的，iOS 不選——所以名稱一律走 openTextInputModal()。
-     哪天有人順手寫回 prompt()，iOS 上又要先手動刪掉「新分類」才能打。 */
-  const dir = fs.readFileSync(path.join(ROOT, "js", "directory.js"), "utf8")
+     是瀏覽器決定的，iOS 不選——所以一律走 openTextInputModal()（使用者要求
+     「全部統一」）。哪天有人順手寫回 prompt()，iOS 上又要先手動刪字才能打。 */
+  const code = js.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
+  const hits = code.match(/(^|[^\w.])prompt\(/g) || [];
+  assert.strictEqual(hits.length, 0, "js/ 裡不該再有 prompt(（實得 " + hits.length + " 處）");
+});
+
+test("白板拉線：打開彈窗時就收掉連線模式", function() {
+  /* 彈窗是非同步的，只有按「連線」會回來。等回來才收的話，按取消／Escape／
+     點遮罩關掉時連線模式會一直掛著，下一次點節點會莫名其妙拉出一條線。 */
+  const canvas = fs.readFileSync(path.join(ROOT, "js", "canvas.js"), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
-  assert.ok(!/\bprompt\(/.test(dir), "directory.js 裡不該再有 prompt(");
+  const body = canvas.match(/function completeConnection\([\s\S]*?(?=\nfunction )/)[0];
+  const cancelAt = body.indexOf("cancelConnect();\n");
+  const openAt = body.indexOf("openTextInputModal(");
+  assert.ok(cancelAt !== -1 && openAt !== -1 && cancelAt < openAt,
+    "cancelConnect() 要在 openTextInputModal() 之前");
+  assert.match(body, /value: "盟友 \/ 敵對 \/ 密探"/, "預設的例子保留（打開時會反藍，一打字就取代）");
 });
 
 test("輸入彈窗：打開就全選、組字中的 Enter 不送出、不被自動聚焦搶走", function() {
