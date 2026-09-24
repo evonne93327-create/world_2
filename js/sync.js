@@ -246,7 +246,15 @@ function adoptRemote(row) {
   renderSidebarTree();
   updateWorldBadge();
   if (activeDocId) loadDocToEditor(activeDocId);
-  if (activeView === 'canvas') renderCanvas();
+  if (activeView === 'canvas') renderCanvasUnlessEditing();
+}
+
+/* 正在打便條紙的時候不要重畫白板：重畫會把那張便條紙的元素整個換掉，
+   焦點跟著消失，接下來打的字全部掉到地上（實測：打了六段只剩兩段）。
+   先記著，打完（失焦）再畫。 */
+function renderCanvasUnlessEditing() {
+  if (typeof renderCanvasWhenNotEditing === "function") renderCanvasWhenNotEditing();
+  else renderCanvas();
 }
 
 async function initSync() {
@@ -378,28 +386,44 @@ function mergeOrAsk(remote) {
   const merged = (typeof mergeAppData === "function" && remote && remote.data)
     ? mergeAppData(loadSyncFingerprint(), appData, remote.data, before) : null;
 
-  if (merged && mergePushRetries < MERGE_PUSH_MAX_RETRIES) {
-    saveRecordConflicts(merged.conflicts);
-    applyMergedData(merged, remote);
-    if (!merged.conflicts.length) return true;
-    const seen = {};
-    before.forEach(function(c) { seen[c.kind + ":" + c.id] = true; });
-    if (merged.conflicts.some(function(c) { return !seen[c.kind + ":" + c.id]; })) {
-      openRecordConflictModal();
-    }
+  if (!merged) {
+    openSyncConflictModal(remote, false, null);
     return false;
   }
 
-  openSyncConflictModal(remote, false, merged ? merged.conflicts : null);
+  /* 連撞好幾次：通常是另一台正在打字、每幾秒推一次。這不是衝突（有衝突的
+     那幾筆上面已經另外記了），不要跳整包二選一的視窗——那個視窗以前會在
+     這裡跳出來，而且計數不會歸零，按了哪一邊，下一次一撞又跳回來，看起來
+     就像按鈕沒反應。改成：先把合併結果留在本機，隔幾秒再推。 */
+  if (mergePushRetries >= MERGE_PUSH_MAX_RETRIES) {
+    mergePushRetries = 0;
+    saveRecordConflicts(merged.conflicts);
+    applyMergedDataLocally(merged, remote);
+    setLocalDirty(true);
+    setSyncStatus("idle", "雲端正在被另一台更新，稍後自動再上傳");
+    setTimeout(function() { pushNow(true); }, MERGE_BACKOFF_MS + Math.random() * MERGE_BACKOFF_MS);
+    return false;
+  }
+
+  saveRecordConflicts(merged.conflicts);
+  applyMergedData(merged, remote);
+  if (!merged.conflicts.length) return true;
+  const seen = {};
+  before.forEach(function(c) { seen[c.kind + ":" + c.id] = true; });
+  if (merged.conflicts.some(function(c) { return !seen[c.kind + ":" + c.id]; })) {
+    openRecordConflictModal();
+  }
   return false;
 }
 
 /* 合併完要推回去，而推回去有可能又撞到（另一台在這幾百毫秒間又推了一次）。
    那時會再合併、再推——正常情況兩三輪內一定收斂，因為每一輪都把對方的東西
    併進來了。但不能無上限：真的一直撞就停下來問，不要讓兩台裝置在那邊互相
-   推到天荒地老。 */
+   推到天荒地老。連撞到上限就先退開，隔一段隨機的時間再推（兩台不會又剛好
+   同時推）。 */
 let mergePushRetries = 0;
 const MERGE_PUSH_MAX_RETRIES = 3;
+const MERGE_BACKOFF_MS = 4000;
 
 /* 套用合併結果。
 
@@ -408,15 +432,37 @@ const MERGE_PUSH_MAX_RETRIES = 3;
    髒的並推回去——不推的話，另一台永遠拿不到這台的那幾篇。
 
    版本要記成 remote 的：我們是站在雲端那一版上面合併出來的，推送時的條件式
-   更新才對得上。指紋則等推送成功之後再記（pushData 裡做），因為在推上去之前
-   「本機與雲端一致」還不成立。
+   更新才對得上。**指紋（合併的祖先）也要馬上記成 remote 的**，不能等推送成功：
+   合併完，這台＝雲端那一版＋這台還沒上去的修改，所以共同祖先就是雲端那一版。
+   原本等推送成功才記，推送又撞到的話（另一台正在打字、一直在推），下一輪
+   合併拿的還是舊祖先——上一輪從雲端拿進來的東西會被當成「這台改的」，
+   跟雲端又更新的那一版一比就變成衝突。使用者看到的是：另一台在打的便條紙，
+   在這台一直跳衝突。這台自己的修改跟 remote 不同，仍然看得出是這台改的。
 
    推上去的是 merged.upload 不是 appData：兩者只差在還沒決定的衝突，那幾筆
    雲端要保留雲端原本的版本。指紋也跟著記 upload（＝雲端現在的樣子）。 */
 function applyMergedData(merged, remote) {
+  applyMergedDataLocally(merged, remote);
+
+  if (!merged.changedFromRemote) {
+    // 要推的跟雲端一樣（只有雲端改過，或本機的修改都在還沒決定的那幾筆裡）
+    setLocalDirty(false);
+    lastPushedPayload = JSON.stringify(appData);
+    setSyncStatus("idle", "已從雲端更新");
+    return;
+  }
+
+  setLocalDirty(true);
+  setSyncStatus("syncing", "已合併，上傳中…");
+  pushData(merged.upload);
+}
+
+/* 合併結果放進本機（記版本、記祖先、存檔、必要時重畫），不推。 */
+function applyMergedDataLocally(merged, remote) {
   const activeBefore = activeDocSnapshot();
   appData = merged.data;
   saveSyncState(remote.version, remote.at);
+  saveSyncFingerprint(remote.data);
   safeStorageSet("novel_multi_world_data_v5", JSON.stringify(appData));
 
   // 目前選的文檔可能在合併後不存在了（另一台刪掉的）
@@ -436,21 +482,8 @@ function applyMergedData(merged, remote) {
     renderSidebarTree();
     updateWorldBadge();
     if (activeDocId && activeDocSnapshot() !== activeBefore) loadDocToEditor(activeDocId);
-    if (activeView === 'canvas') renderCanvas();
+    if (activeView === 'canvas') renderCanvasUnlessEditing();
   }
-
-  if (!merged.changedFromRemote) {
-    // 要推的跟雲端一樣（只有雲端改過，或本機的修改都在還沒決定的那幾筆裡）
-    saveSyncFingerprint(merged.upload);
-    setLocalDirty(false);
-    lastPushedPayload = JSON.stringify(appData);
-    setSyncStatus("idle", "已從雲端更新");
-    return;
-  }
-
-  setLocalDirty(true);
-  setSyncStatus("syncing", "已合併，上傳中…");
-  pushData(merged.upload);
 }
 
 function activeDocSnapshot() {
@@ -475,8 +508,39 @@ function onDataSaved() {
   }, SYNC_PUSH_DEBOUNCE_MS);
 }
 
+/* ---------- 一次只推一個 ----------
+
+   上傳在路上的時候（手機網路慢起來可以好幾秒），使用者繼續打字、又停了
+   2.5 秒，debounce 會再叫一次 pushNow()。兩個上傳同時帶著同一個版本號出去，
+   後到的那個一定撞到——撞到的是這台自己剛推上去的東西。再加上合併的祖先
+   還沒更新，這台自己改的便條紙就會被判成「兩邊都改」，一直跳衝突視窗。
+   （使用者回報「另一台明明閒置，還是一直跳衝突」就是這個。）
+
+   所以同一時間只允許一個上傳；期間再來的只記一個「等一下再推」，推完再補。 */
+let pushBusy = 0;
+let pushToken = 0;
+let pushQueued = false;
+
+function claimPush() {
+  pushToken++;
+  pushBusy = pushToken;
+  return pushToken;
+}
+
+/* 只有自己還握著的時候才放掉：合併之後的重推會拿一個新的號碼接手，
+   外層收尾時不可以把它的鎖一起放掉。 */
+function releasePush(token) {
+  if (pushBusy !== token) return;
+  pushBusy = 0;
+  if (pushQueued) {
+    pushQueued = false;
+    setTimeout(function() { pushNow(true); }, 0);
+  }
+}
+
 async function pushNow(silent) {
   if (!syncIsActive()) return;
+  if (pushBusy) { pushQueued = true; return; }
 
   /* 衝突還沒解決前不能推（會蓋掉雲端）。但也不能就這樣安靜地不做事——
      把那個問題重新擺到使用者面前，他才有機會解決它。 */
@@ -495,6 +559,7 @@ async function pushNow(silent) {
   /* 有還沒決定的衝突：不能直接把 appData 推上去（那幾筆會蓋掉雲端的）。
      先把雲端抓下來走合併，推的是合併出來的 upload。 */
   if (hasRecordConflicts()) {
+    const token = claimPush();
     setSyncStatus("syncing", "上傳中…");
     try {
       /* 跟對帳一樣要擋「讀到比上次同步還舊的」：拿舊的去合併，版本會被記回
@@ -507,6 +572,8 @@ async function pushNow(silent) {
     } catch (e) {
       setSyncStatus("error", e.message || "上傳失敗");
       return;
+    } finally {
+      releasePush(token);
     }
   }
 
@@ -514,17 +581,29 @@ async function pushNow(silent) {
 }
 
 /* 真的推一份上去。data 通常就是 appData；有還沒決定的衝突時是合併出來的
-   upload（那幾筆保留雲端的版本）。 */
+   upload（那幾筆保留雲端的版本）。
+
+   **出發前先拍一張快照**，送的、記指紋的、比對有沒有再改的，全部用這一張。
+   原本是等上傳回來之後才拿 appData 去記指紋、清「有未上傳修改」——但上傳
+   在路上的那幾秒使用者還在打字，於是指紋記到了根本沒上去的字，旗標也被
+   清掉：下一輪合併以為這台沒改、雲端那份（少了那幾個字）比較新，要嘛把
+   字吃掉，要嘛把自己的便條紙判成衝突。 */
 async function pushData(data) {
+  const token = claimPush();
+  const sentJson = JSON.stringify(data);
+  const localAtStart = data === appData ? sentJson : JSON.stringify(appData);
+  const sent = JSON.parse(sentJson);
   setSyncStatus("syncing", "上傳中…");
   try {
     const state = loadSyncState();
-    const result = await P().push(data, state.version);
+    const result = await P().push(sent, state.version);
 
     if (result.conflict) {
       /* 雲端被別台裝置改過。先把對方那份抓回來試合併——這是兩台各改一篇時
          真正會走到的路，只跳視窗的話逐篇合併等於沒做（見 mergeOrAsk）。 */
-      const remote = await P().pull();
+      const fresh = await pullFreshEnough();
+      const remote = fresh.row;
+      if (remote && fresh.stale) { openSyncConflictModal(remote, true); return; }
       mergePushRetries++;
       mergeOrAsk(remote);
       return;
@@ -532,13 +611,18 @@ async function pushData(data) {
 
     mergePushRetries = 0;
     saveSyncState(result.version, result.at);
-    saveSyncFingerprint(data);
-    setLocalDirty(false);
-    lastPushedPayload = JSON.stringify(appData);
+    saveSyncFingerprint(sent);
+    lastPushedPayload = localAtStart;
+    // 上傳途中又改了東西：那些還沒上去，旗標要留著，推完這次接著再推
+    const changedMeanwhile = JSON.stringify(appData) !== localAtStart;
+    setLocalDirty(changedMeanwhile);
+    if (changedMeanwhile) pushQueued = true;
     setSyncStatus("idle", "已同步");
   } catch (e) {
     // 推送失敗時 dirty 旗標保持著，下次還會再試
     setSyncStatus("error", e.message || "上傳失敗");
+  } finally {
+    releasePush(token);
   }
 }
 
@@ -769,6 +853,7 @@ function closeSyncConflictModal() {
 
 async function resolveConflictUseRemote() {
   if (!pendingConflictRemote) return;
+  mergePushRetries = 0;
   adoptRemote(pendingConflictRemote);
   pendingConflictRemote = null;
   pendingConflictStale = false;
@@ -781,6 +866,7 @@ async function resolveConflictUseLocal() {
   setSyncStatus("syncing", "上傳中…");
   try {
     const result = await P().overwrite(appData);
+    mergePushRetries = 0;
     saveSyncState(result.version, result.at);
     saveSyncFingerprint(appData);
     setLocalDirty(false);

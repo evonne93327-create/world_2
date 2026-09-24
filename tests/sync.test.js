@@ -212,8 +212,8 @@ test("每一條發現分岔的路都要先試合併", function() {
   assert.ok(policy, "找不到 mergeOrAsk()");
   assert.match(policy[0], /mergeAppData\(loadSyncFingerprint\(\), appData, remote\.data, before\)/,
     "要拿指紋當祖先去合併，並帶上還沒決定的衝突（不然推完一輪之後會被當成只有本機改）");
-  assert.match(policy[0], /if \(merged && mergePushRetries < MERGE_PUSH_MAX_RETRIES\)/,
-    "merged 可能是 null（沒有祖先），要先擋");
+  assert.match(policy[0], /if \(!merged\) \{\n    openSyncConflictModal\(remote, false, null\);/,
+    "merged 可能是 null（沒有祖先），要先擋，退回整包二選一");
   assert.match(policy[0], /saveRecordConflicts\(merged\.conflicts\)/,
     "撞在一起的那幾筆要記下來等使用者選");
   assert.match(policy[0], /openRecordConflictModal\(\)/, "有新的衝突要問");
@@ -236,7 +236,7 @@ test("每一條發現分岔的路都要先試合併", function() {
 
   calls.forEach(function(rest, i) {
     const arg = rest.split(")")[0];
-    const ok = /remote, false, merged/.test(arg)      // mergeOrAsk 自己
+    const ok = /remote, false, null/.test(arg)        // mergeOrAsk：沒有祖先，合併不起來
             || /remote, true/.test(arg)               // 雲端回應是舊的
             || /pendingConflictRemote/.test(arg);     // 重新問一次
     assert.ok(ok,
@@ -263,8 +263,17 @@ test("合併後重推不可以無上限地互撞", function() {
      正常兩三輪會收斂，但不能沒有上限——兩台裝置互相推到天荒地老比跳視窗
      還糟。 */
   assert.match(syncJs, /const MERGE_PUSH_MAX_RETRIES = \d+;/, "要有上限常數");
-  assert.match(syncJs, /mergePushRetries < MERGE_PUSH_MAX_RETRIES/,
-    "超過上限就要停下來問");
+  const policy = syncJs.match(/function mergeOrAsk\(remote\)[\s\S]*?\n}/);
+  const cap = policy && policy[0].match(/if \(mergePushRetries >= MERGE_PUSH_MAX_RETRIES\) \{[\s\S]*?\n  \}/);
+  assert.ok(cap, "超過上限要有自己的一段");
+  /* 以前超過上限會跳整包二選一的視窗，而且計數不歸零：另一台一直在打字時，
+     按哪一邊都會馬上又跳回來（使用者回報「按了都不理我」）。連撞不是衝突，
+     退開一段隨機時間再推就好。 */
+  assert.ok(!/openSyncConflictModal/.test(cap[0]), "連撞不是衝突，不要跳視窗");
+  assert.match(cap[0], /mergePushRetries = 0;/, "要歸零，不然之後每一撞都直接落到這裡");
+  assert.match(cap[0], /setTimeout\(function\(\) \{ pushNow\(true\); \}, MERGE_BACKOFF_MS \+ Math\.random\(\) \* MERGE_BACKOFF_MS\)/,
+    "隔一段隨機的時間再推（兩台才不會又剛好同時推）");
+  assert.match(cap[0], /setLocalDirty\(true\)/, "還沒推上去，旗標要留著");
   assert.match(syncJs, /mergePushRetries\+\+/, "撞一次要加一次");
 
   /* 歸零要在 pushNow 的成功路徑裡找，不能只看整份檔案有沒有這串字——
@@ -286,7 +295,7 @@ test("沒有祖先時不可以硬合併", function() {
 
   const policy = syncJs.match(/function mergeOrAsk\(remote\)[\s\S]*?\n}/);
   assert.ok(policy, "找不到 mergeOrAsk()");
-  assert.match(policy[0], /if \(merged && mergePushRetries/,
+  assert.match(policy[0], /if \(!merged\) \{/,
     "要先確認 merged 不是 null 才看 conflicts —— " +
     "少了這道，null 會在讀 .conflicts 時丟例外，同步整個停擺");
 });
@@ -313,7 +322,7 @@ test("每一個「本機與雲端一致」的時刻都要重記指紋", function
      「只有雲端改」而蓋掉這台的。 */
   const push = syncJs.match(/async function pushData\(data\)[\s\S]*?\n}/);
   assert.ok(push, "找不到 pushData()");
-  assert.match(push[0], /saveSyncFingerprint\(data\);/, "指紋記推上去的那一份");
+  assert.match(push[0], /saveSyncFingerprint\(sent\);/, "指紋記推上去的那一份（出發前拍的快照）");
 });
 
 test("指紋只存雜湊，不存整包快照", function() {
@@ -332,13 +341,19 @@ test("合併完要推回去，不然另一台拿不到這台的那幾篇", funct
   assert.ok(fn, "找不到 applyMergedData()");
   assert.match(fn[0], /pushData\(merged\.upload\)/,
     "推的是 upload —— 推 appData 的話，還沒決定的那幾筆會把雲端的蓋掉");
-  assert.match(fn[0], /saveSyncFingerprint\(merged\.upload\)/,
-    "沒東西要推時，指紋記雲端現在的樣子（upload），不是這台的");
   assert.match(fn[0], /changedFromRemote/,
     "跟雲端一樣時就不要白推一次");
-  assert.match(fn[0], /saveSyncState\(remote\.version, remote\.at\)/,
+
+  const local = syncJs.match(/function applyMergedDataLocally\([\s\S]*?\n}/);
+  assert.ok(local, "找不到 applyMergedDataLocally()");
+  assert.match(local[0], /saveSyncState\(remote\.version, remote\.at\)/,
     "版本要記成 remote 的 —— 我們是站在那一版上面合併的，" +
     "推送的條件式更新才對得上");
+  /* 祖先也要馬上記成 remote 的，不能等推送成功。等的話，推送一撞（另一台正在
+     打字、一直在推），下一輪合併拿的還是舊祖先，上一輪從雲端拿進來的東西會被
+     當成「這台改的」→ 另一台在打的便條紙，在這台一直跳衝突。 */
+  assert.match(local[0], /saveSyncFingerprint\(remote\.data\)/,
+    "合併完的祖先就是雲端那一版");
 });
 
 test("衝突視窗要講得出是哪幾篇，而且標題要跳脫", function() {

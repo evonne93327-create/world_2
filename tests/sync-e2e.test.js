@@ -10,7 +10,8 @@ const assert = require("node:assert");
 const { loadApp, host } = require("./helpers/load-app.js");
 
 function makeCloud(data) {
-  return { json: JSON.stringify(data), version: 1, at: "2026-01-01T00:00:00Z", pulls: 0, peeks: 0 };
+  return { json: JSON.stringify(data), version: 1, at: "2026-01-01T00:00:00Z", pulls: 0, peeks: 0,
+           pushes: 0, conflicts: 0, beforePush: null };
 }
 
 function device(cloud, data) {
@@ -33,7 +34,10 @@ function device(cloud, data) {
       return { data: JSON.parse(__cloud.json), version: __cloud.version, at: __cloud.at };
     };
     supabaseProvider.push = async function(data, expected) {
-      if (expected !== __cloud.version) return { conflict: true };
+      __cloud.pushes++;
+      await new Promise(function(r) { setTimeout(r, 5); });   // 網路在路上
+      if (__cloud.beforePush) __cloud.beforePush();
+      if (expected !== __cloud.version) { __cloud.conflicts++; return { conflict: true }; }
       __cloud.json = JSON.stringify(data);
       __cloud.version++;
       __cloud.at = "2026-01-01T00:00:0" + __cloud.version + "Z";
@@ -258,4 +262,108 @@ test("有衝突待決定時，讀到比上次同步還舊的雲端版本：停�
   assert.strictEqual(cloud.json, before, "不可以推");
   assert.strictEqual(B.run("loadSyncState().version"), recorded, "版本不可以被記回舊的");
   assert.ok(B.run("!!pendingConflictRemote"), "要停下來問");
+});
+
+
+/* ==========================================================
+   使用者回報：另一台在打字（或閒置），這台一直跳衝突、按了也沒反應
+   ========================================================== */
+
+/* 模擬另一台在這台上傳的途中又推了一版：直接改雲端那一份。 */
+function otherDevicePushes(cloud, noteIndex, text) {
+  const d = JSON.parse(cloud.json);
+  d.worldviews[0].canvas.notes[noteIndex].text = text;
+  cloud.json = JSON.stringify(d);
+  cloud.version++;
+}
+
+test("另一台一直在推：這台連撞兩次，另一台的便條紙也不可以變成衝突", async function() {
+  const cloud = makeCloud(start());
+  const A = device(cloud, start());
+  otherDevicePushes(cloud, 1, "B 打了一些");
+  let n = 0;
+  cloud.beforePush = function() { if (++n === 2) otherDevicePushes(cloud, 1, "B 打了一些又一些"); };
+
+  A.run(`appData.worldviews[0].canvas.notes[0].text = "A 的"; setLocalDirty(true);`);
+  await A.run("pushNow(true)"); await settle();
+
+  assert.deepStrictEqual(host(A.run("loadRecordConflicts()")), [],
+    "上一輪從雲端拿進來的 B 的便條紙，不可以被當成「這台改的」");
+  const notes = cloudData(cloud).worldviews[0].canvas.notes;
+  assert.strictEqual(notes[0].text, "A 的");
+  assert.strictEqual(notes[1].text, "B 打了一些又一些");
+});
+
+test("上傳途中又打字：沒上去的字不可以被記成已同步", async function() {
+  const cloud = makeCloud(start());
+  const A = device(cloud, start());
+  let once = false;
+  cloud.beforePush = function() {
+    if (once) return;
+    once = true;
+    A.run(`appData.worldviews[0].canvas.notes[0].text = "打到一半又多打了"; setLocalDirty(true);`);
+  };
+  A.run(`appData.worldviews[0].canvas.notes[0].text = "打到一半"; setLocalDirty(true);`);
+  await A.run("pushNow(true)"); await settle();
+
+  assert.strictEqual(cloudData(cloud).worldviews[0].canvas.notes[0].text, "打到一半又多打了",
+    "上傳途中打的字要接著推上去");
+  assert.strictEqual(A.run("isLocalDirty()"), false);
+
+  // 另一台改別張，這台再對帳：不可以把自己的字吃掉，也不可以變成衝突
+  otherDevicePushes(cloud, 1, "B 改的");
+  await A.run("lastReconcileAt = 0; reconcileWithRemote()"); await settle();
+  const a = host(A.run("appData"));
+  assert.strictEqual(a.worldviews[0].canvas.notes[0].text, "打到一半又多打了");
+  assert.deepStrictEqual(host(A.run("loadRecordConflicts()")), []);
+});
+
+test("一次只推一個：上傳還在路上時再叫一次，不會自己撞自己", async function() {
+  const cloud = makeCloud(start());
+  const A = device(cloud, start());
+  A.run(`appData.worldviews[0].canvas.notes[0].text = "一"; setLocalDirty(true);`);
+  const first = A.run("pushNow(true)");
+  A.run(`appData.worldviews[0].canvas.notes[0].text = "一二"; setLocalDirty(true);`);
+  await A.run("pushNow(true)");
+  await first; await settle();
+  assert.strictEqual(cloud.conflicts, 0, "兩個上傳帶著同一個版本號出去，後到的一定撞到自己");
+  assert.strictEqual(cloudData(cloud).worldviews[0].canvas.notes[0].text, "一二", "第二次的也要補推");
+});
+
+test("連撞到上限：不跳整包二選一的視窗，退開之後再推", async function() {
+  const cloud = makeCloud(start());
+  const A = device(cloud, start());
+  let n = 0;
+  cloud.beforePush = function() { if (++n <= 4) otherDevicePushes(cloud, 1, "B 第 " + n + " 次"); };
+  A.run(`appData.worldviews[0].canvas.notes[0].text = "A 的"; setLocalDirty(true);`);
+  await A.run("pushNow(true)"); await settle();
+
+  assert.strictEqual(A.run("!!pendingConflictRemote"), false,
+    "連撞不是衝突 —— 以前這裡會跳視窗，而且按哪一邊都會馬上又跳回來");
+  assert.strictEqual(A.run("mergePushRetries"), 0, "要歸零");
+  assert.strictEqual(A.run("isLocalDirty()"), true, "還沒上去");
+
+  await A.run("pushNow(true)"); await settle();   // 退開之後的那一次
+  assert.strictEqual(cloudData(cloud).worldviews[0].canvas.notes[0].text, "A 的");
+  assert.deepStrictEqual(host(A.run("loadRecordConflicts()")), []);
+});
+
+test("正在打便條紙時不重畫白板，打完才補畫", function() {
+  /* 重畫會把正在編輯的便條紙換掉，焦點跟著消失，接下來打的字全部不見
+     （實測：打六段只剩兩段）。 */
+  const app = loadApp();
+  app.run(`
+    var __renders = 0; renderCanvas = function() { __renders++; };
+    activeView = "canvas";
+    var __editing = true;
+    document.querySelector = function(sel) {
+      return (sel === ".canvas-note.is-editing" && __editing) ? {} : null;
+    };
+  `);
+  app.run("renderCanvasWhenNotEditing()");
+  assert.strictEqual(app.run("__renders"), 0, "編輯中不可以重畫");
+  app.run("__editing = false; flushDeferredCanvasRender()");
+  assert.strictEqual(app.run("__renders"), 1, "打完要補畫");
+  app.run("flushDeferredCanvasRender()");
+  assert.strictEqual(app.run("__renders"), 1, "補過就不要再畫");
 });
