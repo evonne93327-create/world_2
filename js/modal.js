@@ -914,6 +914,8 @@ function buildWorldMenuItems(world) {
  { icon: "✏️", label: "重新命名", action: function() { promptRenameItem("world", world.id, world.name); } },
  { icon: "📝", label: "一句話簡介", action: function() { promptEditWorldDesc(world.id); } },
  { icon: "🎨", label: "更換圖示", action: function() { openIconPicker("world", world.id); } },
+ { icon: world.starred ? "☆" : "⭐", label: world.starred ? "取消最愛" : "加入最愛",
+ action: function() { toggleWorldStar(world.id); } },
  { type: "divider" },
  { icon: "📁", label: "新增資料夾", action: function() { promptCreateFolder(null, world.id); } },
  { icon: "📄", label: "新增文檔", action: function() { createNewDoc(null, world.id); } },

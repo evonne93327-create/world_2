@@ -1358,3 +1358,174 @@ test("跟著文檔復原節點：放不回去的安靜地留著，不跳提示",
     "放不回去就留在垃圾桶——文檔已經不在垃圾桶了，所以它會變成獨立一列，看得到");
   assert.ok(app.run(`appData.docs.some(function(d) { return d.id === "d1"; })`), "文檔本身要回來");
 });
+
+/* ==========================================================
+   世界觀的排序與最愛
+   ========================================================== */
+
+function sortApp() {
+  return loadApp([
+    "js/state.js", "js/main.js", "js/storage.js", "js/documents.js",
+    "js/canvas.js", "js/import-export.js", "js/directory.js", "js/modal.js"
+  ]);
+}
+
+function sortedIds(app, worlds, docs, mode) {
+  return host(app.sortWorldviews(worlds, docs || [], mode)).map(function(w) { return w.id; });
+}
+
+test("世界觀排序：建立時間新的在上；舊的預設世界觀（讀不出時間）在最下面", function() {
+  const app = sortApp();
+  const worlds = [{ id: "w_main", name: "主" }, { id: "w_1700000000000", name: "舊" },
+                  { id: "w_1800000000000", name: "新" }];
+  assert.deepStrictEqual(sortedIds(app, worlds, [], "created"), ["w_1800000000000", "w_1700000000000", "w_main"]);
+});
+
+test("世界觀排序：createdAt 優先於 id 裡的時間", function() {
+  const app = sortApp();
+  const worlds = [{ id: "w_1800000000000", name: "a" },
+                  { id: "w_x", name: "b", createdAt: "2030-01-01T00:00:00.000Z" }];
+  assert.deepStrictEqual(sortedIds(app, worlds, [], "created"), ["w_x", "w_1800000000000"]);
+});
+
+test("世界觀排序：最愛不管哪一種排序都在最上面", function() {
+  const app = sortApp();
+  const worlds = [{ id: "w_1800000000000", name: "甲" }, { id: "w_1700000000000", name: "乙", starred: true },
+                  { id: "w_1600000000000", name: "丙" }, { id: "w_1500000000000", name: "丁", starred: true }];
+  ["created", "updated", "name", "custom"].forEach(function(mode) {
+    const ids = sortedIds(app, worlds, [], mode);
+    assert.deepStrictEqual(ids.slice(0, 2).sort(), ["w_1500000000000", "w_1700000000000"], mode + "：最愛在最上面");
+  });
+  assert.deepStrictEqual(sortedIds(app, worlds, [], "created"),
+    ["w_1700000000000", "w_1500000000000", "w_1800000000000", "w_1600000000000"],
+    "最愛那一組裡面也照排序方式排");
+});
+
+test("世界觀排序：最近編輯照文檔的更新時間，沒有文檔的排最後", function() {
+  const app = sortApp();
+  const worlds = [{ id: "w_1800000000000", name: "a" }, { id: "w_1700000000000", name: "b" },
+                  { id: "w_1600000000000", name: "c" }];
+  const docs = [{ id: "d1", worldId: "w_1700000000000", updatedAt: "2026-09-26 10:00" },
+                { id: "d2", worldId: "w_1600000000000", updatedAt: "2026-09-25 10:00" },
+                { id: "d3", worldId: "w_1600000000000", updatedAt: "2026-09-26 11:00" }];
+  assert.deepStrictEqual(sortedIds(app, worlds, docs, "updated"),
+    ["w_1600000000000", "w_1700000000000", "w_1800000000000"]);
+});
+
+test("世界觀排序：名稱", function() {
+  const app = sortApp();
+  const worlds = [{ id: "a", name: "Charlie" }, { id: "b", name: "alpha" }, { id: "c", name: "Bravo" }];
+  assert.deepStrictEqual(sortedIds(app, worlds, [], "name"), ["b", "c", "a"]);
+});
+
+test("世界觀排序：不動傳進來的陣列", function() {
+  const app = sortApp();
+  app.run(`var __w = [{ id: "w_1", name: "b" }, { id: "w_2", name: "a" }]; sortWorldviews(__w, [], "name");`);
+  assert.deepStrictEqual(host(app.run("__w.map(function(w) { return w.id; })")), ["w_1", "w_2"]);
+});
+
+test("自訂排序：還沒拖過時跟建立時間一樣；拖過之後照拖的順序，而且寫進資料（會同步）", function() {
+  const app = sortApp();
+  app.run(`
+    appData = { worldviews: [{ id: "w_1600000000000", name: "舊" }, { id: "w_1700000000000", name: "中" },
+                             { id: "w_1800000000000", name: "新" }], folders: [], docs: [],
+                trash: { docs: [], folders: [] } };
+  `);
+  const ids = function() { return host(app.run(`sortWorldviews(appData.worldviews, [], "custom").map(function(w) { return w.id; })`)); };
+  assert.deepStrictEqual(ids(), ["w_1800000000000", "w_1700000000000", "w_1600000000000"]);
+
+  // 把「舊」拖到「新」的前面
+  assert.strictEqual(app.run(`reorderWorldview("w_1600000000000", "w_1800000000000", false)`), true);
+  assert.deepStrictEqual(ids(), ["w_1600000000000", "w_1800000000000", "w_1700000000000"]);
+  assert.deepStrictEqual(host(app.run("appData.worldviews.map(function(w) { return w.order; })")), [0, 2, 1],
+    "順序存在每個世界觀的 order 上（跟著同步），不是存在陣列的位置");
+
+  // 放在後面
+  app.run(`reorderWorldview("w_1600000000000", "w_1700000000000", true)`);
+  assert.deepStrictEqual(ids(), ["w_1800000000000", "w_1700000000000", "w_1600000000000"]);
+
+  assert.strictEqual(app.run(`reorderWorldview("w_1600000000000", "w_1600000000000", false)`), false, "拖到自己身上不算");
+});
+
+test("新建的世界觀：記下建立時間，而且在建立時間與自訂排序下都在最上面", function() {
+  const app = sortApp();
+  app.run(`
+    appData = { worldviews: [{ id: "w_1600000000000", name: "舊", order: 0 }, { id: "w_1700000000000", name: "中", order: 1 }],
+                folders: [], docs: [], trash: { docs: [], folders: [] }, tagSettings: {} };
+    selectWorld = function() {};
+    var __w = createWorldview("全新", "");
+  `);
+  const w = host(app.run("__w"));
+  assert.ok(!isNaN(Date.parse(w.createdAt)), "記下建立時間");
+  ["created", "custom"].forEach(function(mode) {
+    const top = host(app.run(`sortWorldviews(appData.worldviews, appData.docs, "${mode}")[0].id`));
+    assert.strictEqual(top, w.id, mode + "：新的在最上面");
+  });
+  assert.ok(!("order" in w), "不用另外記 order：還沒拖過的會用建立時間補位，自然在最上面");
+  // 之後再拖別的，新的那個也不會跑掉
+  app.run(`reorderWorldview("w_1600000000000", "w_1700000000000", true)`);
+  assert.strictEqual(host(app.run(`sortWorldviews(appData.worldviews, appData.docs, "custom")[0].id`)), w.id);
+});
+
+test("加星／取消最愛：存在世界觀上，取消時把欄位拿掉", function() {
+  const app = sortApp();
+  app.run(`
+    appData = { worldviews: [{ id: "w1", name: "a" }], folders: [], docs: [], trash: { docs: [], folders: [] } };
+    renderWorldRail = function() {}; renderWorldList = function() {};
+  `);
+  app.run(`toggleWorldStar("w1")`);
+  assert.strictEqual(app.run("appData.worldviews[0].starred"), true);
+  app.run(`toggleWorldStar("w1")`);
+  assert.ok(!app.run(`"starred" in appData.worldviews[0]`), "不要留一個 starred: false（同步時多一個無意義的差異）");
+});
+
+test("長按選單有加入／取消最愛", function() {
+  const body = bodyOf(modalJs, "buildWorldMenuItems");
+  assert.match(body, /world\.starred \? "取消最愛" : "加入最愛"/);
+  assert.match(body, /toggleWorldStar\(world\.id\)/);
+});
+
+test("側欄、世界觀清單、移動目標清單都用同一個排序", function() {
+  ["renderWorldRail", "renderWorldList", "moveTargetOptions"].forEach(function(fn) {
+    const body = codeOnly(bodyOf(directoryJs, fn));
+    assert.match(body, /sortedWorldviews\(\)\.forEach/, fn + " 要照排序畫");
+    assert.ok(!/appData\.worldviews\.forEach/.test(body), fn + " 不要再照陣列原本的順序");
+  });
+});
+
+test("清單上的星星：點了不可以順便切換世界觀；名稱照舊走 textContent", function() {
+  const body = codeOnly(bodyOf(directoryJs, "renderWorldList"));
+  assert.match(body, /star\.onclick = function\(e\) \{\s*e\.stopPropagation\(\);\s*toggleWorldStar\(world\.id\);/);
+  assert.ok(!/\.innerHTML\s*=(?!\s*""\s*;)/.test(body), "不要把名稱拼進 innerHTML");
+  assert.match(html, /id="worldSortSelect"/, "清單上方有排序選單");
+});
+
+test("自訂排序才可以拖：長按拖曳與滑鼠拖放都只在自訂模式接上", function() {
+  const body = codeOnly(bodyOf(directoryJs, "renderWorldList"));
+  assert.match(body, /custom \? worldCardDragHooks\(world\) : undefined/);
+  assert.match(body, /if \(custom\) enableWorldCardMouseDrag\(card, world\.id\);/);
+});
+
+test("匯入：最愛、順序、建立時間型別不對就拿掉", function() {
+  const app = sortApp();
+  const ok = host(app.normalizeImportedWorld({ id: "w", name: "a", starred: true, order: 3, createdAt: "2026-01-01T00:00:00Z" }));
+  assert.strictEqual(ok.starred, true);
+  assert.strictEqual(ok.order, 3);
+  assert.strictEqual(ok.createdAt, "2026-01-01T00:00:00Z");
+  const bad = host(app.normalizeImportedWorld({ id: "w", name: "a", starred: "yes", order: "1", createdAt: {} }));
+  assert.ok(!("starred" in bad) && !("order" in bad) && !("createdAt" in bad));
+});
+
+test("排序選單：三分之一寬、靠右、膠囊形，而且打開清單時不搶焦點", function() {
+  const rule = css.match(/\.world-sort-row \.world-sort-select \{[^}]*\}/);
+  assert.ok(rule, "選擇器要兩層 —— .form-input 寫在後面，同權重會把圓角蓋回 6px");
+  assert.match(rule[0], /width: 33\.333%/);
+  assert.ok(!/>\s*排序\s*</.test(html), "不寫「排序」兩個字");
+  assert.match(html, /id="worldSortSelect"[^>]*aria-label="排序方式"/, "字拿掉了，讀螢幕軟體還是要知道這是什麼");
+  assert.match(rule[0], /border-radius: var\(--radius-round\)/);
+  assert.match(rule[0], /appearance: none/, "原生下拉在 Chromium 會自己畫外框、圓角不跟著走");
+  assert.match(css, /\.world-sort-row \{[^}]*justify-content: flex-end/, "靠右");
+  assert.match(html, /id="worldSortSelect"[^>]*data-no-autofocus/,
+    "桌機打開清單時不要聚焦它 —— 聚焦之後按上下鍵就改掉排序了");
+  assert.match(mainJs, /!n\.hasAttribute\("data-no-autofocus"\)/, "自動聚焦要看這個標記");
+});

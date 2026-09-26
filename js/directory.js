@@ -41,9 +41,10 @@ function renderWorldRail() {
  if (!container) return;
  container.innerHTML = "";
 
- appData.worldviews.forEach(function(world) {
+ sortedWorldviews().forEach(function(world) {
  const btn = document.createElement("button");
- btn.className = "world-rail-btn " + (world.id === activeWorldId ? "active" : "");
+ btn.className = "world-rail-btn " + (world.id === activeWorldId ? "active" : "") +
+   (world.starred ? " is-starred" : "");
  btn.title = world.desc ? (world.name + " — " + world.desc) : world.name;
  btn.textContent = world.icon || "🌐";
 
@@ -137,6 +138,127 @@ function worldStats(docs, worldId) {
   return { count: count, updatedAt: updatedAt };
 }
 
+/* ==========================================================
+   世界觀的排序與最愛
+
+   - 最愛（world.starred）不管哪一種排序都排在最上面。
+   - 排序方式：最新建立（預設）／最近編輯／名稱／自訂（拖曳）。
+     選哪一種是這台裝置自己的偏好，存 localStorage；最愛與自訂的順序是
+     資料，存在世界觀上，會跟著同步。
+   - 新建立的世界觀放最上面：建立時間本來就是新的在上；自訂模式下還沒有
+     order 的世界觀用「負的建立時間」補位（見 worldCustomOrder），一定比拖過
+     的（0, 1, 2…）更前面，所以新的也在最上面。
+
+   舊資料沒有 createdAt 也不補（兩台裝置各補一次時間會不一樣，同步時每個
+   世界觀都會變成「兩邊都改過」）。id 是 "w_" + 建立當下的毫秒數，從那裡
+   讀得出來；讀不出來的（最早的預設世界觀）當成最舊的。
+   ========================================================== */
+
+const WORLD_SORT_KEY = "wb_world_sort";
+/* 名稱要短：選單只有清單寬度的三分之一（手機上約 120px），長一點就被切掉。 */
+const WORLD_SORT_MODES = [
+  { id: "created", label: "最新建立" },
+  { id: "updated", label: "最近編輯" },
+  { id: "name", label: "名稱" },
+  { id: "custom", label: "自訂（拖曳）" }
+];
+
+function loadWorldSortMode() {
+  const v = safeStorageGet(WORLD_SORT_KEY);
+  return WORLD_SORT_MODES.some(function(m) { return m.id === v; }) ? v : "created";
+}
+
+function saveWorldSortMode(mode) {
+  safeStorageSet(WORLD_SORT_KEY, mode);
+}
+
+function worldCreatedMs(world) {
+  if (world && typeof world.createdAt === "string") {
+    const t = Date.parse(world.createdAt);
+    if (isFinite(t)) return t;
+  }
+  const m = /^w_(\d{10,})$/.exec(world && world.id || "");
+  return m ? Number(m[1]) : 0;
+}
+
+/* 自訂模式用的位置。還沒拖過的世界觀沒有 order，就用「越新越前面」補位，
+   所以第一次切到自訂時看到的順序跟建立時間一樣。 */
+function worldCustomOrder(world) {
+  return typeof world.order === "number" && isFinite(world.order) ? world.order : -worldCreatedMs(world);
+}
+
+/* 純函式：照排序方式排好，最愛在最上面。不動傳進來的陣列。 */
+function sortWorldviews(worlds, docs, mode) {
+  const list = (worlds || []).slice();
+  const index = new Map(list.map(function(w, i) { return [w, i]; }));
+  const edited = {};
+  if (mode === "updated") {
+    list.forEach(function(w) { edited[w.id] = worldStats(docs, w.id).updatedAt; });
+  }
+
+  function byMode(a, b) {
+    if (mode === "name") {
+      const c = String(a.name || "").localeCompare(String(b.name || ""), "zh-Hant");
+      if (c) return c;
+    } else if (mode === "custom") {
+      const c = worldCustomOrder(a) - worldCustomOrder(b);
+      if (c) return c;
+    } else if (mode === "updated") {
+      const ea = edited[a.id] || "", eb = edited[b.id] || "";
+      if (ea !== eb) return ea < eb ? 1 : -1;     // 新的在前；沒內容的排最後
+    }
+    const c = worldCreatedMs(b) - worldCreatedMs(a);
+    if (c) return c;
+    return index.get(a) - index.get(b);
+  }
+
+  return list.sort(function(a, b) {
+    const sa = a.starred ? 1 : 0, sb = b.starred ? 1 : 0;
+    if (sa !== sb) return sb - sa;
+    return byMode(a, b);
+  });
+}
+
+function sortedWorldviews() {
+  return sortWorldviews(appData.worldviews, appData.docs, loadWorldSortMode());
+}
+
+function setWorldSortMode(mode) {
+  saveWorldSortMode(mode);
+  renderWorldRail();
+  renderWorldList();
+}
+
+function toggleWorldStar(worldId) {
+  const world = appData.worldviews.find(w => w.id === worldId);
+  if (!world) return;
+  if (world.starred) delete world.starred; else world.starred = true;
+  saveData();
+  renderWorldRail();
+  renderWorldList();
+}
+
+/* 自訂排序：把 dragId 放到 targetId 的前面（after 為真就放後面），然後
+   照畫面上的新順序把每個世界觀的 order 重新編成 0, 1, 2…。
+   最愛照樣浮在最上面，所以跨過最愛／非最愛的界線拖，只會在自己那一組裡
+   換位置。回傳有沒有真的動到。 */
+function reorderWorldview(dragId, targetId, after) {
+  if (!dragId || !targetId || dragId === targetId) return false;
+  const list = sortWorldviews(appData.worldviews, appData.docs, "custom");
+  const from = list.findIndex(w => w.id === dragId);
+  if (from < 0 || !list.some(w => w.id === targetId)) return false;
+  const moving = list.splice(from, 1)[0];
+  let to = list.findIndex(w => w.id === targetId);
+  if (after) to++;
+  list.splice(to, 0, moving);
+
+  let changed = false;
+  list.forEach(function(w, i) {
+    if (w.order !== i) { w.order = i; changed = true; }
+  });
+  return changed;
+}
+
 function openWorldListModal() {
   renderWorldList();
   document.getElementById("worldListModal").classList.add("active");
@@ -153,12 +275,28 @@ function renderWorldList() {
   if (!list) return;
   list.innerHTML = "";
 
-  appData.worldviews.forEach(function(world) {
+  const mode = loadWorldSortMode();
+  const select = document.getElementById("worldSortSelect");
+  if (select) {
+    if (!select.options.length) {
+      WORLD_SORT_MODES.forEach(function(m) {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.label;
+        select.appendChild(opt);
+      });
+      select.onchange = function() { setWorldSortMode(select.value); };
+    }
+    select.value = mode;
+  }
+
+  sortedWorldviews().forEach(function(world) {
     const stats = worldStats(appData.docs, world.id);
 
     const card = document.createElement("button");
     card.type = "button";
     card.className = "world-card" + (world.id === activeWorldId ? " active" : "");
+    card.dataset.worldId = world.id;
     card.onclick = function() {
       closeWorldListModal();
       selectWorld(world.id);
@@ -191,14 +329,124 @@ function renderWorldList() {
     card.appendChild(icon);
     card.appendChild(main);
 
+    /* 加星。卡片本身是一顆按鈕，裡面不能再放 <button>，所以用 span 當按鈕，
+       點了不要冒泡上去（不然會順便切換世界觀、關掉清單）。 */
+    const star = document.createElement("span");
+    star.className = "world-card-star" + (world.starred ? " is-on" : "");
+    star.setAttribute("role", "button");
+    star.setAttribute("aria-pressed", world.starred ? "true" : "false");
+    star.title = world.starred ? "取消最愛" : "加入最愛";
+    star.textContent = world.starred ? "★" : "☆";
+    star.onclick = function(e) {
+      e.stopPropagation();
+      toggleWorldStar(world.id);
+    };
+    card.appendChild(star);
+
     /* 長按（或右鍵）沿用世界觀原本那份選單：改名、寫簡介、換圖示、刪除。
-       在這裡特別有用——這個畫面本來就是「一次看完所有世界觀」的地方。 */
+       在這裡特別有用——這個畫面本來就是「一次看完所有世界觀」的地方。
+       自訂排序時，按住一下再移動就是拖曳（跟目錄樹同一套，見 attachContextMenu）。 */
+    const custom = mode === "custom";
     attachContextMenu(card,
       function() { return buildWorldMenuItems(world); },
-      function() { return (world.icon || "🌐") + " " + world.name; });
+      function() { return (world.icon || "🌐") + " " + world.name; },
+      custom ? worldCardDragHooks(world) : undefined);
+    if (custom) enableWorldCardMouseDrag(card, world.id);
 
     list.appendChild(card);
   });
+  list.classList.toggle("is-custom-sort", mode === "custom");
+}
+
+/* ---------- 自訂排序的拖曳 ----------
+
+   手指：長按一下再移動（attachContextMenu 的 dragHooks）。
+   滑鼠：HTML5 拖放。
+   兩條路最後都走 reorderWorldview()：放在哪張卡片的上半部就插到它前面，
+   下半部就插到它後面。 */
+let worldCardDrag = null;
+
+function worldCardDropAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  const card = el && el.closest ? el.closest(".world-card") : null;
+  if (!card || !card.dataset.worldId) return null;
+  const r = card.getBoundingClientRect();
+  return { card: card, id: card.dataset.worldId, after: y > r.top + r.height / 2 };
+}
+
+function markWorldDrop(target) {
+  document.querySelectorAll(".world-card.drop-before, .world-card.drop-after").forEach(function(c) {
+    c.classList.remove("drop-before", "drop-after");
+  });
+  if (target) target.card.classList.add(target.after ? "drop-after" : "drop-before");
+}
+
+function finishWorldReorder(dragId, target) {
+  markWorldDrop(null);
+  if (!target || !reorderWorldview(dragId, target.id, target.after)) return;
+  saveData();
+  renderWorldRail();
+  renderWorldList();
+  if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) {} }
+}
+
+function worldCardDragHooks(world) {
+  return {
+    start: function(x, y) {
+      cancelWorldCardDrag();
+      const ghost = document.createElement("div");
+      ghost.className = "drag-ghost";
+      ghost.textContent = (world.icon || "🌐") + " " + world.name;   // 使用者寫的名字 → textContent
+      document.body.appendChild(ghost);
+      worldCardDrag = { id: world.id, ghost: ghost };
+      document.documentElement.classList.add("is-touch-dragging");
+      this.move(x, y);
+    },
+    move: function(x, y) {
+      if (!worldCardDrag) return;
+      worldCardDrag.ghost.style.transform = "translate(" + x + "px, " + y + "px) translate(-50%, -140%)";
+      markWorldDrop(worldCardDropAt(x, y));
+    },
+    end: function(x, y) {
+      if (!worldCardDrag) return;
+      const id = worldCardDrag.id;
+      const target = worldCardDropAt(x, y);
+      cancelWorldCardDrag();
+      finishWorldReorder(id, target);
+    },
+    cancel: cancelWorldCardDrag
+  };
+}
+
+function cancelWorldCardDrag() {
+  markWorldDrop(null);
+  if (!worldCardDrag) return;
+  if (worldCardDrag.ghost.parentNode) worldCardDrag.ghost.parentNode.removeChild(worldCardDrag.ghost);
+  document.documentElement.classList.remove("is-touch-dragging");
+  worldCardDrag = null;
+}
+
+function enableWorldCardMouseDrag(card, worldId) {
+  card.draggable = true;
+  card.ondragstart = function(e) {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/x-world-id", worldId);
+    worldCardDrag = null;
+    card.classList.add("is-dragging");
+  };
+  card.ondragend = function() {
+    card.classList.remove("is-dragging");
+    markWorldDrop(null);
+  };
+  card.ondragover = function(e) {
+    e.preventDefault();
+    markWorldDrop(worldCardDropAt(e.clientX, e.clientY));
+  };
+  card.ondrop = function(e) {
+    e.preventDefault();
+    const dragId = e.dataTransfer.getData("text/x-world-id");
+    finishWorldReorder(dragId, worldCardDropAt(e.clientX, e.clientY));
+  };
 }
 
 function renderSidebarTree() {
@@ -607,7 +855,8 @@ function moveTargetOptions(ref) {
     excluded = folderSubtree(ref.id).folderIds;
   }
 
-  appData.worldviews.forEach(function(w) {
+  // 世界觀的先後跟側欄、世界觀清單一樣（最愛在上、照選的排序方式）
+  sortedWorldviews().forEach(function(w) {
     out.push({
       worldId: w.id, parentId: null, depth: 0,
       label: (w.icon || "🌐") + " " + w.name + "（根目錄）",
@@ -1042,10 +1291,12 @@ function promptCreateWorldview() {
 /* 真的建。拆出來是因為 openTextInputModal 是非同步的（按了按鈕才回來），
    而測試要能直接呼叫它。 */
 function createWorldview(name, desc) {
+ const now = Date.now();
  const newWorld = {
- id: "w_" + Date.now(),
+ id: "w_" + now,
  name: name,
  icon: "🌐",
+ createdAt: new Date(now).toISOString(),
  canvas: { nodes: [], edges: [] }
  };
  applyWorldDesc(newWorld, desc);

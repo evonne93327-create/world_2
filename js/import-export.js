@@ -291,6 +291,11 @@ function normalizeImportedWorld(w) {
   if (typeof out.desc === "string") out.desc = out.desc.trim().slice(0, WORLD_DESC_MAX_LEN);
   else delete out.desc;
 
+  // 最愛、自訂順序、建立時間：型別不對就拿掉，排序那邊會退回預設
+  if (out.starred !== true) delete out.starred;
+  if (typeof out.order !== "number" || !isFinite(out.order)) delete out.order;
+  if (typeof out.createdAt !== "string" || !isFinite(Date.parse(out.createdAt))) delete out.createdAt;
+
   return out;
 }
 
