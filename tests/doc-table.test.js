@@ -234,3 +234,11 @@ test("段首縮排不碰小標題與列點；列點行按 Enter 不縮排", func
   const enter = docsJs.match(/function handleEditorEnterKey\([\s\S]*?\n}/)[0];
   assert.match(enter, /\/\^\[ \\t\\u3000\]\*\[-\*\]\\s\/\.test\(lineText\)\) return;/);
 });
+
+test("閱讀模式裡的跳轉只標字，不標整條", function() {
+  const css = fs.readFileSync(path.join(ROOT, "style.css"), "utf8");
+  assert.match(css, /\.doc-reading-view \.reading-jump \[data-o\] \{[^}]*animation: reading-jump-flash/,
+    "底色加在行內的字上（使用者指定）");
+  assert.ok(!/\.doc-reading-view \.reading-jump,|\.doc-reading-view \.reading-jump \{/.test(css),
+    "不要加在整個區塊上 —— 標題是整行寬，會鋪滿整行");
+});

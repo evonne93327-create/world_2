@@ -16,7 +16,7 @@
 |---|---|
 | 線上位置 | https://evonne93327-create.github.io/world_2/ |
 | main | `3854360`（PR #52 合併後） |
-| service worker | **v103** |
+| service worker | **v104** |
 | 開發分支 | `claude/ipad-keyboard-button-placement-613jds` |
 | 開著的 PR | 無 |
 
