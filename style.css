@@ -1488,11 +1488,26 @@ main.content-workspace {
 .world-card-star.is-on,
 .world-card-star:hover { color: var(--star); }
 
-/* 自訂排序：拖曳時標出會插在哪一條縫 */
-.world-list-body.is-custom-sort .world-card { cursor: grab; }
+/* 自訂排序：拖曳時在「會插進去的那條縫」畫一條虛線——畫在兩張卡片中間的
+   空隙裡，不是卡片的上下緣（使用者指定；紅框會跟「目前的世界觀」的紅框混在
+   一起）。卡片之間的空隙是 .world-list-body 的 gap，線就放在它的正中間。 */
+.world-list-body.is-custom-sort .world-card { cursor: grab; position: relative; }
 .world-card.is-dragging { opacity: 0.4; }
-.world-card.drop-before { box-shadow: 0 -3px 0 0 var(--accent); }
-.world-card.drop-after { box-shadow: 0 3px 0 0 var(--accent); }
+.world-card.drop-before::before,
+.world-card.drop-after::after {
+  content: "";
+  position: absolute;
+  left: var(--sp-4);
+  right: var(--sp-4);
+  height: 0;
+  border-top: 2px dashed var(--border);   /* 跟世界觀卡片的外框同色（使用者指定） */
+  pointer-events: none;
+}
+.world-card.drop-before::before { top: calc(-1 * var(--sp-8) / 2 - 2px); }
+.world-card.drop-after::after { bottom: calc(-1 * var(--sp-8) / 2 - 1px); }
+/* 最上面一張的「前面」、最下面一張的「後面」，線會落在清單的捲動範圍外面被
+   裁掉，上下各留一條縫的位置給它 */
+.world-list-body.is-custom-sort { padding: var(--sp-6) 0; }
 
 /* 側欄上加了星的世界觀：右上角一顆小星星 */
 .world-rail-btn.is-starred { position: relative; }
