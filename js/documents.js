@@ -1178,6 +1178,8 @@ function shouldIndentLine(line) {
   if (CHAPTER_LINE_REGEX.test(line)) return false;      // 「第1章」「Chapter 3」
   if (isTagOnlyLine(line)) return false;                // 整行都是標籤
   if (/^\|/.test(line)) return false;                   // 表格（見 doc-table.js）：前面多兩個全形空格就不是表格了
+  if (/^#{2,6}\s/.test(line)) return false;             // 「## 小標題」
+  if (/^[-*]\s/.test(line)) return false;               // 「- 列點」：縮排會把它變成下一層
   return true;
 }
 
@@ -1340,8 +1342,8 @@ function handleEditorEnterKey(e) {
   const lineText = v.slice(lineStart, lineEnd);
   const after = v.slice(end, lineEnd);   // 換行之後會變成新一行開頭的那段字
 
-  // 表格那幾行換行不縮排：縮排之後那一行就不再是表格了
-  if (/^\s*\|/.test(lineText)) return;
+  // 表格、列點那幾行換行不縮排：縮排之後表格就不再是表格，列點會變成下一層
+  if (/^\s*\|/.test(lineText) || /^[ \t\u3000]*[-*]\s/.test(lineText)) return;
 
   e.preventDefault();
 

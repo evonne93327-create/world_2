@@ -202,3 +202,35 @@ test("閱讀模式裡跳轉：找行號不超過目標的最後一個元素（�
   assert.strictEqual(app.run("jumpInReadingView(0)"), false, "找不到就回 false，讓 jumpToLine 退回編輯");
   app.run(`document.querySelectorAll = function() { return []; };`);
 });
+
+test("小標題：## 比章節小一級、### 再小一級；不進章節快速跳轉", function() {
+  readingOf("# 第一章\n## 勢力\n### 北方\n內文");
+  const kinds = host(app.run("__box.children.map(function(c) { return c.tagName + ':' + c.className + ':' + __text(c) + '@' + c.dataset.line; })"));
+  assert.deepStrictEqual(kinds, ["H3:reading-heading:第一章@0", "H4:reading-subheading:勢力@1",
+    "H5:reading-subheading:北方@2", "P:reading-para:內文@undefined"]);
+  assert.strictEqual(app.isChapterHeadingLine("## 勢力"), false, "章節快速跳轉只列章節");
+  assert.deepStrictEqual(host(app.extractHashtagsFromLine("## 勢力")), [], "## 不是標籤");
+});
+
+test("列點：- 和 * 都算；前面空兩格是下一層；*斜體* 開頭不是列點", function() {
+  readingOf("- 銀月王國\n  - 艾琳\n　- 薩爾\n* 赤焰教團\n*斜體*開頭的段落");
+  const list = host(app.run("__box.children[0].children.map(function(li) { return __text(li) + '@' + li.dataset.line + '/L' + li.dataset.level; })"));
+  assert.strictEqual(app.run("__box.children[0].tagName"), "UL");
+  assert.deepStrictEqual(list, ["銀月王國@0/L0", "艾琳@1/L1", "薩爾@2/L1", "赤焰教團@3/L0"]);
+  assert.strictEqual(app.run("__box.children[1].tagName"), "P", "列點後面接一般段落，列點要先收掉");
+  assert.strictEqual(app.run("__text(__box.children[1])"), "斜體開頭的段落");
+});
+
+test("列點裡的格式位置要加上前面的「- 」", function() {
+  readingOf("  - 他是**皇帝**");
+  const segs = host(app.run("__box.children[0].children[0].children.map(function(c) { return c.tagName + ':' + c.textContent + '@' + c.dataset.o; })"));
+  assert.deepStrictEqual(segs, ["SPAN:他是@4", "STRONG:皇帝@8"]);
+});
+
+test("段首縮排不碰小標題與列點；列點行按 Enter 不縮排", function() {
+  assert.strictEqual(app.shouldIndentLine("## 勢力"), false);
+  assert.strictEqual(app.shouldIndentLine("- 銀月王國"), false, "縮排會把它變成下一層");
+  assert.strictEqual(app.shouldIndentLine("*斜體*開頭"), true, "這不是列點");
+  const enter = docsJs.match(/function handleEditorEnterKey\([\s\S]*?\n}/)[0];
+  assert.match(enter, /\/\^\[ \\t\\u3000\]\*\[-\*\]\\s\/\.test\(lineText\)\) return;/);
+});
