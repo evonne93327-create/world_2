@@ -10,7 +10,7 @@
    本機 localStorage，網路只負責抓靜態檔。換來的是「更新一定拿得到」。
    ========================================================== */
 
-const VERSION = 'v99';
+const VERSION = 'v100';
 const CACHE = 'worldbuilder-' + VERSION;
 
 // 離線時要能完整開起來所需的檔案
@@ -24,6 +24,7 @@ const SHELL = [
   './js/storage.js',
   './js/main.js',
   './js/documents.js',
+  './js/doc-table.js',
   './js/directory.js',
   './js/search.js',
   './js/modal.js',

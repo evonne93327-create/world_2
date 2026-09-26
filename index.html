@@ -153,6 +153,8 @@
                   <button class="docactions-item" onclick="closeDocActionsPanel(); addCurrentDocToCanvas();"><span class="docactions-icon">📌</span><span>投射白板</span></button>
                   <button class="docactions-item" onclick="closeDocActionsPanel(); openBatchProjectModal();"><span class="docactions-icon">🗂️</span><span>批量投射白板</span></button>
                   <button class="docactions-item" onclick="toggleParagraphIndent();"><span class="docactions-icon">➡️</span><span id="indentLabel">段首空兩格</span></button>
+                  <button class="docactions-item" onclick="closeDocActionsPanel(); openTableEditor();"><span class="docactions-icon">▦</span><span>表格</span></button>
+                  <button class="docactions-item" onclick="closeDocActionsPanel(); toggleReadingMode();"><span class="docactions-icon" id="readingModeIcon">📖</span><span id="readingModeLabel">閱讀模式</span></button>
                   <label class="docactions-item" title="插入圖片">
                     <span class="docactions-icon">🖼️</span><span>放圖片</span>
                     <input type="file" id="imgUploadInput" accept="image/*" style="display:none;" onchange="closeDocActionsPanel(); handleImageUpload(event);">
@@ -195,6 +197,8 @@
             <textarea id="docContentInput" class="content-textarea" placeholder="在此記錄設定、勢力、背景或法術細節...
 💡 章節標註：輸入「# 第一章 啟程」或「第1章」系統會自動在頂部生成快速跳轉按鈕。
 💡 標籤標註：輸入「#帝國軍方 #反抗勢力」系統會自動抽取並套色；點擊上方 Hashtag 名稱可直接定位到內文段落！" oninput="onContentChange()"></textarea>
+            <!-- 閱讀模式：整篇排好（表格畫成表格）。見 js/doc-table.js -->
+            <div class="doc-reading-view" id="docReadingView"></div>
           </div>
 
           <div class="undoredo-sticky-bar" id="undoRedoFabGroup">
@@ -658,6 +662,29 @@
     </div>
   </div>
 
+  <!-- 表格：格子視窗。內文裡存的是 Markdown 表格，見 js/doc-table.js -->
+  <div class="modal-overlay" id="tableEditorModal">
+    <div class="modal-card table-editor-card">
+      <div class="modal-head">
+        <div class="modal-title" id="tableEditorTitle">▦ 插入表格</div>
+        <button class="icon-sm-btn" title="關閉" onclick="closeTableEditor()">✕</button>
+      </div>
+      <div class="table-editor-hint">第一列是標題。空白的列在完成時會拿掉。</div>
+      <div class="table-editor-grid" id="tableEditorGrid"></div>
+      <div class="table-editor-tools">
+        <button type="button" class="btn btn-secondary" onclick="addTableRow()">＋ 列</button>
+        <button type="button" class="btn btn-secondary" onclick="addTableColumn()">＋ 欄</button>
+      </div>
+      <div style="display:flex; justify-content:space-between; gap:8px; margin-top:8px;">
+        <button type="button" class="btn btn-danger" id="tableEditorDelete" onclick="deleteTableFromEditor()" hidden>🗑️ 刪除表格</button>
+        <div style="display:flex; gap:8px; margin-left:auto;">
+          <button type="button" class="btn btn-secondary" onclick="closeTableEditor()">取消</button>
+          <button type="button" class="btn btn-primary" onclick="confirmTableEditor()">完成</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 小工具按下去之後的短暫提示。用浮出而不是 alert：不用再點一次關掉 -->
   <div class="doc-tool-hint" id="docToolHint" role="status" aria-live="polite"></div>
 
@@ -696,6 +723,7 @@
   <script src="js/storage.js"></script>
   <script src="js/main.js"></script>
   <script src="js/documents.js"></script>
+  <script src="js/doc-table.js"></script>
   <script src="js/directory.js"></script>
   <script src="js/search.js"></script>
   <script src="js/modal.js"></script>

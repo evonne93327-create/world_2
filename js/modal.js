@@ -117,6 +117,8 @@ function renderQuickJumpList(content) {
    游標還是放過去（想接著打字的人按一下就在對的地方），但只有在有實體
    鍵盤的裝置上才把焦點搶過來——觸控裝置搶焦點就等於叫出鍵盤。 */
 function jumpToLine(lineIndex) {
+ // 閱讀模式看不到輸入框，要跳到某一行就先切回編輯
+ if (typeof docReadingMode !== "undefined" && docReadingMode) setReadingMode(false);
  const textarea = document.getElementById("docContentInput");
  if (!textarea) return;
  const lines = textarea.value.split("\n");
