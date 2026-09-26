@@ -1531,8 +1531,8 @@ test("排序選單：三分之一寬、靠右、膠囊形，而且打開清單�
 });
 
 test("自訂排序拖曳：插入位置是兩張卡片中間的虛線，不是卡片上下緣的紅框", function() {
-  assert.match(css, /\.world-card\.drop-before::before,\s*\.world-card\.drop-after::after \{[^}]*border-top: 2px dashed/,
-    "虛線畫在空隙裡（使用者指定）");
+  assert.match(css, /\.world-card\.drop-before::before,\s*\.world-card\.drop-after::after \{[^}]*border-top: 2px dashed var\(--border\)/,
+    "虛線畫在空隙裡，顏色跟卡片外框一樣（使用者指定）");
   assert.ok(!/\.world-card\.drop-(before|after) \{[^}]*box-shadow/.test(css),
     "不要再用卡片上下緣的框 —— 會跟「目前的世界觀」的紅框混在一起");
   assert.match(css, /\.world-list-body\.is-custom-sort \{ padding: var\(--sp-6\) 0; \}/,

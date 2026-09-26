@@ -1500,7 +1500,7 @@ main.content-workspace {
   left: var(--sp-4);
   right: var(--sp-4);
   height: 0;
-  border-top: 2px dashed var(--text-secondary);
+  border-top: 2px dashed var(--border);   /* 跟世界觀卡片的外框同色（使用者指定） */
   pointer-events: none;
 }
 .world-card.drop-before::before { top: calc(-1 * var(--sp-8) / 2 - 2px); }
