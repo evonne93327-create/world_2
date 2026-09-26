@@ -2837,15 +2837,20 @@ button, input, select, textarea { color: inherit; }
 /* 連點兩下是「回到編輯」，不要讓瀏覽器拿去放大畫面 */
 .content-editor-wrap.is-reading .doc-reading-view { touch-action: manipulation; }
 .doc-reading-view strong { font-weight: 700; }
-/* 閱讀模式裡的跳轉：那一行閃一下（跟編輯時跳轉的標示同一種顏色） */
+/* 閱讀模式裡的跳轉：那一行的「字」閃一下（跟編輯時跳轉的標示同一種顏色）。
+
+   只標字、不標整條（使用者指定）：標題、列點是整行寬的區塊，底色直接加在
+   它們身上會鋪滿整行。所以加在裡面那幾段字（appendInline 產生、帶 data-o 的
+   行內元素）上；字折成兩行時用 clone 讓每一行都有自己的圓角。 */
 @keyframes reading-jump-flash {
   0%, 60% { background: var(--mark-bg); }
   100% { background: transparent; }
 }
-.doc-reading-view .reading-jump,
-.doc-reading-view tr.reading-jump > * {
+.doc-reading-view .reading-jump [data-o] {
   animation: reading-jump-flash 1.8s ease-out;
   border-radius: 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 .doc-reading-view s { color: var(--text-secondary); }
 .reading-heading {
@@ -2855,6 +2860,21 @@ button, input, select, textarea { color: inherit; }
   margin: 1em 0 0.4em;
 }
 .reading-heading:first-child { margin-top: 0; }
+.reading-subheading {
+  font-family: var(--font-display);
+  font-weight: 700;
+  margin: 0.8em 0 0.3em;
+}
+h4.reading-subheading { font-size: var(--fs-16); }
+h5.reading-subheading { font-size: var(--fs-14); color: var(--text-secondary); }
+.reading-subheading:first-child { margin-top: 0; }
+.reading-list { margin: 0 0 0.6em; padding-left: 1.4em; }
+.reading-list li { margin: 0.1em 0; }
+.reading-list li[data-level="1"] { margin-left: 1.4em; list-style-type: circle; }
+.reading-list li[data-level="2"] { margin-left: 2.8em; list-style-type: square; }
+.reading-list li[data-level="3"],
+.reading-list li[data-level="4"],
+.reading-list li[data-level="5"] { margin-left: 4.2em; list-style-type: square; }
 .reading-empty { color: var(--text-muted); font-style: italic; }
 
 /* 表格太寬（欄位多）時自己橫向捲，不要把整頁撐開 */

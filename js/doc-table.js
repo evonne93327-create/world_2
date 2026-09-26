@@ -411,6 +411,23 @@ function appendInline(parent, text, baseOffset) {
   });
 }
 
+/* ---------- 小標題與列點 ----------
+
+   「## 小標題」「### 更小的標題」：比章節（「# 」）小一級。不進章節快速跳轉——
+   那一排按鈕是給章節用的，小標題也放進去會太多。
+   「- 列點」「* 列點」：前面每空兩格（或一個全形空格、一個 tab）就是下一層。
+   「*斜體*」開頭沒有空格，不會被當成列點。 */
+const SUBHEADING_REGEX = /^(#{2,6})\s+(.*)$/;
+const LIST_ITEM_REGEX = /^([ \t\u3000]*)[-*]\s+(.*)$/;
+
+function listItemOf(line) {
+  const m = LIST_ITEM_REGEX.exec(line || "");
+  if (!m) return null;
+  let width = 0;
+  for (const ch of m[1]) width += (ch === " ") ? 1 : 2;   // 全形空格、tab 都當兩格
+  return { level: Math.min(Math.floor(width / 2), 5), text: m[2], textStart: line.length - m[2].length };
+}
+
 /* 純 DOM 組裝，不拼 innerHTML。拆出來是為了測試：餵一個容器進去就能看結果。
    每一行（段落裡的一行、標題、表格的一列）都掛 data-line＝它在原文的第幾行，
    雙擊回到編輯時才知道要把游標放哪。 */
@@ -419,9 +436,11 @@ function buildReadingDom(container, text) {
   const lines = String(text || "").split("\n");
   let i = 0;
   let para = null;
+  let list = null;
 
   function flushPara() {
     if (para) { container.appendChild(para); para = null; }
+    if (list) { container.appendChild(list); list = null; }
   }
 
   while (i < lines.length) {
@@ -453,6 +472,35 @@ function buildReadingDom(container, text) {
       i++;
       continue;
     }
+
+    const sub = SUBHEADING_REGEX.exec(trimmed);
+    if (sub) {
+      flushPara();
+      const h = document.createElement(sub[1].length === 2 ? "h4" : "h5");
+      h.className = "reading-subheading";
+      h.dataset.line = i;
+      appendInline(h, sub[2], line.length - sub[2].length);
+      container.appendChild(h);
+      i++;
+      continue;
+    }
+
+    const item = listItemOf(line);
+    if (item) {
+      if (para) { container.appendChild(para); para = null; }
+      if (!list) {
+        list = document.createElement("ul");
+        list.className = "reading-list";
+      }
+      const li = document.createElement("li");
+      li.dataset.line = i;
+      li.dataset.level = item.level;
+      appendInline(li, item.text, item.textStart);
+      list.appendChild(li);
+      i++;
+      continue;
+    }
+    if (list) { container.appendChild(list); list = null; }
 
     if (!trimmed) { flushPara(); i++; continue; }
 
