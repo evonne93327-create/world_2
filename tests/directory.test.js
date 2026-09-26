@@ -1529,3 +1529,12 @@ test("排序選單：三分之一寬、靠右、膠囊形，而且打開清單�
     "桌機打開清單時不要聚焦它 —— 聚焦之後按上下鍵就改掉排序了");
   assert.match(mainJs, /!n\.hasAttribute\("data-no-autofocus"\)/, "自動聚焦要看這個標記");
 });
+
+test("自訂排序拖曳：插入位置是兩張卡片中間的虛線，不是卡片上下緣的紅框", function() {
+  assert.match(css, /\.world-card\.drop-before::before,\s*\.world-card\.drop-after::after \{[^}]*border-top: 2px dashed/,
+    "虛線畫在空隙裡（使用者指定）");
+  assert.ok(!/\.world-card\.drop-(before|after) \{[^}]*box-shadow/.test(css),
+    "不要再用卡片上下緣的框 —— 會跟「目前的世界觀」的紅框混在一起");
+  assert.match(css, /\.world-list-body\.is-custom-sort \{ padding: var\(--sp-6\) 0; \}/,
+    "最上面／最下面那條線不能被清單的捲動範圍裁掉");
+});
