@@ -46,6 +46,8 @@ function loadDocToEditor(docId) {
   renderTOC(doc.content || "");
   renderLiveHashtags(doc.tags || []);
   renderDocImages(doc.images || []);
+  // 閱讀模式開著的話，換了一篇（或同步拿到新內容）要重排
+  if (typeof docReadingMode !== "undefined" && docReadingMode) renderReadingView();
   renderSidebarTree();
   closeQuickJumpPanel();
   // 「段首空兩格」是每篇各自的開關，換文檔要跟著換
@@ -1175,6 +1177,7 @@ function shouldIndentLine(line) {
   if (MARKDOWN_HEADING_REGEX.test(line)) return false;  // 「# 第一章 啟程」
   if (CHAPTER_LINE_REGEX.test(line)) return false;      // 「第1章」「Chapter 3」
   if (isTagOnlyLine(line)) return false;                // 整行都是標籤
+  if (/^\|/.test(line)) return false;                   // 表格（見 doc-table.js）：前面多兩個全形空格就不是表格了
   return true;
 }
 
@@ -1336,6 +1339,9 @@ function handleEditorEnterKey(e) {
 
   const lineText = v.slice(lineStart, lineEnd);
   const after = v.slice(end, lineEnd);   // 換行之後會變成新一行開頭的那段字
+
+  // 表格那幾行換行不縮排：縮排之後那一行就不再是表格了
+  if (/^\s*\|/.test(lineText)) return;
 
   e.preventDefault();
 
