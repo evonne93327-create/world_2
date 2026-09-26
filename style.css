@@ -1434,7 +1434,7 @@ main.content-workspace {
 
 .world-list-add { justify-content: center; }
 
-/* 排序方式：靠右、只佔一半寬、藥丸形（使用者指定）。
+/* 排序方式：靠右、只佔三分之一寬、藥丸形、不寫「排序」兩個字（使用者指定）。
 
    選擇器寫兩層：.form-input 在這個檔案後面，同權重會把圓角蓋回 6px。
    appearance: none 是因為原生下拉在 Chromium 會自己畫一圈深色外框、圓角也
@@ -1450,8 +1450,10 @@ main.content-workspace {
   margin-bottom: var(--sp-8);
 }
 .world-sort-row .world-sort-select {
-  flex: 0 0 50%;
-  width: 50%;
+  flex: 0 0 33.333%;
+  width: 33.333%;
+  min-width: 0;
+  text-overflow: ellipsis;
   margin: 0;
   appearance: none;
   -webkit-appearance: none;

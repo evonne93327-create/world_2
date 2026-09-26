@@ -1516,10 +1516,12 @@ test("匯入：最愛、順序、建立時間型別不對就拿掉", function() 
   assert.ok(!("starred" in bad) && !("order" in bad) && !("createdAt" in bad));
 });
 
-test("排序選單：一半寬、靠右、膠囊形，而且打開清單時不搶焦點", function() {
+test("排序選單：三分之一寬、靠右、膠囊形，而且打開清單時不搶焦點", function() {
   const rule = css.match(/\.world-sort-row \.world-sort-select \{[^}]*\}/);
   assert.ok(rule, "選擇器要兩層 —— .form-input 寫在後面，同權重會把圓角蓋回 6px");
-  assert.match(rule[0], /width: 50%/);
+  assert.match(rule[0], /width: 33\.333%/);
+  assert.ok(!/>\s*排序\s*</.test(html), "不寫「排序」兩個字");
+  assert.match(html, /id="worldSortSelect"[^>]*aria-label="排序方式"/, "字拿掉了，讀螢幕軟體還是要知道這是什麼");
   assert.match(rule[0], /border-radius: var\(--radius-round\)/);
   assert.match(rule[0], /appearance: none/, "原生下拉在 Chromium 會自己畫外框、圓角不跟著走");
   assert.match(css, /\.world-sort-row \{[^}]*justify-content: flex-end/, "靠右");

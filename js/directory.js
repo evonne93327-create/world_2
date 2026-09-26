@@ -142,7 +142,7 @@ function worldStats(docs, worldId) {
    世界觀的排序與最愛
 
    - 最愛（world.starred）不管哪一種排序都排在最上面。
-   - 排序方式：建立時間（新→舊，預設）／最近編輯／名稱／自訂（長按拖曳）。
+   - 排序方式：最新建立（預設）／最近編輯／名稱／自訂（拖曳）。
      選哪一種是這台裝置自己的偏好，存 localStorage；最愛與自訂的順序是
      資料，存在世界觀上，會跟著同步。
    - 新建立的世界觀放最上面：建立時間本來就是新的在上；自訂模式下還沒有
@@ -155,11 +155,12 @@ function worldStats(docs, worldId) {
    ========================================================== */
 
 const WORLD_SORT_KEY = "wb_world_sort";
+/* 名稱要短：選單只有清單寬度的三分之一（手機上約 120px），長一點就被切掉。 */
 const WORLD_SORT_MODES = [
-  { id: "created", label: "建立時間（新→舊）" },
+  { id: "created", label: "最新建立" },
   { id: "updated", label: "最近編輯" },
   { id: "name", label: "名稱" },
-  { id: "custom", label: "自訂（長按拖曳）" }
+  { id: "custom", label: "自訂（拖曳）" }
 ];
 
 function loadWorldSortMode() {
