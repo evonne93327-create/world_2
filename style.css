@@ -2834,6 +2834,20 @@ button, input, select, textarea { color: inherit; }
   word-break: break-word;
 }
 .reading-para { margin: 0 0 0.6em; white-space: pre-wrap; }
+/* 連點兩下是「回到編輯」，不要讓瀏覽器拿去放大畫面 */
+.content-editor-wrap.is-reading .doc-reading-view { touch-action: manipulation; }
+.doc-reading-view strong { font-weight: 700; }
+/* 閱讀模式裡的跳轉：那一行閃一下（跟編輯時跳轉的標示同一種顏色） */
+@keyframes reading-jump-flash {
+  0%, 60% { background: var(--mark-bg); }
+  100% { background: transparent; }
+}
+.doc-reading-view .reading-jump,
+.doc-reading-view tr.reading-jump > * {
+  animation: reading-jump-flash 1.8s ease-out;
+  border-radius: 2px;
+}
+.doc-reading-view s { color: var(--text-secondary); }
 .reading-heading {
   font-family: var(--font-display);
   font-size: var(--fs-18);

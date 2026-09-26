@@ -15,6 +15,7 @@ window.addEventListener("DOMContentLoaded", function() {
   setupDeleteKeyShortcut();
   setupGlobalKeyboardShortcuts();
   setupEditorEnterIndent();
+  if (typeof setupReadingDoubleTap === "function") setupReadingDoubleTap();
   setupHistoryNavigation();
   setupKeyboardInset();
   setupCaretRoomOnFocus();
