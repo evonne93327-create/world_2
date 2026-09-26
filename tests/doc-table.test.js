@@ -203,12 +203,12 @@ test("閱讀模式裡跳轉：找行號不超過目標的最後一個元素（�
   app.run(`document.querySelectorAll = function() { return []; };`);
 });
 
-test("小標題：## 比章節小一級、### 再小一級；不進章節快速跳轉", function() {
+test("小標題：## 比章節小一級、### 再小一級", function() {
   readingOf("# 第一章\n## 勢力\n### 北方\n內文");
   const kinds = host(app.run("__box.children.map(function(c) { return c.tagName + ':' + c.className + ':' + __text(c) + '@' + c.dataset.line; })"));
   assert.deepStrictEqual(kinds, ["H3:reading-heading:第一章@0", "H4:reading-subheading:勢力@1",
     "H5:reading-subheading:北方@2", "P:reading-para:內文@undefined"]);
-  assert.strictEqual(app.isChapterHeadingLine("## 勢力"), false, "章節快速跳轉只列章節");
+  assert.strictEqual(app.isChapterHeadingLine("## 勢力"), false, "## 不是章節（閱讀模式畫成小標題，不是章節標題）");
   assert.deepStrictEqual(host(app.extractHashtagsFromLine("## 勢力")), [], "## 不是標籤");
 });
 
@@ -241,4 +241,21 @@ test("閱讀模式裡的跳轉只標字，不標整條", function() {
     "底色加在行內的字上（使用者指定）");
   assert.ok(!/\.doc-reading-view \.reading-jump,|\.doc-reading-view \.reading-jump \{/.test(css),
     "不要加在整個區塊上 —— 標題是整行寬，會鋪滿整行");
+});
+
+test("快速跳轉：## 小標題也列進來（level 2），### 不列", function() {
+  const hs = host(app.tocHeadingsOf("# 第一章 啟程\n## 勢力\n### 北方\n內文 #標籤\n第2章 北境\n## 戰役"));
+  assert.deepStrictEqual(hs.map(function(h) { return h.level + ":" + h.title + "@" + h.lineIndex; }),
+    ["1:第一章 啟程@0", "2:勢力@1", "1:第2章 北境@4", "2:戰役@5"]);
+  assert.deepStrictEqual(host(app.tocHeadingsOf("##沒有空格不算\n內文")), [], "## 後面要有空格（沒有空格是標籤）");
+});
+
+test("上方章節那一排與 📑 快速跳轉面板用同一份判斷", function() {
+  const toc = docsJs.match(/function renderTOC\([\s\S]*?\n}/)[0];
+  assert.match(toc, /tocHeadingsOf\(content\)/);
+  assert.match(toc, /ch\.level === 2 \? " is-sub" : ""/, "小標題看得出比章節低一級");
+  const qj = modalJs.match(/function renderQuickJumpList\([\s\S]*?\n}/)[0];
+  assert.match(qj, /tocHeadingsOf\(content\)/, "不要再各寫一份，只改一邊就會對不起來");
+  assert.ok(!/MARKDOWN_HEADING_REGEX/.test(qj));
+  assert.match(qj, /'subheading'/);
 });
