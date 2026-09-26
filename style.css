@@ -2834,6 +2834,10 @@ button, input, select, textarea { color: inherit; }
   word-break: break-word;
 }
 .reading-para { margin: 0 0 0.6em; white-space: pre-wrap; }
+/* 連點兩下是「回到編輯」，不要讓瀏覽器拿去放大畫面 */
+.content-editor-wrap.is-reading .doc-reading-view { touch-action: manipulation; }
+.doc-reading-view strong { font-weight: 700; }
+.doc-reading-view s { color: var(--text-secondary); }
 .reading-heading {
   font-family: var(--font-display);
   font-size: var(--fs-18);

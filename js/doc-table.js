@@ -14,8 +14,9 @@
 
    - 編輯：「⋯ 更多操作」→「表格」開一個格子視窗。游標停在某張表格裡的時候，
      打開的就是那一張；不在任何表格裡就是新增一張，插在游標那一行。
-   - 看：「📖 閱讀模式」把整篇排好給你看，表格就是表格。閱讀模式裡點一張
-     表格也可以直接開視窗改它。
+   - 看：「📖 閱讀模式」把整篇排好給你看，表格就是表格，**粗體**、*斜體*、
+     ~~刪除線~~ 也畫出來。點一張表格可以直接開視窗改它；雙擊任何地方回到
+     編輯，游標落在點的那個字。
 
    格子裡的字一律 textContent／input.value，不拼 innerHTML（硬規則 5）。
    ========================================================== */
@@ -352,8 +353,11 @@ function setReadingMode(on) {
   if (label) label.textContent = docReadingMode ? "回到編輯" : "閱讀模式";
   const icon = document.getElementById("readingModeIcon");
   if (icon) icon.textContent = docReadingMode ? "✏️" : "📖";
-  if (docReadingMode) renderReadingView();
-  else {
+  if (docReadingMode) {
+    renderReadingView();
+    if (typeof showDocToolHint === "function") showDocToolHint("雙擊任何地方就回到編輯");
+  } else {
+    cancelPendingTableOpen();
     const view = document.getElementById("docReadingView");
     if (view) view.innerHTML = "";
   }
@@ -366,7 +370,50 @@ function renderReadingView() {
   buildReadingDom(view, doc ? (doc.content || "") : "");
 }
 
-/* 純 DOM 組裝，不拼 innerHTML。拆出來是為了測試：餵一個容器進去就能看結果。 */
+/* ---------- 行內格式：**粗體**、*斜體*、~~刪除線~~ ----------
+
+   只在閱讀模式裡畫出來；編輯時輸入框是純文字，看得到符號本身（輸入框沒辦法
+   混排粗細不同的字，高亮層也會跟字錯開）。
+
+   符號裡面緊貼著的第一個、最後一個字不能是空白，也不能是符號本身：
+   「5 * 3 * 2」不是斜體，「** 不算 **」也不會變成斜體的「* 不算 *」。
+   不做巢狀（**粗*斜*體** 會照最外層的粗體畫，裡面的 * 原樣留著）。 */
+const INLINE_FORMAT_REGEX = /\*\*([^\s*](?:.*?[^\s*])?)\*\*|~~([^\s~](?:.*?[^\s~])?)~~|\*([^\s*](?:[^*]*?[^\s*])?)\*/g;
+
+/* 純函式：切成一段一段。每段記下它在「原本那一行」裡從第幾個字開始
+   （o，符號之後的位置）——雙擊時要照這個把游標放回原文。 */
+function parseInlineFormat(text, baseOffset) {
+  const src = String(text || "");
+  const base = baseOffset || 0;
+  const out = [];
+  let last = 0;
+  let m;
+  INLINE_FORMAT_REGEX.lastIndex = 0;
+  while ((m = INLINE_FORMAT_REGEX.exec(src))) {
+    if (m.index > last) out.push({ kind: "text", text: src.slice(last, m.index), o: base + last });
+    if (m[1] !== undefined) out.push({ kind: "bold", text: m[1], o: base + m.index + 2 });
+    else if (m[2] !== undefined) out.push({ kind: "strike", text: m[2], o: base + m.index + 2 });
+    else out.push({ kind: "italic", text: m[3], o: base + m.index + 1 });
+    last = m.index + m[0].length;
+  }
+  if (last < src.length) out.push({ kind: "text", text: src.slice(last), o: base + last });
+  return out;
+}
+
+const INLINE_TAG = { text: "span", bold: "strong", italic: "em", strike: "s" };
+
+function appendInline(parent, text, baseOffset) {
+  parseInlineFormat(text, baseOffset).forEach(function(seg) {
+    const el = document.createElement(INLINE_TAG[seg.kind]);
+    el.textContent = seg.text;
+    el.dataset.o = seg.o;
+    parent.appendChild(el);
+  });
+}
+
+/* 純 DOM 組裝，不拼 innerHTML。拆出來是為了測試：餵一個容器進去就能看結果。
+   每一行（段落裡的一行、標題、表格的一列）都掛 data-line＝它在原文的第幾行，
+   雙擊回到編輯時才知道要把游標放哪。 */
 function buildReadingDom(container, text) {
   container.innerHTML = "";
   const lines = String(text || "").split("\n");
@@ -385,8 +432,13 @@ function buildReadingDom(container, text) {
       flushPara();
       const first = i;
       const block = [];
-      while (i < lines.length && isTableLine(lines[i])) { block.push(lines[i]); i++; }
-      container.appendChild(buildReadingTable(tableRowsFromLines(block), first));
+      const rowLines = [];
+      while (i < lines.length && isTableLine(lines[i])) {
+        if (!isTableSeparatorRow(lines[i])) rowLines.push(i);
+        block.push(lines[i]);
+        i++;
+      }
+      container.appendChild(buildReadingTable(tableRowsFromLines(block), first, rowLines));
       continue;
     }
 
@@ -394,7 +446,9 @@ function buildReadingDom(container, text) {
       flushPara();
       const h = document.createElement("h3");
       h.className = "reading-heading";
-      h.textContent = trimmed.replace(/^#+\s*/, "");
+      h.dataset.line = i;
+      const shown = trimmed.replace(/^#+\s*/, "");
+      appendInline(h, shown, line.indexOf(shown));
       container.appendChild(h);
       i++;
       continue;
@@ -408,7 +462,11 @@ function buildReadingDom(container, text) {
     } else {
       para.appendChild(document.createElement("br"));
     }
-    para.appendChild(document.createTextNode(line));
+    const span = document.createElement("span");
+    span.className = "reading-line";
+    span.dataset.line = i;
+    appendInline(span, line, 0);
+    para.appendChild(span);
     i++;
   }
   flushPara();
@@ -416,28 +474,127 @@ function buildReadingDom(container, text) {
   if (!container.childNodes.length) {
     const empty = document.createElement("p");
     empty.className = "reading-empty";
-    empty.textContent = "這篇還沒有內容";
+    empty.dataset.line = 0;
+    empty.textContent = "這篇還沒有內容（雙擊開始寫）";
     container.appendChild(empty);
   }
 }
 
-function buildReadingTable(rows, firstLine) {
+/* 點一下表格＝開表格視窗；但雙擊＝回到編輯。第一下先等一下，確定沒有第二下
+   才開視窗，不然雙擊時第一下就把視窗打開了。 */
+const READING_DOUBLE_TAP_MS = 300;
+let pendingTableOpen = null;
+
+function cancelPendingTableOpen() {
+  if (pendingTableOpen) { clearTimeout(pendingTableOpen); pendingTableOpen = null; }
+}
+
+function buildReadingTable(rows, firstLine, rowLines) {
   const wrap = document.createElement("div");
   wrap.className = "reading-table-wrap";
-  wrap.title = "點一下可以編輯這張表格";
-  wrap.onclick = function() { openTableEditor(firstLine); };
+  wrap.dataset.line = firstLine;
+  wrap.title = "點一下編輯這張表格，雙擊回到編輯模式";
+  wrap.onclick = function() {
+    cancelPendingTableOpen();
+    pendingTableOpen = setTimeout(function() {
+      pendingTableOpen = null;
+      openTableEditor(firstLine);
+    }, READING_DOUBLE_TAP_MS);
+  };
 
   const table = document.createElement("table");
   table.className = "reading-table";
   rows.forEach(function(row, r) {
     const tr = document.createElement("tr");
+    if (rowLines && rowLines[r] !== undefined) tr.dataset.line = rowLines[r];
     row.forEach(function(cell) {
       const td = document.createElement(r === 0 ? "th" : "td");
-      td.textContent = cell;
+      appendInline(td, cell, null);
       tr.appendChild(td);
     });
     table.appendChild(tr);
   });
   wrap.appendChild(table);
   return wrap;
+}
+
+/* ---------- 雙擊回到編輯 ----------
+
+   滑鼠：dblclick。手指：iOS 不保證連點兩下會發 dblclick，自己看兩次 touchend
+   的間隔與距離。切回編輯要在這個手勢的同一個呼叫堆疊裡聚焦輸入框，iOS 才肯
+   叫出鍵盤（跟 3k 同一個道理）。 */
+const READING_TAP_SLOP_PX = 24;
+let lastReadingTap = null;
+
+/* 點到的地方在原文的第幾行、第幾個字。認不出來就回 null。 */
+function readingSourceAt(x, y, target) {
+  let node = null, offset = 0;
+  try {
+    if (document.caretRangeFromPoint) {
+      const r = document.caretRangeFromPoint(x, y);
+      if (r) { node = r.startContainer; offset = r.startOffset; }
+    } else if (document.caretPositionFromPoint) {
+      const p = document.caretPositionFromPoint(x, y);
+      if (p) { node = p.offsetNode; offset = p.offset; }
+    }
+  } catch (e) { node = null; }
+
+  const el = node ? (node.nodeType === 3 ? node.parentElement : node) : target;
+  const lineEl = el && el.closest ? el.closest("[data-line]") : null;
+  if (!lineEl) return null;
+  const line = Number(lineEl.dataset.line);
+  const seg = node && node.nodeType === 3 && el.dataset && el.dataset.o !== undefined && el.dataset.o !== "" ? el : null;
+  // 表格格子沒有記欄位位置（null）：游標放在那一列的開頭
+  const col = seg && lineEl.tagName !== "TR" ? Number(seg.dataset.o) + offset : 0;
+  return { line: line, col: isFinite(col) ? col : 0 };
+}
+
+/* 純函式：第幾行第幾個字 → 在整篇裡的位置。超出那一行就停在行尾。 */
+function sourceOffsetOf(text, line, col) {
+  const lines = String(text || "").split("\n");
+  const l = Math.max(0, Math.min(line, lines.length - 1));
+  let pos = 0;
+  for (let i = 0; i < l; i++) pos += lines[i].length + 1;
+  return { pos: pos + Math.max(0, Math.min(col || 0, lines[l].length)), lineStart: pos, lineEnd: pos + lines[l].length };
+}
+
+function editFromReadingAt(x, y, target) {
+  if (!docReadingMode) return;
+  cancelPendingTableOpen();
+  const at = readingSourceAt(x, y, target) || { line: 0, col: 0 };
+  const ta = document.getElementById("docContentInput");
+  setReadingMode(false);
+  if (!ta) return;
+  const where = sourceOffsetOf(ta.value, at.line, at.col);
+  try {
+    ta.focus({ preventScroll: true });
+    ta.setSelectionRange(where.pos, where.pos);
+  } catch (e) { /* 沒掛上就算了 */ }
+  // 用「跳到某一行」同一套標示＋捲動，看得出游標落在哪
+  if (typeof setJumpHighlight === "function") setJumpHighlight(where.lineStart, where.lineEnd);
+  requestAnimationFrame(function() {
+    if (typeof scrollToFirstSearchHit === "function") scrollToFirstSearchHit("mark.is-jump");
+  });
+}
+
+function setupReadingDoubleTap() {
+  const view = document.getElementById("docReadingView");
+  if (!view) return;
+  view.addEventListener("dblclick", function(e) {
+    e.preventDefault();
+    editFromReadingAt(e.clientX, e.clientY, e.target);
+  });
+  view.addEventListener("touchend", function(e) {
+    if (e.touches.length || !e.changedTouches.length) return;
+    const t = e.changedTouches[0];
+    const now = Date.now();
+    const prev = lastReadingTap;
+    lastReadingTap = { at: now, x: t.clientX, y: t.clientY };
+    if (prev && now - prev.at < READING_DOUBLE_TAP_MS &&
+        Math.abs(t.clientX - prev.x) < READING_TAP_SLOP_PX && Math.abs(t.clientY - prev.y) < READING_TAP_SLOP_PX) {
+      lastReadingTap = null;
+      e.preventDefault();   // 不要再補一個 click（會去開表格視窗）
+      editFromReadingAt(t.clientX, t.clientY, e.target);
+    }
+  });
 }
