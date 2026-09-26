@@ -6,6 +6,28 @@ function isChapterHeadingLine(trimmedLine) {
   return MARKDOWN_HEADING_REGEX.test(trimmedLine) || CHAPTER_LINE_REGEX.test(trimmedLine);
 }
 
+/* 章節快速跳轉（上方那一排）與 📑 快速跳轉面板要列的標題。兩邊原本各寫一份
+   判斷，加小標題時只改到一邊就會對不起來，所以集中在這裡。
+
+   level 1：「# 章節」「第1章」「Chapter 3」
+   level 2：「## 小標題」（使用者要求加進來）。「###」以下不列，按鈕會太多。 */
+const TOC_SUBHEADING_REGEX = /^##\s+(.+)/;
+
+function tocHeadingsOf(content) {
+  const out = [];
+  String(content || "").split("\n").forEach(function(line, idx) {
+    const trimmed = line.trim();
+    if (MARKDOWN_HEADING_REGEX.test(trimmed)) {
+      out.push({ level: 1, title: trimmed.replace(/^#\s+/, ""), lineIndex: idx });
+    } else if (CHAPTER_LINE_REGEX.test(trimmed)) {
+      out.push({ level: 1, title: trimmed.substring(0, 24), lineIndex: idx });
+    } else if (TOC_SUBHEADING_REGEX.test(trimmed)) {
+      out.push({ level: 2, title: trimmed.replace(/^##\s+/, ""), lineIndex: idx });
+    }
+  });
+  return out;
+}
+
 function extractHashtagsFromLine(line) {
   const trimmed = line.trim();
   if (isChapterHeadingLine(trimmed)) return [];
@@ -897,17 +919,7 @@ function renderTOC(content) {
   const card = document.getElementById("tocCard");
   container.innerHTML = "";
 
-  const lines = content.split("\n");
-  const chapters = [];
-
-  lines.forEach(function(line, idx) {
-    const trimmed = line.trim();
-    if (MARKDOWN_HEADING_REGEX.test(trimmed)) {
-      chapters.push({ title: trimmed.replace(/^#\s+/, ''), lineIndex: idx, fullText: trimmed });
-    } else if (CHAPTER_LINE_REGEX.test(trimmed)) {
-      chapters.push({ title: trimmed.substring(0, 24), lineIndex: idx, fullText: trimmed });
-    }
-  });
+  const chapters = tocHeadingsOf(content);
 
   if (chapters.length === 0) {
     card.style.display = "none";
@@ -917,8 +929,8 @@ function renderTOC(content) {
   card.style.display = "block";
   chapters.forEach(function(ch) {
     const chip = document.createElement("span");
-    chip.className = "toc-chip";
-    chip.textContent = "📍 " + ch.title;
+    chip.className = "toc-chip" + (ch.level === 2 ? " is-sub" : "");
+    chip.textContent = (ch.level === 2 ? "▸ " : "📍 ") + ch.title;
     /* 用行號定位，不要用 indexOf(fullText)。
 
        indexOf 找的是「全文裡第一個長這樣的字串」——兩章同名，或內文裡

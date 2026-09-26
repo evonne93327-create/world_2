@@ -61,14 +61,12 @@ function renderQuickJumpList(content) {
  const lines = content.split("\n");
  const entries = [];
 
- lines.forEach(function(line, idx) {
- const trimmed = line.trim();
- if (MARKDOWN_HEADING_REGEX.test(trimmed)) {
- entries.push({ type: 'chapter', label: trimmed.replace(/^#\s+/, ''), lineIndex: idx });
- } else if (CHAPTER_LINE_REGEX.test(trimmed)) {
- entries.push({ type: 'chapter', label: trimmed.substring(0, 30), lineIndex: idx });
- }
+ // 章節與小標題跟上方那一排用同一份判斷（tocHeadingsOf）
+ tocHeadingsOf(content).forEach(function(h) {
+ entries.push({ type: h.level === 2 ? 'subheading' : 'chapter', label: h.title, lineIndex: h.lineIndex });
+ });
 
+ lines.forEach(function(line, idx) {
  extractHashtagsFromLine(line).forEach(function(tagName) {
  entries.push({ type: 'tag', label: tagName, lineIndex: idx });
  });
@@ -77,13 +75,13 @@ function renderQuickJumpList(content) {
  entries.sort(function(a, b) { return a.lineIndex - b.lineIndex; });
 
  if (entries.length === 0) {
- list.innerHTML = '<div class="quickjump-empty">尚未偵測到章節標題或 Hashtag<br>試試輸入「# 第一章 標題」或「#標籤」</div>';
+ list.innerHTML = '<div class="quickjump-empty">尚未偵測到章節標題或 Hashtag<br>試試輸入「# 第一章 標題」、「## 小標題」或「#標籤」</div>';
  return;
  }
 
  entries.forEach(function(entry) {
  const row = document.createElement("div");
- row.className = "quickjump-item" + (entry.type === 'tag' ? ' is-tag' : '');
+ row.className = "quickjump-item" + (entry.type === 'tag' ? ' is-tag' : entry.type === 'subheading' ? ' is-sub' : '');
 
  const lineBadge = document.createElement("span");
  lineBadge.className = "quickjump-item-line";
@@ -91,7 +89,7 @@ function renderQuickJumpList(content) {
 
  const icon = document.createElement("span");
  icon.className = "quickjump-item-icon";
- icon.textContent = entry.type === 'chapter' ? '📍' : '#';
+ icon.textContent = entry.type === 'chapter' ? '📍' : entry.type === 'subheading' ? '▸' : '#';
 
  const label = document.createElement("span");
  label.className = "quickjump-item-label";
