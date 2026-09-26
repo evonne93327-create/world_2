@@ -16,7 +16,7 @@
 |---|---|
 | 線上位置 | https://evonne93327-create.github.io/world_2/ |
 | main | `3854360`（PR #52 合併後） |
-| service worker | **v94** |
+| service worker | **v95** |
 | 開發分支 | `claude/ipad-keyboard-button-placement-613jds` |
 | 開著的 PR | 無 |
 
@@ -429,6 +429,25 @@ PWA）與 `stale`（這一頁是不是在跑舊程式碼）。有「複製」鈕
 
 **還沒做到的**：粒度到「一筆」為止（一篇文檔、白板上一個物件），同一篇的兩份
 內容不會逐行合併。那仍然是停下來問（見 3n）。
+
+### 3o. 世界觀的排序與最愛
+
+使用者的規格：可以選排序（建立時間／最近編輯／名稱），也可以自訂拖曳；最新建立
+的放最上面；加星的永遠排在所有世界觀最上面。
+
+- **排序方式是這台裝置的偏好**（localStorage `wb_world_sort`），**最愛與自訂順序是
+  資料**（`world.starred`、`world.order`），存在世界觀上，走世界觀本身欄位的同步
+  （`worldMetaOf`）。自訂順序不用陣列位置存：合併時陣列順序以本機為主，另一台
+  拖的順序會被吃掉。
+- **不補舊資料**：沒有 `createdAt` 就從 id（`"w_" + 毫秒`）讀，讀不出來當最舊。
+  沒拖過的沒有 `order`，自訂排序用「負的建立時間」補位——所以新建的不用另外記
+  `order` 也自然在最上面，拖過一次之後每個都有 0, 1, 2…。
+- 排序是純函式 `sortWorldviews()`，側欄、世界觀清單、移動目標清單都走
+  `sortedWorldviews()`，不要再各自 `appData.worldviews.forEach`（有測試掃）。
+- 拖曳只在自訂模式接上：手指走 `attachContextMenu` 的 `dragHooks`（跟目錄樹同一套，
+  3h 的坑都已經踩過），滑鼠走 HTML5 拖放；放在卡片上半部＝插到前面、下半部＝後面。
+- 清單卡片本身是 `<button>`，星星不能再放 `<button>`，用 `span[role=button]`，
+  點了要 `stopPropagation()`，不然會順便切換世界觀、關掉清單。
 
 ### 3n. 逐筆衝突：撞到的那幾筆暫停，其他的照常同步
 

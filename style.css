@@ -1434,6 +1434,50 @@ main.content-workspace {
 
 .world-list-add { justify-content: center; }
 
+/* 排序方式 */
+.world-sort-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  font-size: var(--fs-12);
+  color: var(--text-secondary);
+  margin-bottom: var(--sp-8);
+}
+.world-sort-select { flex: 1; width: auto; margin: 0; }
+
+/* 最愛的星星：卡片右上角。點的範圍放大一點，手指才按得到 */
+.world-card-star {
+  flex-shrink: 0;
+  align-self: flex-start;
+  font-size: var(--fs-18);
+  line-height: 1;
+  padding: var(--sp-4);
+  margin: calc(-1 * var(--sp-4)) calc(-1 * var(--sp-4)) 0 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.world-card-star.is-on,
+.world-card-star:hover { color: var(--star); }
+
+/* 自訂排序：拖曳時標出會插在哪一條縫 */
+.world-list-body.is-custom-sort .world-card { cursor: grab; }
+.world-card.is-dragging { opacity: 0.4; }
+.world-card.drop-before { box-shadow: 0 -3px 0 0 var(--accent); }
+.world-card.drop-after { box-shadow: 0 3px 0 0 var(--accent); }
+
+/* 側欄上加了星的世界觀：右上角一顆小星星 */
+.world-rail-btn.is-starred { position: relative; }
+.world-rail-btn.is-starred::after {
+  content: "★";
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--star);
+  text-shadow: 0 0 2px var(--bg-card);
+}
+
 /* 上方徽章現在點得動了，補一個「這裡有東西可以展開」的小箭頭 */
 .nav-world-caret { font-size: var(--fs-10); color: var(--text-muted); flex-shrink: 0; }
 
