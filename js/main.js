@@ -413,10 +413,15 @@ function setupModalKeyboard() {
          未必要改字的彈窗，鍵盤是純粹的干擾——手機上沒有 Tab 鍵要導航，
          聚焦本來就沒有它在桌機上的價值。所以這裡只在有實體鍵盤的裝置
          才自動聚焦輸入框；觸控裝置一律聚焦卡片本身，使用者真的要打字時
-         自己點那個欄位。 */
+         自己點那個欄位。
+
+         data-no-autofocus：不是「要你填」的欄位（例如世界觀清單上方的排序
+         選單）不要搶焦點——聚焦之後按上下鍵會直接改掉排序。 */
       const input = isTouchPrimary()
         ? null
-        : targets.find(function(n) { return /^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName); });
+        : targets.find(function(n) {
+            return /^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName) && !n.hasAttribute("data-no-autofocus");
+          });
       (input || card).focus();
     }).observe(modal, { attributes: true, attributeFilter: ["class"] });
   });

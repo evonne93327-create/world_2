@@ -1515,3 +1515,15 @@ test("匯入：最愛、順序、建立時間型別不對就拿掉", function() 
   const bad = host(app.normalizeImportedWorld({ id: "w", name: "a", starred: "yes", order: "1", createdAt: {} }));
   assert.ok(!("starred" in bad) && !("order" in bad) && !("createdAt" in bad));
 });
+
+test("排序選單：一半寬、靠右、膠囊形，而且打開清單時不搶焦點", function() {
+  const rule = css.match(/\.world-sort-row \.world-sort-select \{[^}]*\}/);
+  assert.ok(rule, "選擇器要兩層 —— .form-input 寫在後面，同權重會把圓角蓋回 6px");
+  assert.match(rule[0], /width: 50%/);
+  assert.match(rule[0], /border-radius: var\(--radius-round\)/);
+  assert.match(rule[0], /appearance: none/, "原生下拉在 Chromium 會自己畫外框、圓角不跟著走");
+  assert.match(css, /\.world-sort-row \{[^}]*justify-content: flex-end/, "靠右");
+  assert.match(html, /id="worldSortSelect"[^>]*data-no-autofocus/,
+    "桌機打開清單時不要聚焦它 —— 聚焦之後按上下鍵就改掉排序了");
+  assert.match(mainJs, /!n\.hasAttribute\("data-no-autofocus"\)/, "自動聚焦要看這個標記");
+});

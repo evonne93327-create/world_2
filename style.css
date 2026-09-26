@@ -1434,16 +1434,43 @@ main.content-workspace {
 
 .world-list-add { justify-content: center; }
 
-/* 排序方式 */
+/* 排序方式：靠右、只佔一半寬、藥丸形（使用者指定）。
+
+   選擇器寫兩層：.form-input 在這個檔案後面，同權重會把圓角蓋回 6px。
+   appearance: none 是因為原生下拉在 Chromium 會自己畫一圈深色外框、圓角也
+   不跟著走；箭頭改由外層 label 的 ::after 畫，顏色才跟得上深色主題。 */
 .world-sort-row {
+  position: relative;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--sp-8);
   font-size: var(--fs-12);
   color: var(--text-secondary);
   margin-bottom: var(--sp-8);
 }
-.world-sort-select { flex: 1; width: auto; margin: 0; }
+.world-sort-row .world-sort-select {
+  flex: 0 0 50%;
+  width: 50%;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: var(--radius-round);   /* 跟側欄搜尋框同一種膠囊 */
+  padding: var(--sp-6) calc(var(--sp-12) + 14px) var(--sp-6) var(--sp-12);
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+.world-sort-row .world-sort-select:focus-visible { border-color: var(--accent); }
+.world-sort-row::after {
+  content: "▾";
+  position: absolute;
+  right: var(--sp-12);
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--text-secondary);
+  font-size: var(--fs-12);
+}
 
 /* 最愛的星星：卡片右上角。點的範圍放大一點，手指才按得到 */
 .world-card-star {
