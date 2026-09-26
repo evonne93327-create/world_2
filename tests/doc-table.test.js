@@ -172,14 +172,33 @@ test("雙擊回到編輯：滑鼠 dblclick、手指自己看兩下的間隔；�
     "連點兩下不要被拿去放大畫面");
 });
 
-test("接線：選單有表格與閱讀模式；跳到某一行時先離開閱讀模式", function() {
+test("接線：選單有表格與閱讀模式；閱讀模式裡跳轉就留在閱讀模式", function() {
   assert.match(html, /onclick="closeDocActionsPanel\(\); openTableEditor\(\);"/);
   assert.match(html, /onclick="closeDocActionsPanel\(\); toggleReadingMode\(\);"/);
   assert.match(html, /<script src="js\/doc-table\.js"><\/script>/);
+  /* 使用者回報：在閱讀模式點章節跳轉會直接變回編輯模式。跳過去是要看，不是要改。 */
   const jump = modalJs.match(/function jumpToLine\([\s\S]*?\n}/)[0];
-  assert.ok(jump.indexOf("setReadingMode(false)") !== -1 &&
-    jump.indexOf("setReadingMode(false)") < jump.indexOf("getElementById(\"docContentInput\")"),
-    "閱讀模式看不到輸入框，要先切回來");
+  assert.match(jump, /if \(jumpInReadingView\(lineIndex\)\) return;/, "找得到那一行就留在閱讀模式");
+  assert.ok(jump.indexOf("jumpInReadingView(") < jump.indexOf("setReadingMode(false)"),
+    "找不到（例如內容是空的）才退回編輯");
+  assert.ok(jump.indexOf("setReadingMode(false)") < jump.indexOf("getElementById(\"docContentInput\")"),
+    "退回編輯要在碰輸入框之前");
   assert.match(docsJs, /if \(typeof docReadingMode !== "undefined" && docReadingMode\) renderReadingView\(\);/,
     "換文檔（或同步拿到新內容）時閱讀模式要重排");
+});
+
+test("閱讀模式裡跳轉：找行號不超過目標的最後一個元素（空行、分隔線沒有自己的元素）", function() {
+  app.run(`
+    var __els = [0, 2, 3, 5, 7].map(function(l) { return { dataset: { line: String(l) }, id: "L" + l }; });
+    document.querySelectorAll = function(sel) { return sel === "#docReadingView [data-line]" ? __els : []; };
+  `);
+  const at = function(n) { const el = app.run("readingElementForLine(" + n + ")"); return el ? el.id : null; };
+  assert.strictEqual(at(3), "L3");
+  assert.strictEqual(at(4), "L3", "第 4 行是空行，停在它前面那一行");
+  assert.strictEqual(at(6), "L5", "分隔線那一行歸到上一列");
+  assert.strictEqual(at(99), "L7");
+  app.run(`__els = [];`);
+  assert.strictEqual(at(0), null);
+  assert.strictEqual(app.run("jumpInReadingView(0)"), false, "找不到就回 false，讓 jumpToLine 退回編輯");
+  app.run(`document.querySelectorAll = function() { return []; };`);
 });

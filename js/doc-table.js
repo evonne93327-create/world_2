@@ -518,6 +518,46 @@ function buildReadingTable(rows, firstLine, rowLines) {
   return wrap;
 }
 
+/* ---------- 閱讀模式裡的跳轉 ----------
+
+   章節目錄、標籤、快速跳轉都是給一個行號。空行、表格的分隔線在閱讀畫面裡
+   沒有對應的元素，所以找「行號不超過它的最後一個」。 */
+function readingElementForLine(lineIndex) {
+  let best = null;
+  let bestLine = -1;
+  document.querySelectorAll("#docReadingView [data-line]").forEach(function(el) {
+    const l = Number(el.dataset.line);
+    if (l <= lineIndex && l > bestLine) { best = el; bestLine = l; }
+  });
+  return best;
+}
+
+let readingJumpTimer = null;
+
+function jumpInReadingView(lineIndex) {
+  const el = readingElementForLine(lineIndex);
+  if (!el) return false;
+
+  // 閃一下：拿掉再加回去，連續跳同一行時動畫才會重播
+  document.querySelectorAll("#docReadingView .reading-jump").forEach(function(x) { x.classList.remove("reading-jump"); });
+  void el.offsetWidth;
+  el.classList.add("reading-jump");
+  if (readingJumpTimer) clearTimeout(readingJumpTimer);
+  readingJumpTimer = setTimeout(function() { el.classList.remove("reading-jump"); }, 1800);
+
+  /* 跟編輯時的跳轉（scrollToFirstSearchHit）同一種捲法：擺在捲動區的上方三分之一。
+     等一格再量：剛收起來的快速跳轉面板會改動版面。 */
+  requestAnimationFrame(function() {
+    const scroller = document.querySelector(".editor-content-area");
+    if (!scroller) return;
+    const r = el.getBoundingClientRect();
+    const s = scroller.getBoundingClientRect();
+    if (r.top >= s.top && r.bottom <= s.bottom) return;
+    scroller.scrollTop += r.top - s.top - scroller.clientHeight / 3;
+  });
+  return true;
+}
+
 /* ---------- 雙擊回到編輯 ----------
 
    滑鼠：dblclick。手指：iOS 不保證連點兩下會發 dblclick，自己看兩次 touchend
